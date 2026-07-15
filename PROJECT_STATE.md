@@ -15,6 +15,49 @@ Current Gate: Phase 2 Native X11 Gate Complete.
 
 Next milestone: Architecture consolidation contracts.
 
+## Architecture Consolidation Contracts
+
+Updated: 2026-07-16
+
+Status: Complete.
+
+Scope:
+
+- Added protocol v2 contract validation and pure adapters only.
+- No Extension recorder/replayer runtime behavior changed.
+- No Companion HTTP or scheduler runtime behavior changed.
+- No Browser Agent HTTP runtime behavior changed.
+- No Electron, Native Messaging runtime, WebSocket/WSS, WebRTC, remote video, clipboard, new network listener, or UI was added.
+
+Contracts added:
+
+- DeviceDescriptor, DeviceCapability, PresenceEvent.
+- WorkflowRevision and InputDefinition.
+- DispatchPlan and DispatchAssignment.
+- ExecutionJob and ExecutionEvent.
+- AgentHello.
+- AgentEnvelope, ControllerEnvelope, NativeBridgeEnvelope.
+- PairingRequest and PairingResult.
+
+Adapters added:
+
+- Extension profile -> WorkflowRevision.
+- WorkflowRevision -> Extension profile.
+- Input parser fields -> named input object.
+- Companion command status -> unified ExecutionJob status.
+
+Docs added:
+
+- `docs/ADR-0003-endpoint-authority-and-extension-bridge.md`
+- `docs/PROTOCOL_V2.md`
+- `docs/PROJECT_MEMORY.md`
+
+Verification:
+
+- Baseline before changes: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 123 tests.
+- Focused contract tests: `npm.cmd run test:platform:protocol` Pass, 16/16; `npm.cmd run test:platform:workflow-core` Pass, 10/10; `npm.cmd run test:platform:input-parser` Pass, 23/23.
+- Final acceptance: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 150 tests; `git diff --check` Pass with only LF/CRLF warnings.
+
 ## Current MVP Status
 
 Implemented MVP code path:

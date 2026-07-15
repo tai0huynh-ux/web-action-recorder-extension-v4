@@ -152,6 +152,73 @@ export function createDispatchPayload(mapping) {
   }));
 }
 
+export function mapFieldsToNamedInputs(fields, definitions) {
+  const normalizedFields = Array.isArray(fields) ? fields : [];
+  const normalizedDefinitions = Array.isArray(definitions) ? definitions : [];
+  validateInputDefinitions(normalizedDefinitions);
+
+  const maxIndex = normalizedDefinitions.reduce((max, definition) => Math.max(max, definition.index), -1);
+  if (normalizedFields.length > maxIndex + 1) {
+    throw new InputParserError('EXTRA_FIELD', 'Input row has more fields than definitions.', {
+      expectedFieldCount: maxIndex + 1,
+      actualFieldCount: normalizedFields.length
+    });
+  }
+
+  const namedInputs = {};
+  for (const definition of normalizedDefinitions) {
+    const hasField = definition.index < normalizedFields.length;
+    const value = hasField ? normalizedFields[definition.index] : undefined;
+    if ((!hasField || value === undefined) && definition.required) {
+      throw new InputParserError('MISSING_FIELD', 'Required input field is missing.', {
+        name: definition.name,
+        index: definition.index,
+        sensitive: Boolean(definition.sensitive)
+      });
+    }
+    if (hasField) namedInputs[definition.name] = value;
+    else if (!definition.sensitive && Object.prototype.hasOwnProperty.call(definition, 'defaultValue')) {
+      namedInputs[definition.name] = definition.defaultValue;
+    }
+  }
+  return namedInputs;
+}
+
+export function validateInputDefinitions(definitions) {
+  const names = new Set();
+  const indexes = new Set();
+  for (const [position, definition] of definitions.entries()) {
+    if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+      throw new InputParserError('INVALID_INPUT_DEFINITION', 'Input definition must be an object.', { position });
+    }
+    if (typeof definition.name !== 'string' || !definition.name.trim()) {
+      throw new InputParserError('INVALID_INPUT_DEFINITION', 'Input definition requires a name.', { position });
+    }
+    if (definition.name.length > 128) {
+      throw new InputParserError('INVALID_INPUT_DEFINITION', 'Input definition name is too long.', { position });
+    }
+    if (names.has(definition.name)) {
+      throw new InputParserError('DUPLICATE_INPUT_NAME', 'Input definition name is duplicated.', { name: definition.name });
+    }
+    if (!Number.isInteger(definition.index) || definition.index < 0) {
+      throw new InputParserError('INVALID_INPUT_INDEX', 'Input definition index must be a non-negative integer.', {
+        name: definition.name
+      });
+    }
+    if (indexes.has(definition.index)) {
+      throw new InputParserError('DUPLICATE_INPUT_INDEX', 'Input definition index is duplicated.', { index: definition.index });
+    }
+    if (definition.sensitive && Object.prototype.hasOwnProperty.call(definition, 'defaultValue')) {
+      throw new InputParserError('SENSITIVE_DEFAULT_VALUE', 'Sensitive input cannot define a plaintext defaultValue.', {
+        name: definition.name,
+        index: definition.index
+      });
+    }
+    names.add(definition.name);
+    indexes.add(definition.index);
+  }
+}
+
 function makeRow(fields, sourceRowIndex, startOffset, startLine) {
   return {
     fields: [...fields],

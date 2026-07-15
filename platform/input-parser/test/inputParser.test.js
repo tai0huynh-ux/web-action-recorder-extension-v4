@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDispatchPayload, mapRowsToDevices, parseInputText } from '../src/inputParser.js';
+import { createDispatchPayload, mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../src/inputParser.js';
 
 const devices = [{ id: 'dev-a' }, { id: 'dev-b' }];
 
@@ -93,3 +93,87 @@ test('returns structured error when no selected device exists', () => {
     (error) => error.code === 'NO_DEVICES'
   );
 });
+
+test('duplicate input name is rejected', () => {
+  assert.throws(
+    () => mapFieldsToNamedInputs(['alice'], [
+      inputDefinition('account', 0),
+      inputDefinition('account', 1)
+    ]),
+    (error) => error.code === 'DUPLICATE_INPUT_NAME'
+  );
+});
+
+test('duplicate input index is rejected', () => {
+  assert.throws(
+    () => mapFieldsToNamedInputs(['alice'], [
+      inputDefinition('account', 0),
+      inputDefinition('password', 0, { sensitive: true })
+    ]),
+    (error) => error.code === 'DUPLICATE_INPUT_INDEX'
+  );
+});
+
+test('field array maps to named input object by index', () => {
+  assert.deepEqual(
+    mapFieldsToNamedInputs(['alice@example.com', 'secret'], [
+      inputDefinition('account', 0),
+      inputDefinition('password', 1, { sensitive: true })
+    ]),
+    {
+      account: 'alice@example.com',
+      password: 'secret'
+    }
+  );
+});
+
+test('missing required field is rejected by named input mapper', () => {
+  assert.throws(
+    () => mapFieldsToNamedInputs(['alice@example.com'], [
+      inputDefinition('account', 0),
+      inputDefinition('password', 1, { sensitive: true })
+    ]),
+    (error) => error.code === 'MISSING_FIELD' && !JSON.stringify(error.details).includes('secret')
+  );
+});
+
+test('extra field is rejected by named input mapper', () => {
+  assert.throws(
+    () => mapFieldsToNamedInputs(['alice@example.com', 'secret', 'extra'], [
+      inputDefinition('account', 0),
+      inputDefinition('password', 1, { sensitive: true })
+    ]),
+    (error) => error.code === 'EXTRA_FIELD'
+  );
+});
+
+test('empty field is valid for named input mapper', () => {
+  assert.deepEqual(
+    mapFieldsToNamedInputs(['', 'secret'], [
+      inputDefinition('account', 0),
+      inputDefinition('password', 1, { sensitive: true })
+    ]),
+    {
+      account: '',
+      password: 'secret'
+    }
+  );
+});
+
+test('sensitive value does not appear in validation error details', () => {
+  assert.throws(
+    () => mapFieldsToNamedInputs(['secret-password'], [inputDefinition('password', 0, { sensitive: true, defaultValue: 'plaintext' })]),
+    (error) => error.code === 'SENSITIVE_DEFAULT_VALUE' && !JSON.stringify(error).includes('secret-password') && !JSON.stringify(error).includes('plaintext')
+  );
+});
+
+function inputDefinition(name, index, overrides = {}) {
+  return {
+    name,
+    label: name,
+    index,
+    required: true,
+    sensitive: false,
+    ...overrides
+  };
+}

@@ -212,3 +212,37 @@ The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only
 ## Next Step
 
 Architecture consolidation contracts.
+
+## Architecture Consolidation Contracts
+
+Updated: 2026-07-16
+
+Status: Complete.
+
+Protocol:
+
+- Added `war-control.v2` specialized runtime validator.
+- Added AgentEnvelope, ControllerEnvelope, NativeBridgeEnvelope, AgentHello, DeviceDescriptor, PresenceEvent, DispatchPlan, DispatchAssignment, ExecutionJob, ExecutionEvent, PairingRequest, and PairingResult contracts.
+- Validation rejects unknown message types, wrong protocol version, unknown top-level properties, oversized strings/arrays, invalid timestamps, invalid statuses, negative indexes/revisions, duplicate input definitions, sensitive plaintext defaults, missing mutating deadlines, and missing dispatch idempotency keys.
+
+Adapters:
+
+- Extension profile -> WorkflowRevision with deterministic content hash.
+- WorkflowRevision -> Extension profile payload.
+- Field array -> named input object by InputDefinition index.
+- Companion command status -> unified ExecutionJob status.
+
+Compatibility:
+
+- Browser Agent remains authoritative device identity.
+- Extension remains local workflow execution component.
+- Extension graph runner remains primary workflow execution engine.
+- Legacy Companion polling remains a compatibility path.
+- Native Messaging and pairing are contract-only.
+- No runtime behavior, transport, network listener, UI, remote video, clipboard, WebRTC, or Electron work was added.
+
+Verification:
+
+- Baseline before changes: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 123 tests.
+- Focused tests: protocol 16/16, workflow-core 10/10, input-parser 23/23.
+- Final acceptance: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 150 tests; `git diff --check` Pass with only LF/CRLF warnings.
