@@ -1,10 +1,12 @@
-# Chromium Control Platform State
+﻿# Chromium Control Platform State
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
 ## Phase
 
 Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker host `root@192.168.1.201`.
+
+Phase 2 - Chromium Control Native X11 Gate is complete.
 
 Status: Complete.
 
@@ -121,7 +123,7 @@ Soak evidence:
 
 ## Phase 2 - Chromium Control
 
-Status: Implemented with native X11 backend; Gate Pending.
+Status: Complete. Phase 2 Native X11 Gate passed three consecutive Linux container performance runs.
 
 Phase 2 added typed semantic DOM/page control and typed raw Chromium input. It intentionally did not add streaming, VNC/noVNC, Native Messaging, arbitrary JavaScript, generic CDP passthrough, shell execution, file transfer from Windows, clipboard sync, scheduler work, extension install management, or Phase 3 work.
 
@@ -169,27 +171,34 @@ Limits:
 
 Latest Phase 2 evidence:
 
-- `npm run test:all`: Pass, 120 tests on Linux after sync.
-- `npm.cmd run test:all`: Pass, 120 tests on Windows after sync.
+- Baseline commit: `e83ef8764fa26981ca1b8f3fe36d86c50a769f41` on `main`.
+- `npm run check`: Pass on Linux after sync.
+- `npm run test:all`: Pass, 123 tests verified on Linux after sync.
+- `npm.cmd run check`: Pass on Windows after sync.
+- `npm.cmd run test:all`: Pass, 123 tests verified on Windows after sync.
+- `npm run container:browser-agent:build`: Pass.
 - `npm run container:browser-agent:smoke`: Pass.
 - `npm run container:browser-agent:phase2-smoke`: Pass.
-- Native helper performance gate: pending rerun after Linux container rebuild.
+- `npm run test:browser-agent:phase2-performance:measure`: Pass.
+- `npm run test:browser-agent:phase2-performance:gate`: Pass, three consecutive runs.
 - Chromium: `150.0.7871.114`.
 - Extension ID/version: `edoicfpldmlabgdalemfgflpldiijdmm` / `0.1.0`.
-- Browser-ready time: 1795 ms.
-- Image before/after: `35518cfa30b8 1.35GB` -> `5810cb6e7b7f 1.35GB`.
-- StopAll latency: 4 ms; held keys/buttons after stop: 0/0.
-- Previous per-command `xdotool` performance p50/p95 from latest artifact:
-  - semantic click: 49/61 ms.
-  - fill: 32/32 ms.
-  - raw CDP click: 4/4 ms.
-  - raw X11 browser click: 110/112 ms.
-  - key down/up: 5/5 ms and 4/4 ms.
-  - stopAll: 1/1 ms, outer observed 4 ms.
+- Artifact location: `/opt/war/phase2-gate-e83ef8764fa2-20260716001243/artifacts/browser-agent/`.
+- Gate artifacts:
+  - `phase2-performance-1784135858497.json`
+  - `phase2-performance-1784135871335.json`
+  - `phase2-performance-1784135884274.json`
 
-Gate blocker:
+Native X11 Gate results:
 
-- Previous raw X11 browser click p95 was 112 ms, above the required 80 ms. Phase 2 remains not Complete until the native helper image passes the latency gate three consecutive times.
+| Run | X11 click p95 | X11 keyDown p95 | X11 keyUp p95 | page.click p95 | stopAll outer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 2 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 3 | 1 ms | 1 ms | 1 ms | 55 ms | 3 ms |
+
+Security posture remains:
+
 - `/v1/control` requires auth in remote/container mode.
 - `/v1/state` requires auth in remote/container mode.
 - CORS is not wildcard.
@@ -202,4 +211,4 @@ The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only
 
 ## Next Step
 
-Bắt đầu Giai đoạn 2 — Điều khiển Chromium toàn phần sau khi người dùng phê duyệt.
+Architecture consolidation contracts.

@@ -60,5 +60,5 @@ RUN chmod +x /usr/local/bin/browser-agent-entrypoint
 
 USER war
 EXPOSE 3766
-ENTRYPOINT ["dumb-init", "--", "browser-agent-entrypoint"]
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/browser-agent-entrypoint"]
 CMD ["node", "platform/browser-agent/src/agent.js"]

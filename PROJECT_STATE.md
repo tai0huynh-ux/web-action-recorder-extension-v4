@@ -1,6 +1,6 @@
 # Project State - Web Action Recorder v4
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 Source of truth: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`
 
 Do not use the similarly named OneDrive folder as source. It only contained an empty `.git` directory during audit.
@@ -9,11 +9,11 @@ Do not use the similarly named OneDrive folder as source. It only contained an e
 
 Phase 1: Complete.
 
-Phase 2: Implemented with persistent native X11 backend; Gate Pending until Linux container smoke/performance runs prove the thresholds three consecutive times.
+Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Phase 2 native X11 validation and performance.
+Current Gate: Phase 2 Native X11 Gate Complete.
 
-Next Step: Run Linux container build, Phase 2 smoke, performance measure/gate, and sync hashes before declaring Phase 2 Complete.
+Next milestone: Architecture consolidation contracts.
 
 ## Current MVP Status
 
@@ -91,9 +91,9 @@ Browser switch-tab regression added on 2026-07-14:
 
 ## Chromium Control Platform Phase 2
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
-Status: Implemented but Gate Blocked.
+Status: Complete. Phase 2 Native X11 Gate passed three consecutive Linux container performance runs.
 
 Phase 2 adds typed Chromium control without WebRTC, VNC/noVNC, Native Messaging, arbitrary JavaScript, generic CDP passthrough, remote shell, file transfer, scheduler expansion, or Phase 3 work.
 
@@ -111,24 +111,40 @@ Latest verification:
 
 - Windows baseline before Phase 2: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 85 tests.
 - Linux baseline before Phase 2: `npm run check` Pass; `npm run test:all` Pass, 85 tests; `npm run container:browser-agent:smoke` Pass.
-- Final Windows: `npm.cmd run test:all` Pass, 120 tests.
-- Final Linux: `npm run test:all` Pass, 120 tests.
+- Baseline commit: `e83ef8764fa26981ca1b8f3fe36d86c50a769f41` on `main`.
+- Final Windows: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 123 tests verified.
+- Final Linux: `npm run check` Pass; `npm run test:all` Pass, 123 tests verified.
+- Container build: `npm run container:browser-agent:build` Pass.
 - Container Phase 1 regression: `npm run container:browser-agent:smoke` Pass.
 - Container Phase 2 smoke: `npm run container:browser-agent:phase2-smoke` Pass.
-- Phase 2 performance artifact: `artifacts/browser-agent/phase2-performance-1784051657690.json`.
+- Phase 2 performance measure: `npm run test:browser-agent:phase2-performance:measure` Pass.
+- Phase 2 performance gate: `npm run test:browser-agent:phase2-performance:gate` Pass, three consecutive runs.
+- Artifact location: `/opt/war/phase2-gate-e83ef8764fa2-20260716001243/artifacts/browser-agent/`.
 
 Evidence:
 
 - Chromium: `150.0.7871.114`.
 - Extension ID/version: `edoicfpldmlabgdalemfgflpldiijdmm` / `0.1.0`.
-- Browser-ready: 1795 ms in latest performance run.
-- Image before: `war-browser-agent:phase1 35518cfa30b8 1.35GB`.
-- Image after: `war-browser-agent:phase1 5810cb6e7b7f 1.35GB`.
-- StopAll: 4 ms latest observed latency; held keys/buttons after stop: 0/0.
+- Gate artifacts:
+  - `phase2-performance-1784135858497.json`
+  - `phase2-performance-1784135871335.json`
+  - `phase2-performance-1784135884274.json`
 
-Gate blocker:
+Native X11 Gate results:
 
-- Previous raw X11 browser click used per-command `xdotool` and measured p95 112 ms, above the Phase 2 target of 80 ms. Native helper implementation is now present, but Phase 2 remains not Complete until Linux container performance gate passes three consecutive runs.
+| Run | X11 click p95 | X11 keyDown p95 | X11 keyUp p95 | page.click p95 | stopAll outer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 2 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 3 | 1 ms | 1 ms | 1 ms | 55 ms | 3 ms |
+
+Known deployment risk remains:
+
+- The Docker host rejects Chromium namespace sandboxing with `Operation not permitted`; the container gate uses explicit `WAR_BROWSER_NO_SANDBOX=1` and the Agent logs a warning. No `--no-sandbox` is silently added by default config.
+
+Next milestone:
+
+- Architecture consolidation contracts.
 
 - `src/graph.js`
 - `src/template.js`

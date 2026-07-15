@@ -1,6 +1,6 @@
 # ADR-0002: Persistent X11 Input Backend
 
-Status: Accepted for Phase 2 implementation; gate validation still pending.
+Status: Accepted and validated; Phase 2 Native X11 Gate complete.
 
 Date: 2026-07-15
 
@@ -90,3 +90,23 @@ The Phase 2 gate must measure native X11 click/key p95 inside a real container a
 - Stop p95 <= 250 ms.
 
 Three consecutive gate runs must pass before Phase 2 can be called Complete.
+
+## Gate Validation
+
+Baseline commit: `e83ef8764fa26981ca1b8f3fe36d86c50a769f41` on `main`.
+
+Artifact location: `/opt/war/phase2-gate-e83ef8764fa2-20260716001243/artifacts/browser-agent/`.
+
+Gate artifacts:
+
+- `phase2-performance-1784135858497.json`
+- `phase2-performance-1784135871335.json`
+- `phase2-performance-1784135884274.json`
+
+| Run | X11 click p95 | X11 keyDown p95 | X11 keyUp p95 | page.click p95 | stopAll outer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 2 | 1 ms | 1 ms | 1 ms | 54 ms | 2 ms |
+| 3 | 1 ms | 1 ms | 1 ms | 55 ms | 3 ms |
+
+Result: Phase 2 Native X11 Gate passed three consecutive Linux container performance runs. The explicit `WAR_BROWSER_NO_SANDBOX=1` deployment risk remains documented in project/platform state because the Docker host rejects Chromium namespace sandboxing.
