@@ -44,6 +44,13 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     semanticDefaultTimeoutMs: readInt(env.WAR_SEMANTIC_DEFAULT_TIMEOUT_MS, 5000, 100, 60000, 'WAR_SEMANTIC_DEFAULT_TIMEOUT_MS'),
     semanticMaxTimeoutMs: readInt(env.WAR_SEMANTIC_MAX_TIMEOUT_MS, 30000, 100, 120000, 'WAR_SEMANTIC_MAX_TIMEOUT_MS'),
     screenshotMaxBytes: readInt(env.WAR_SCREENSHOT_MAX_BYTES, 5 * 1024 * 1024, 1024, 50 * 1024 * 1024, 'WAR_SCREENSHOT_MAX_BYTES'),
+    nativeBridgeSocketPath: resolvePath(env.WAR_AGENT_SOCKET_PATH || path.join(env.WAR_DATA_DIR || DEFAULTS.dataDir, 'run', 'native-bridge.sock'), cwd),
+    nativeBridgeMaxPayloadBytes: readInt(env.WAR_AGENT_SOCKET_MAX_PAYLOAD_BYTES, 1024 * 1024, 1024, 5 * 1024 * 1024, 'WAR_AGENT_SOCKET_MAX_PAYLOAD_BYTES'),
+    nativeBridgeIdleTimeoutMs: readInt(env.WAR_AGENT_SOCKET_IDLE_TIMEOUT_MS, 30000, 1000, 300000, 'WAR_AGENT_SOCKET_IDLE_TIMEOUT_MS'),
+    nativeBridgeRequestTimeoutMs: readInt(env.WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS, 10000, 1000, 300000, 'WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS'),
+    nativeBridgeMaxConnections: readInt(env.WAR_AGENT_SOCKET_MAX_CONNECTIONS, 8, 1, 128, 'WAR_AGENT_SOCKET_MAX_CONNECTIONS'),
+    workflowRegistryMaxCount: readInt(env.WAR_WORKFLOW_REGISTRY_MAX_COUNT, 1000, 1, 100000, 'WAR_WORKFLOW_REGISTRY_MAX_COUNT'),
+    workflowRegistryMaxPayloadBytes: readInt(env.WAR_WORKFLOW_REGISTRY_MAX_PAYLOAD_BYTES, 1024 * 1024, 1024, 10 * 1024 * 1024, 'WAR_WORKFLOW_REGISTRY_MAX_PAYLOAD_BYTES'),
     nodeEnv: readString(env.NODE_ENV, 'development')
   };
   if (config.semanticDefaultTimeoutMs > config.semanticMaxTimeoutMs) {
@@ -53,7 +60,9 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     deviceDir: path.join(config.dataDir, 'device'),
     profileDir: path.join(config.dataDir, 'chromium-profile'),
     downloadsDir: path.join(config.dataDir, 'downloads'),
-    logsDir: path.join(config.dataDir, 'logs')
+    logsDir: path.join(config.dataDir, 'logs'),
+    runtimeDir: path.join(config.dataDir, 'run'),
+    workflowDir: path.join(config.dataDir, 'workflows')
   };
   validateBind(config);
   return config;

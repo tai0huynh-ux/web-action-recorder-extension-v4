@@ -15,7 +15,10 @@ export const DEFAULT_SETTINGS = {
   companionEnrollmentToken: '',
   companionDeviceId: '',
   companionDeviceName: '',
-  companionPollMs: 2000
+  companionPollMs: 2000,
+  legacyCompanionPollingEnabled: true,
+  nativeBridgeEnabled: true,
+  nativeHostName: 'com.web_action_recorder.native_bridge'
 };
 
 export const STEP_TYPES = new Set(['click', 'type', 'navigate', 'switchTab', 'log', 'condition', 'OR', 'AND', 'IFS']);

@@ -13,7 +13,9 @@ Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed thr
 
 Current Gate: Phase 2 Native X11 Gate Complete.
 
-Next milestone: Architecture consolidation contracts.
+Current milestone: Native Messaging and Workflow Sync.
+
+Next milestone after acceptance: Outbound Agent Session and Controller Core.
 
 ## Architecture Consolidation Contracts
 
@@ -57,6 +59,82 @@ Verification:
 - Baseline before changes: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 123 tests.
 - Focused contract tests: `npm.cmd run test:platform:protocol` Pass, 16/16; `npm.cmd run test:platform:workflow-core` Pass, 10/10; `npm.cmd run test:platform:input-parser` Pass, 23/23.
 - Final acceptance: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 150 tests; `git diff --check` Pass with only LF/CRLF warnings.
+
+## Native Messaging and Workflow Sync
+
+Updated: 2026-07-16
+
+Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on Linux host `root@192.168.1.201`.
+
+Baseline before changes:
+
+- HEAD: `148cdd8fe8e358ac0798d009d21ca044fafde69a`.
+- Branch: `main`.
+- Remote: `https://github.com/tai0huynh-ux/web-action-recorder-extension-v4.git`.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 150 tests.
+- Architecture Consolidation Contracts: Complete.
+
+Implemented:
+
+- Chrome Native Messaging binary framing under `native-host/framing.js`.
+- Small Native Host bridge under `native-host/host.js`; stdout is framed protocol response only, stderr is structured logging.
+- Native Host manifest creation, install, and uninstall helpers under `native-host/manifest.js` and `native-host/install.js`.
+- Browser Agent private local socket under `platform/browser-agent/src/localSocketServer.js`; Linux Unix socket path is configurable with `WAR_AGENT_SOCKET_PATH`.
+- Browser Agent workflow registry under `platform/browser-agent/src/workflowRegistry.js` with atomic JSON persistence, corrupt-file recovery, contentHash deduplication, count and payload limits.
+- Native bridge message handler under `platform/browser-agent/src/nativeBridgeHandler.js`.
+- Extension bridge client under `src/native-bridge.js` with connection states, pending request limit, request timeout, correlation IDs, duplicate response protection, disconnect cleanup, and deterministic WorkflowRevision sync.
+- `manifest.json` now includes only the added `nativeMessaging` permission; host permissions and content script matches were not expanded.
+- `legacyCompanionPollingEnabled` defaults to true and gates the existing Companion alarm path without removing legacy code.
+
+Message types added to Protocol v2:
+
+- Extension to Agent: `bridge.hello`, `bridge.health`, `workflow.upload`, `workflow.list`, `workflow.get`, `execution.event`, `execution.result`, `execution.cancelled`, `emergency.stop.ack`.
+- Agent to Extension: `bridge.welcome`, `bridge.health.request`, `workflow.upload.result`, `workflow.list.result`, `workflow.get.result`, `execution.dispatch`, `execution.cancel`, `emergency.stop`.
+
+Workflow sync behavior:
+
+- Profile save remains local-first.
+- WorkflowRevision is sanitized and hashed deterministically before upload.
+- Same `workflowId` plus `contentHash` returns the existing Agent revision.
+- Agent-offline sync records pending metadata and does not block local save.
+
+Execution lifecycle:
+
+- Dispatch, execution event/result, cancel, and emergency stop message contracts are accepted through NativeBridgeEnvelope.
+- Full graph execution still belongs to the Extension runner; Browser Agent does not create a second workflow runner.
+
+Compatibility:
+
+- Legacy Companion polling stays enabled by default for existing installs.
+- Native Bridge does not auto-enable legacy polling.
+- Control path is documented as `legacy_companion` or `native_bridge`.
+
+Docs added:
+
+- `docs/ADR-0004-native-messaging-and-workflow-sync.md`
+- `docs/NATIVE_MESSAGING.md`
+
+Verification on 2026-07-16:
+
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 163 tests.
+- `git diff --check`: Pass with LF/CRLF warnings only.
+- `npm.cmd run test:browser:switch-tab:edge`: Pass on Edge 150.0.4078.65.
+- `npm.cmd run container:browser-agent:build`: Blocked, `docker` is not recognized.
+- `npm.cmd run test:browser-agent:integration`: Blocked, `spawn docker ENOENT`.
+- Linux final exact-source path: `/opt/war/web-action-recorder-extension-v4-native-bridge-final-20260716012156`.
+- Linux `npm ci`: Pass.
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 163 tests.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784139421378.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784139437957.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:soak`: Pass, 100 iterations, average 131 ms, p95 137 ms, 0 errors, 0 timeouts, artifact `soak-1784139456020.json`.
+
+Commit status:
+
+- Ready to commit and push.
 
 ## Current MVP Status
 
@@ -187,7 +265,7 @@ Known deployment risk remains:
 
 Next milestone:
 
-- Architecture consolidation contracts.
+- Outbound Agent Session and Controller Core.
 
 - `src/graph.js`
 - `src/template.js`

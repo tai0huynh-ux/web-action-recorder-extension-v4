@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Architecture Consolidation Contracts.
+Native Messaging and Workflow Sync.
 
 ## Confirmed Architecture Decisions
 
@@ -12,7 +12,7 @@ Architecture Consolidation Contracts.
 - Extension is a local execution component inside a Browser Agent endpoint.
 - The Extension graph runner remains the main workflow execution engine.
 - Browser Agent live control does not replace workflow graph execution.
-- Native Messaging and pairing are contract-only in this milestone.
+- Native Messaging is implemented as a small Native Host bridge to the Browser Agent private local socket.
 - Legacy Extension-to-Companion polling remains a compatibility path.
 
 ## Contracts Added
@@ -25,14 +25,16 @@ Architecture Consolidation Contracts.
 - AgentHello.
 - AgentEnvelope, ControllerEnvelope, and NativeBridgeEnvelope.
 - PairingRequest and PairingResult.
+- Native bridge runtime messages: bridge health, workflow upload/list/get, execution event/result/cancel, and emergency stop.
 
 ## Compatibility Decisions
 
-- No Extension runtime behavior changed.
+- Extension save-profile flow now attempts non-blocking workflow sync over Native Bridge.
 - No Companion HTTP or scheduler runtime behavior changed.
-- No Browser Agent HTTP runtime behavior changed.
+- Browser Agent HTTP runtime behavior remains unchanged; Native Bridge uses a private local socket.
 - Companion command statuses map through a pure compatibility adapter.
 - Unsupported future capabilities such as remote video and clipboard are represented as false.
+- `legacyCompanionPollingEnabled` defaults to true for existing compatibility.
 
 ## Tests And Baseline
 
@@ -51,15 +53,14 @@ Architecture contract verification:
 
 ## Known Gaps
 
-- Protocol v2 is contract and adapter code only; no transport is implemented.
 - Pairing is contract-only.
-- NativeBridgeEnvelope is contract-only.
 - Controller Core refactor is not implemented in this milestone.
 - Outbound persistent Agent-to-Controller sessions are not implemented in this milestone.
+- Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
 
 ## Next Milestone
 
-Controller Core and persistent Agent session architecture, after approval.
+Outbound Agent Session and Controller Core.
 
 ## Open Questions
 

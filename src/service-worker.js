@@ -1,7 +1,9 @@
 import { STORAGE_KEYS, DEFAULT_SETTINGS, SAMPLE_PROFILE, clone, normalizeProfile, uid, isSupportedRunUrl, matchesSwitchTabPattern, normalizeSwitchTabPattern } from './shared.js';
 import { findRootStepIds, validateGraph } from './graph.js';
+import { NativeBridgeClient, createWorkflowRevisionForBridge, syncWorkflowRevision } from './native-bridge.js';
 
 const runtime = { running: new Map() };
+let nativeBridgeClient = null;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const data = await chrome.storage.local.get([STORAGE_KEYS.profiles, STORAGE_KEYS.activeProfileId, STORAGE_KEYS.settings]);
@@ -108,6 +110,7 @@ async function saveProfiles(profiles, activeProfileId) {
     steps: profile.steps.map(({ isRoot, ...step }) => step)
   }));
   await chrome.storage.local.set({ [STORAGE_KEYS.profiles]: normalized, [STORAGE_KEYS.activeProfileId]: activeProfileId || normalized[0]?.id || null });
+  await syncProfilesToNativeBridge(normalized);
 }
 
 async function addLibraryItem(item) {
@@ -274,6 +277,7 @@ async function configureCompanionPolling() {
   const { [STORAGE_KEYS.settings]: raw } = await chrome.storage.local.get(STORAGE_KEYS.settings);
   const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
   await chrome.alarms.clear('war-companion-poll');
+  if (!settings.legacyCompanionPollingEnabled) return;
   if (!settings.externalApiEnabled) return;
   chrome.alarms.create('war-companion-poll', { periodInMinutes: Math.max(0.1, Number(settings.companionPollMs || 2000) / 60000) });
   pollCompanion().catch(() => {});
@@ -357,4 +361,56 @@ async function heartbeatCompanion(base, headers, settings, state) {
 async function defaultDeviceName() {
   const platform = await chrome.runtime.getPlatformInfo().catch(() => null);
   return `Browser endpoint ${platform?.os || ''}`.trim();
+}
+
+async function syncProfilesToNativeBridge(profiles) {
+  const { [STORAGE_KEYS.settings]: raw } = await chrome.storage.local.get(STORAGE_KEYS.settings);
+  const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  if (!settings.nativeBridgeEnabled) return;
+  const client = getNativeBridgeClient(settings.nativeHostName);
+  const metadataKey = 'war_native_bridge_sync';
+  const current = (await chrome.storage.local.get(metadataKey))[metadataKey] || {};
+  const next = { ...current };
+  for (const profile of profiles) {
+    try {
+      const previous = current[profile.id] || {};
+      const revision = await createWorkflowRevisionForBridge(profile, {
+        sourceDeviceId: settings.companionDeviceId || 'extension-local',
+        revision: previous.revision || 1
+      });
+      if (previous.contentHash === revision.contentHash && previous.status === 'synced') continue;
+      const response = await syncWorkflowRevision(client, revision);
+      if (response?.payload?.ok) {
+        next[profile.id] = {
+          status: 'synced',
+          revision: response.payload.revision || revision.revision,
+          contentHash: revision.contentHash,
+          syncedAt: new Date().toISOString()
+        };
+      } else {
+        next[profile.id] = {
+          ...previous,
+          status: 'pending',
+          contentHash: revision.contentHash,
+          error: response?.payload?.error?.code || 'sync_failed',
+          updatedAt: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      next[profile.id] = {
+        ...(current[profile.id] || {}),
+        status: 'pending',
+        error: error.message,
+        updatedAt: new Date().toISOString()
+      };
+    }
+  }
+  await chrome.storage.local.set({ [metadataKey]: next });
+}
+
+function getNativeBridgeClient(hostName) {
+  if (!nativeBridgeClient || nativeBridgeClient.hostName !== hostName) {
+    nativeBridgeClient = new NativeBridgeClient({ hostName });
+  }
+  return nativeBridgeClient;
 }

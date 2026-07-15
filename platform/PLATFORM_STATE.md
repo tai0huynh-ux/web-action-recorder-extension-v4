@@ -211,7 +211,7 @@ The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only
 
 ## Next Step
 
-Architecture consolidation contracts.
+Outbound Agent Session and Controller Core.
 
 ## Architecture Consolidation Contracts
 
@@ -246,3 +246,58 @@ Verification:
 - Baseline before changes: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 123 tests.
 - Focused tests: protocol 16/16, workflow-core 10/10, input-parser 23/23.
 - Final acceptance: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 150 tests; `git diff --check` Pass with only LF/CRLF warnings.
+
+## Native Messaging and Workflow Sync
+
+Updated: 2026-07-16
+
+Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on Linux host `root@192.168.1.201`.
+
+New platform modules:
+
+- `native-host/framing.js`
+- `native-host/host.js`
+- `native-host/manifest.js`
+- `native-host/install.js`
+- `platform/browser-agent/src/localSocketServer.js`
+- `platform/browser-agent/src/nativeBridgeHandler.js`
+- `platform/browser-agent/src/workflowRegistry.js`
+- `src/native-bridge.js`
+
+Architecture:
+
+- Extension connects to Native Host through Chrome Native Messaging.
+- Native Host forwards Protocol v2 envelopes to Browser Agent over a private local socket.
+- Browser Agent owns device identity and workflow registry.
+- Extension graph runner remains the workflow execution engine.
+- Legacy Companion polling remains a compatibility path behind `legacyCompanionPollingEnabled`.
+
+Security posture:
+
+- No public TCP listener was added.
+- No WebRTC, Electron, clipboard, remote screen, arbitrary JavaScript, generic CDP, shell, or file-transfer surface was added.
+- Native Host does not control Chromium directly.
+- Large media/file payloads are excluded from Native Messaging.
+- Workflow sync redacts sensitive typed values before persistence.
+
+Verification added:
+
+- Native framing tests cover encode/decode, partial header, partial payload, multiple messages, zero-length, oversized payload, invalid JSON, and socket forwarding.
+- Browser Agent tests cover workflow registry revisioning/deduplication/recovery, socket permissions/path safety/payload limits, and bridge health/upload/list/get handling.
+- Native bridge round-trip test covers `workflow.upload` and `execution.event` through the Native Host socket client and Agent socket handler.
+
+Latest local verification:
+
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 163 tests.
+- `git diff --check`: Pass with LF/CRLF warnings only.
+- `npm.cmd run test:browser:switch-tab:edge`: Pass on Edge 150.0.4078.65.
+- `npm.cmd run container:browser-agent:build`: Blocked, `docker` is not recognized.
+- `npm.cmd run test:browser-agent:integration`: Blocked, `spawn docker ENOENT`.
+- Linux final exact-source path: `/opt/war/web-action-recorder-extension-v4-native-bridge-final-20260716012156`.
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 163 tests.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784139421378.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784139437957.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:soak`: Pass, 100 iterations, average 131 ms, p95 137 ms, 0 errors, 0 timeouts, artifact `soak-1784139456020.json`.

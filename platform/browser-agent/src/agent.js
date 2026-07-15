@@ -6,6 +6,9 @@ import { BrowserSupervisor } from './browserSupervisor.js';
 import { ControlDispatcher } from './controlDispatcher.js';
 import { createHttpServer, listen } from './httpServer.js';
 import { createLogger } from './errors.js';
+import { createWorkflowRegistry } from './workflowRegistry.js';
+import { NativeBridgeHandler } from './nativeBridgeHandler.js';
+import { LocalSocketServer } from './localSocketServer.js';
 
 export async function main() {
   const packageJson = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
@@ -21,6 +24,18 @@ export async function main() {
   const supervisor = new BrowserSupervisor({ controller, log });
   supervisor.installSignalHandlers();
   const dispatcher = new ControlDispatcher({ supervisor, controller, deviceId: identity.deviceId, config, log });
+  const registry = createWorkflowRegistry(config, log);
+  const nativeBridge = new NativeBridgeHandler({ identity, registry, version: packageJson.version, supervisor, dispatcher, log });
+  const socketServer = new LocalSocketServer({
+    socketPath: config.nativeBridgeSocketPath,
+    maxPayloadBytes: config.nativeBridgeMaxPayloadBytes,
+    idleTimeoutMs: config.nativeBridgeIdleTimeoutMs,
+    maxConnections: config.nativeBridgeMaxConnections,
+    handler: (message) => nativeBridge.handle(message),
+    log
+  });
+  await socketServer.start();
+  log('info', 'agent', 'native_bridge_socket_listening', { socketPath: config.nativeBridgeSocketPath });
   if (config.autoStartBrowser) {
     await supervisor.start().catch((error) => {
       log('error', 'agent', 'auto_start_failed', { message: error.message });

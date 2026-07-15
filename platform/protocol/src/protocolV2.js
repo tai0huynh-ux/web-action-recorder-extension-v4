@@ -42,6 +42,23 @@ export const MESSAGE_TYPES = Object.freeze([
   'agent.hello',
   'agent.presence',
   'agent.execution.event',
+  'bridge.hello',
+  'bridge.welcome',
+  'bridge.health',
+  'bridge.health.request',
+  'workflow.upload',
+  'workflow.upload.result',
+  'workflow.list',
+  'workflow.list.result',
+  'workflow.get',
+  'workflow.get.result',
+  'execution.dispatch',
+  'execution.cancel',
+  'execution.event',
+  'execution.result',
+  'execution.cancelled',
+  'emergency.stop',
+  'emergency.stop.ack',
   'controller.dispatch.create',
   'controller.job.cancel',
   'native.bridge.request',
@@ -55,7 +72,20 @@ const MAX_ARRAY_LENGTH = 256;
 const MAX_LABELS = 64;
 const MAX_GROUPS = 64;
 const MAX_ASSIGNMENTS = 512;
-const MUTATING_TYPES = new Set(['controller.dispatch.create', 'controller.job.cancel', 'native.bridge.request', 'pairing.request']);
+const MUTATING_TYPES = new Set([
+  'controller.dispatch.create',
+  'controller.job.cancel',
+  'native.bridge.request',
+  'pairing.request',
+  'workflow.upload',
+  'execution.dispatch',
+  'execution.cancel',
+  'execution.event',
+  'execution.result',
+  'execution.cancelled',
+  'emergency.stop',
+  'emergency.stop.ack'
+]);
 const DISPATCH_TYPES = new Set(['controller.dispatch.create']);
 const COMMON_ENVELOPE_KEYS = new Set([
   'protocolVersion',
@@ -80,7 +110,29 @@ export function validateControllerEnvelope(envelope) {
 }
 
 export function validateNativeBridgeEnvelope(envelope) {
-  return validateEnvelope(envelope, { expectedTypes: ['native.bridge.request', 'native.bridge.response'] });
+  return validateEnvelope(envelope, {
+    expectedTypes: [
+      'native.bridge.request',
+      'native.bridge.response',
+      'bridge.hello',
+      'bridge.welcome',
+      'bridge.health',
+      'bridge.health.request',
+      'workflow.upload',
+      'workflow.upload.result',
+      'workflow.list',
+      'workflow.list.result',
+      'workflow.get',
+      'workflow.get.result',
+      'execution.dispatch',
+      'execution.cancel',
+      'execution.event',
+      'execution.result',
+      'execution.cancelled',
+      'emergency.stop',
+      'emergency.stop.ack'
+    ]
+  });
 }
 
 export function validateEnvelope(envelope, options = {}) {
@@ -106,6 +158,10 @@ export function validateEnvelope(envelope, options = {}) {
   if (envelope.type === 'agent.hello') validateAgentHelloPayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'agent.presence') validatePresenceEvent(envelope.payload, '$.payload', errors);
   if (envelope.type === 'agent.execution.event') validateExecutionEvent(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'workflow.upload') validateWorkflowUploadPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'workflow.get') validateWorkflowGetPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'execution.dispatch') validateExecutionDispatchPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') validateExecutionEvent(envelope.payload, '$.payload', errors);
   if (envelope.type === 'controller.dispatch.create') validateDispatchPlan(envelope.payload, '$.payload', errors);
   if (envelope.type === 'pairing.request') validatePairingRequest(envelope.payload, '$.payload', errors);
   if (envelope.type === 'pairing.result') validatePairingResult(envelope.payload, '$.payload', errors);
@@ -271,6 +327,26 @@ function validateExecutionEvent(value, path, errors) {
   requireIsoUtc(value.sentAt, `${path}.sentAt`, errors);
   optionalString(value.stepId, `${path}.stepId`, errors);
   optionalString(value.message, `${path}.message`, errors);
+}
+
+function validateWorkflowUploadPayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'workflow.upload payload must be an object.');
+  validateWorkflowRevisionInto(value.revision, `${path}.revision`, errors);
+}
+
+function validateWorkflowGetPayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'workflow.get payload must be an object.');
+  requireString(value, 'workflowId', `${path}.workflowId`, errors);
+  requirePositiveInteger(value.revision, `${path}.revision`, errors);
+}
+
+function validateExecutionDispatchPayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'execution.dispatch payload must be an object.');
+  for (const key of ['jobId', 'workflowId', 'workflowContentHash', 'idempotencyKey']) requireString(value, key, `${path}.${key}`, errors);
+  requirePositiveInteger(value.workflowRevision, `${path}.workflowRevision`, errors);
+  requireIsoUtc(value.deadline, `${path}.deadline`, errors);
+  if (!isPlainObject(value.inputs || {})) error(errors, `${path}.inputs`, 'inputs must be an object.');
+  if (value.controlPath !== undefined && !['legacy_companion', 'native_bridge'].includes(value.controlPath)) error(errors, `${path}.controlPath`, 'Invalid controlPath.');
 }
 
 function validatePairingRequest(value, path, errors) {
