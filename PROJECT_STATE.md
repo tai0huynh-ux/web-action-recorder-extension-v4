@@ -15,7 +15,7 @@ Current Gate: Phase 2 Native X11 Gate Complete.
 
 Current milestone: Native Messaging and Workflow Sync.
 
-Next milestone after acceptance: Outbound Agent Session and Controller Core.
+Next milestone after acceptance: Pairing Identity and Outbound Agent WSS Session.
 
 ## Architecture Consolidation Contracts
 
@@ -114,6 +114,46 @@ Docs added:
 
 - `docs/ADR-0004-native-messaging-and-workflow-sync.md`
 - `docs/NATIVE_MESSAGING.md`
+
+## Controller Core Extraction
+
+Updated: 2026-07-16
+
+Status: Complete. Windows local checks pass, and Linux/container verification passed on `root@192.168.1.201`.
+
+Baseline:
+
+- HEAD: `fbc4119f307e3dd4735b72d22073639fecbbb6ee`.
+- Branch: `main`.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 163 tests.
+
+Implemented:
+
+- Extracted Controller Core under `platform/controller-core/`.
+- Companion HTTP now acts as compatibility adapter over Controller Core.
+- Added DeviceRegistry, WorkflowRegistry, GroupRegistry, JobService, ExecutionEventStore, AuthPolicy, AuditService, PersistenceAdapter, dataset assignment helper, and unified state transition rules.
+- Kept Companion paths, request/response shapes, token behavior, allowlist behavior, and dashboard behavior.
+- Kept legacy `leased` as compatibility status only; unified core state maps it to `dispatched`.
+- JSON persistence now carries controller migration metadata, backs up before migration, and surfaces corrupt store files instead of silently resetting.
+- No WSS, Electron, WebRTC, Browser Agent behavior, Extension runtime, Native Messaging runtime, or Dockerfile changes.
+
+Docs added:
+
+- `docs/ADR-0005-controller-core-extraction.md`
+- `docs/CONTROLLER_CORE.md`
+
+Verification:
+
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 172 tests.
+- Linux path: `/opt/war/web-action-recorder-extension-v4-controller-core-20260716013857`.
+- Linux `npm ci`: Pass.
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 172 tests.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784140800752.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784140817335.json`.
 
 Verification on 2026-07-16:
 

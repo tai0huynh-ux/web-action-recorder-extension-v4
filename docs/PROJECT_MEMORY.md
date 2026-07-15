@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Native Messaging and Workflow Sync.
+Controller Core Extraction.
 
 ## Confirmed Architecture Decisions
 
@@ -35,6 +35,8 @@ Native Messaging and Workflow Sync.
 - Companion command statuses map through a pure compatibility adapter.
 - Unsupported future capabilities such as remote video and clipboard are represented as false.
 - `legacyCompanionPollingEnabled` defaults to true for existing compatibility.
+- Companion HTTP is now a compatibility adapter over Controller Core.
+- Controller Core has no HTTP, WebSocket, Electron, Chrome API, or fixed filesystem path dependency.
 
 ## Tests And Baseline
 
@@ -54,13 +56,13 @@ Architecture contract verification:
 ## Known Gaps
 
 - Pairing is contract-only.
-- Controller Core refactor is not implemented in this milestone.
 - Outbound persistent Agent-to-Controller sessions are not implemented in this milestone.
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
+- Pairing public-key/runtime is not implemented in this milestone.
 
 ## Next Milestone
 
-Outbound Agent Session and Controller Core.
+Pairing Identity and Outbound Agent WSS Session.
 
 ## Open Questions
 

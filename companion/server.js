@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import http from 'node:http';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JsonStore } from './store.js';
 import { bearerToken, ipAllowed, newToken, requireLongToken, timingEqual, tokenHash } from './auth.js';
-import { COMMAND_TYPES, ackCommand, buildAssignments, finishCommand, leaseNextCommand } from './scheduler.js';
+import { ControllerCore } from '../platform/controller-core/src/controllerCore.js';
+import { AuthPolicy } from '../platform/controller-core/src/authPolicy.js';
+import { ControllerCoreError } from '../platform/controller-core/src/errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,10 +35,18 @@ export function parseArgs(argv = process.argv.slice(2), env = process.env) {
 export function createServer(config, store) {
   const adminHash = tokenHash(config.adminToken);
   const enrollmentHash = tokenHash(config.enrollmentToken);
+  const core = new ControllerCore({
+    store,
+    authPolicy: new AuthPolicy({
+      ipAllowed: (ip) => ipAllowed(ip, config.allow),
+      verifyCredential: (context) => context.credentialVerificationResult === true
+    })
+  });
 
   return http.createServer(async (req, res) => {
     try {
-      if (!ipAllowed(req.socket.remoteAddress, config.allow)) return json(res, 403, { error: 'IP not allowed' });
+      const sourceAddress = req.socket.remoteAddress;
+      if (!ipAllowed(sourceAddress, config.allow)) return json(res, 403, { error: 'IP not allowed' });
       if (req.method === 'OPTIONS') return cors(res, 204).end();
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, version: '0.2.0' });
@@ -45,45 +54,30 @@ export function createServer(config, store) {
       if (req.method === 'GET' && url.pathname.startsWith('/dashboard.')) return serveAsset(res, url.pathname);
 
       if (url.pathname === '/v1/devices/enroll' && req.method === 'POST') {
-        requireToken(req, enrollmentHash);
+        requireToken(req, enrollmentHash, core.auth, { actorType: 'enrollment', requestedAction: 'device.enroll', sourceAddress });
         const body = await readJson(req);
         const rawToken = newToken();
-        const device = await store.update((state) => {
-          const item = {
-            id: body.deviceId || cryptoId('dev'),
-            name: String(body.name || body.deviceName || 'Endpoint'),
-            groupIds: Array.isArray(body.groupIds) ? body.groupIds : [],
-            tokenHash: tokenHash(rawToken),
-            createdAt: new Date().toISOString(),
-            lastSeenAt: new Date().toISOString(),
-            status: 'online',
-            extensionVersion: body.extensionVersion || '',
-            browser: body.browser || '',
-            profiles: []
-          };
-          state.devices = state.devices.filter((device) => device.id !== item.id).concat(item);
-          return item;
-        });
-        return json(res, 201, { ...publicDevice(device), deviceToken: rawToken });
+        const device = await core.devices.enrollDevice(body, { rawToken, tokenHash: tokenHash(rawToken) });
+        return json(res, 201, device);
       }
 
-      if (url.pathname.startsWith('/v1/devices/')) return handleDeviceRoute(req, res, url, store, config);
+      if (url.pathname.startsWith('/v1/devices/')) return handleDeviceRoute(req, res, url, store, config, core, sourceAddress);
 
-      requireToken(req, adminHash);
+      requireToken(req, adminHash, core.auth, { actorType: 'admin', requestedAction: `${req.method} ${url.pathname}`, sourceAddress });
       if (url.pathname === '/v1/devices' && req.method === 'GET') {
-        return json(res, 200, { devices: store.snapshot().devices.map(publicDevice) });
+        return json(res, 200, core.devices.listDevices());
       }
-      if (url.pathname === '/v1/commands' && req.method === 'POST') return enqueueLegacyCommand(req, res, store);
-      if (url.pathname === '/v1/commands/next' && req.method === 'GET') return legacyNextCommand(res, store, config);
+      if (url.pathname === '/v1/commands' && req.method === 'POST') return enqueueLegacyCommand(req, res, core);
+      if (url.pathname === '/v1/commands/next' && req.method === 'GET') return legacyNextCommand(res, store, config, core);
       const legacyResult = url.pathname.match(/^\/v1\/commands\/([^/]+)\/result$/);
-      if (legacyResult && req.method === 'POST') return legacyCommandResult(req, res, store, legacyResult[1]);
+      if (legacyResult && req.method === 'POST') return legacyCommandResult(req, res, core, legacyResult[1]);
       const commandGet = url.pathname.match(/^\/v1\/commands\/([^/]+)$/);
-      if (commandGet && req.method === 'GET') return getCommand(res, store, commandGet[1]);
-      if (url.pathname === '/v1/batches' && req.method === 'POST') return createBatch(req, res, store);
+      if (commandGet && req.method === 'GET') return getCommand(res, core, commandGet[1]);
+      if (url.pathname === '/v1/batches' && req.method === 'POST') return createBatch(req, res, core);
       const batchGet = url.pathname.match(/^\/v1\/batches\/([^/]+)$/);
-      if (batchGet && req.method === 'GET') return getBatch(res, store, batchGet[1]);
+      if (batchGet && req.method === 'GET') return getBatch(res, core, batchGet[1]);
       const batchStop = url.pathname.match(/^\/v1\/batches\/([^/]+)\/stop$/);
-      if (batchStop && req.method === 'POST') return stopBatch(res, store, batchStop[1]);
+      if (batchStop && req.method === 'POST') return stopBatch(res, core, batchStop[1]);
       return json(res, 404, { error: 'Not found' });
     } catch (error) {
       return json(res, error.status || 400, { error: error.message });
@@ -91,191 +85,94 @@ export function createServer(config, store) {
   });
 }
 
-async function handleDeviceRoute(req, res, url, store, config) {
+async function handleDeviceRoute(req, res, url, store, config, core, sourceAddress) {
   const match = url.pathname.match(/^\/v1\/devices\/([^/]+)(?:\/(.+))?$/);
   const deviceId = decodeURIComponent(match?.[1] || '');
   const suffix = match?.[2] || '';
   const device = store.snapshot().devices.find((item) => item.id === deviceId);
   if (!device) return json(res, 404, { error: 'Device not found' });
-  requireToken(req, device.tokenHash);
+  requireToken(req, device.tokenHash, core.auth, { actorType: 'device', actorId: deviceId, requestedAction: `${req.method} ${suffix || 'device'}`, sourceAddress });
 
   if (suffix === 'register' && req.method === 'POST') {
     const body = await readJson(req);
-    await store.update((state) => {
-      const item = state.devices.find((device) => device.id === deviceId);
-      Object.assign(item, {
-        name: String(body.name || item.name),
-        groupIds: Array.isArray(body.groupIds) ? body.groupIds : item.groupIds,
-        extensionVersion: body.extensionVersion || item.extensionVersion,
-        browser: body.browser || item.browser,
-        profiles: Array.isArray(body.profiles) ? body.profiles : item.profiles,
-        capabilities: body.capabilities || item.capabilities,
-        lastSeenAt: new Date().toISOString(),
-        status: 'online'
-      });
-    });
+    await core.devices.registerDevice(deviceId, body);
     return json(res, 200, { ok: true });
   }
   if (suffix === 'heartbeat' && req.method === 'POST') {
     const body = await readJson(req);
-    await store.update((state) => {
-      const item = state.devices.find((device) => device.id === deviceId);
-      item.status = body.status || 'online';
-      item.runState = body.runState || null;
-      item.lastSeenAt = new Date().toISOString();
-    });
+    await core.devices.heartbeat(deviceId, body);
     return json(res, 200, { ok: true });
   }
   if (suffix === 'commands/next' && req.method === 'GET') {
-    const command = await store.update((state) => leaseNextCommand(state, deviceId, config.leaseMs));
+    const command = await core.jobs.leaseNext(deviceId, config.leaseMs);
     if (!command) return empty(res);
     return json(res, 200, command);
   }
   const ack = suffix.match(/^commands\/([^/]+)\/ack$/);
   if (ack && req.method === 'POST') {
     const body = await readJson(req);
-    const command = await store.update((state) => ackCommand(state, deviceId, ack[1], body.leaseId));
+    const command = await core.jobs.acknowledge(deviceId, ack[1], body.leaseId);
     return json(res, 200, command);
   }
   const result = suffix.match(/^commands\/([^/]+)\/result$/);
   if (result && req.method === 'POST') {
     const body = await readJson(req);
-    const command = await store.update((state) => finishCommand(state, deviceId, result[1], body.leaseId, body.result || body));
+    const command = await core.jobs.finish(deviceId, result[1], body.leaseId, body.result || body);
     return json(res, 200, command);
   }
   return json(res, 404, { error: 'Not found' });
 }
 
-async function createBatch(req, res, store) {
+async function createBatch(req, res, core) {
   const body = await readJson(req);
-  const now = new Date().toISOString();
-  const batchId = cryptoId('batch');
-  const batch = await store.update((state) => {
-    const devices = state.devices.filter((device) => (body.deviceIds || []).includes(device.id));
-    if (!devices.length) throw new Error('No target devices');
-    const commands = buildAssignments({
-      devices,
-      type: body.type || 'run_profile',
-      profileId: body.profileId,
-      inputs: body.inputs || {},
-      dataset: body.dataset || [],
-      assignmentMode: body.assignmentMode || 'same',
-      allowDuplicate: body.allowDuplicate !== false,
-      seed: body.seed || batchId
-    }).map((command, index) => ({ ...command, batchId, notBefore: new Date(Date.now() + Number(body.delayMs || 0) * index).toISOString() }));
-    const item = {
-      id: batchId,
-      name: body.name || `Batch ${batchId}`,
-      profileId: body.profileId,
-      status: 'queued',
-      assignmentMode: body.assignmentMode || 'same',
-      allowDuplicate: body.allowDuplicate !== false,
-      createdAt: now,
-      commandIds: commands.map((command) => command.id)
-    };
-    state.commands.push(...commands);
-    state.batches.push(item);
-    return summarizeBatch(item, commands);
-  });
+  const batch = await core.jobs.createDispatchPlan(body);
   return json(res, 201, batch);
 }
 
-function getBatch(res, store, id) {
-  const state = store.snapshot();
-  const batch = state.batches.find((item) => item.id === id);
-  if (!batch) return json(res, 404, { error: 'Batch not found' });
-  const commands = state.commands.filter((command) => command.batchId === id);
-  return json(res, 200, summarizeBatch(batch, commands));
+function getBatch(res, core, id) {
+  return json(res, 200, core.jobs.getBatch(id));
 }
 
-async function stopBatch(res, store, id) {
-  const batch = await store.update((state) => {
-    const item = state.batches.find((batch) => batch.id === id);
-    if (!item) throw new Error('Batch not found');
-    item.status = 'cancelled';
-    for (const command of state.commands.filter((command) => command.batchId === id && !['succeeded', 'failed'].includes(command.status))) {
-      command.status = 'cancelled';
-      command.completedAt = new Date().toISOString();
-    }
-    return summarizeBatch(item, state.commands.filter((command) => command.batchId === id));
-  });
+async function stopBatch(res, core, id) {
+  const batch = await core.jobs.cancelBatch(id);
   return json(res, 200, batch);
 }
 
-async function enqueueLegacyCommand(req, res, store) {
+async function enqueueLegacyCommand(req, res, core) {
   const body = await readJson(req);
-  if (!COMMAND_TYPES.has(body.type)) return json(res, 400, { error: 'Unsupported command type' });
-  const state = store.snapshot();
-  const deviceId = body.deviceId || state.devices[0]?.id || 'legacy';
-  const command = {
-    id: cryptoId('cmd'),
-    deviceId,
-    type: body.type,
-    profileId: body.profileId,
-    runId: body.runId,
-    inputs: body.inputs || {},
-    status: 'queued',
-    attempt: 0,
-    maxAttempts: 3,
-    createdAt: new Date().toISOString(),
-    notBefore: new Date().toISOString()
-  };
-  await store.update((state) => {
-    if (!state.devices.some((device) => device.id === deviceId)) state.devices.push({ id: deviceId, name: 'Legacy endpoint', tokenHash: '', createdAt: new Date().toISOString(), lastSeenAt: null, status: 'unknown', profiles: [] });
-    state.commands.push(command);
-  });
+  const command = await core.jobs.enqueueLegacyCommand(body);
   return json(res, 202, command);
 }
 
-async function legacyNextCommand(res, store, config) {
+async function legacyNextCommand(res, store, config, core) {
   const state = store.snapshot();
   const deviceId = state.devices[0]?.id || 'legacy';
-  const command = await store.update((state) => leaseNextCommand(state, deviceId, config.leaseMs));
+  const command = await core.jobs.leaseNext(deviceId, config.leaseMs);
   if (!command) return empty(res);
   return json(res, 200, command);
 }
 
-async function legacyCommandResult(req, res, store, commandId) {
+async function legacyCommandResult(req, res, core, commandId) {
   const body = await readJson(req);
-  await store.update((state) => {
-    const command = state.commands.find((item) => item.id === commandId);
-    if (!command) throw new Error('Command not found');
-    command.status = body.ok === false ? 'failed' : 'succeeded';
-    command.result = body;
-    command.completedAt = new Date().toISOString();
-  });
-  return json(res, 200, { ok: true });
+  return json(res, 200, await core.jobs.legacyResult(commandId, body));
 }
 
-function getCommand(res, store, id) {
-  const command = store.snapshot().commands.find((item) => item.id === id);
-  if (!command) return json(res, 404, { error: 'Command not found' });
-  return json(res, 200, command);
+function getCommand(res, core, id) {
+  return json(res, 200, core.jobs.getCommand(id));
 }
 
-function summarizeBatch(batch, commands) {
-  const counts = commands.reduce((acc, command) => {
-    acc[command.status] = (acc[command.status] || 0) + 1;
-    return acc;
-  }, {});
-  return { ...batch, counts, commands };
-}
-
-function publicDevice(device) {
-  const { tokenHash: _tokenHash, ...safe } = device;
-  return safe;
-}
-
-function requireToken(req, expectedHash) {
-  if (!timingEqual(tokenHash(bearerToken(req)), expectedHash)) {
-    const error = new Error('Unauthorized');
-    error.status = 401;
+function requireToken(req, expectedHash, authPolicy, context) {
+  const credentialVerificationResult = timingEqual(tokenHash(bearerToken(req)), expectedHash);
+  try {
+    authPolicy.require({ ...context, credentialVerificationResult });
+  } catch (error) {
+    if (error instanceof ControllerCoreError) {
+      const publicError = new Error(error.message);
+      publicError.status = error.status;
+      throw publicError;
+    }
     throw error;
   }
-}
-
-function cryptoId(prefix) {
-  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 async function readJson(req) {

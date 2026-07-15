@@ -3,11 +3,16 @@ import path from 'node:path';
 
 export const EMPTY_STATE = {
   schemaVersion: 1,
+  controllerCore: { schemaVersion: 1, migrationVersion: 1 },
   devices: [],
   commands: [],
   batches: [],
   datasets: [],
-  results: []
+  results: [],
+  groups: [],
+  workflowRevisions: [],
+  executionEvents: [],
+  auditEvents: []
 };
 
 export class JsonStore {
@@ -21,10 +26,11 @@ export class JsonStore {
     try {
       const raw = await fs.readFile(this.filePath, 'utf8');
       this.state = { ...structuredClone(EMPTY_STATE), ...JSON.parse(raw) };
+      await this.migrateIfNeeded();
     } catch (error) {
       if (error.code !== 'ENOENT') {
         await fs.copyFile(this.filePath, `${this.filePath}.corrupt-${Date.now()}`).catch(() => {});
-        this.state = structuredClone(EMPTY_STATE);
+        throw new Error(`STORE_CORRUPT: ${path.basename(this.filePath)} was copied aside for recovery`);
       }
     }
     return this.state;
@@ -49,6 +55,14 @@ export class JsonStore {
     const tmp = `${this.filePath}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(this.state, null, 2));
     await fs.rename(tmp, this.filePath);
+  }
+
+  async migrateIfNeeded() {
+    const migrationVersion = Number(this.state.controllerCore?.migrationVersion || 0);
+    if (migrationVersion >= 1) return;
+    await fs.copyFile(this.filePath, `${this.filePath}.backup-v${migrationVersion}-${Date.now()}`).catch(() => {});
+    this.state = { ...structuredClone(EMPTY_STATE), ...this.state, controllerCore: { schemaVersion: 1, migrationVersion: 1 } };
+    await this.flush();
   }
 }
 

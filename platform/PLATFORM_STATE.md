@@ -301,3 +301,41 @@ Latest local verification:
 - Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784139421378.json`.
 - Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784139437957.json`.
 - Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:soak`: Pass, 100 iterations, average 131 ms, p95 137 ms, 0 errors, 0 timeouts, artifact `soak-1784139456020.json`.
+
+## Controller Core Extraction
+
+Updated: 2026-07-16
+
+Status: Complete. Windows local checks pass, and Linux/container verification passed on `root@192.168.1.201`.
+
+New modules:
+
+- `platform/controller-core/src/controllerCore.js`
+- `platform/controller-core/src/deviceRegistry.js`
+- `platform/controller-core/src/workflowRegistry.js`
+- `platform/controller-core/src/groupRegistry.js`
+- `platform/controller-core/src/jobService.js`
+- `platform/controller-core/src/executionEventStore.js`
+- `platform/controller-core/src/authPolicy.js`
+- `platform/controller-core/src/auditService.js`
+- `platform/controller-core/src/persistenceAdapter.js`
+- `platform/controller-core/src/stateTransitions.js`
+- `platform/controller-core/src/datasetAssignment.js`
+
+Compatibility:
+
+- Companion HTTP remains the public compatibility surface.
+- Route handlers parse/authenticate/map responses and call Controller Core.
+- No WSS, Electron, WebRTC, Browser Agent HTTP, Native Bridge, X11, Extension runtime, or Dockerfile changes.
+
+Verification:
+
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 172 tests.
+- Linux path: `/opt/war/web-action-recorder-extension-v4-controller-core-20260716013857`.
+- Linux `npm ci`: Pass.
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 172 tests.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784140800752.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784140817335.json`.
