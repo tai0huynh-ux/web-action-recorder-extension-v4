@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-action-recorder.local/schemas/war-control-envelope.v1.schema.json",
+  "title": "WAR Control Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "messageId",
+    "type",
+    "deviceId",
+    "timestamp",
+    "deadlineMs",
+    "idempotencyKey",
+    "payload"
+  ],
+  "properties": {
+    "protocol": { "const": "war-control.v1" },
+    "messageId": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "deviceId": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "deadlineMs": { "type": "integer", "minimum": 0 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" }
+  }
+}

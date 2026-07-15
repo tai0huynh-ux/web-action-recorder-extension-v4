@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Web Action Recorder Runner MVP",
+  "description": "Record, edit, and run simple browser workflows with conditions and profiles.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "commands", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "src/service-worker.js", "type": "module" },
+  "side_panel": { "default_path": "ui/sidepanel.html" },
+  "options_page": "ui/options.html",
+  "commands": {
+    "capture-target": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "Capture the current page target or condition"
+    },
+    "run-active-profile": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Run the selected profile on the active tab"
+    }
+  },
+  "action": { "default_title": "Web Action Recorder" },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["src/content-script.js"],
+    "run_at": "document_idle"
+  }]
+}

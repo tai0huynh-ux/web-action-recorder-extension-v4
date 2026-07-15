@@ -1,0 +1,476 @@
+[
+    {
+        "Id":  21696,
+        "ProcessName":  "codex",
+        "Path":  "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.707.9981.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe",
+        "StartTime":  "\/Date(1784041863241)\/"
+    },
+    {
+        "Id":  2836,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  3128,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  3440,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041921371)\/"
+    },
+    {
+        "Id":  3828,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784051017231)\/"
+    },
+    {
+        "Id":  4332,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  5212,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784049599222)\/"
+    },
+    {
+        "Id":  6496,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784049599440)\/"
+    },
+    {
+        "Id":  6924,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  7580,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784053096225)\/"
+    },
+    {
+        "Id":  7960,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861325)\/"
+    },
+    {
+        "Id":  11456,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  12724,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784049604973)\/"
+    },
+    {
+        "Id":  13160,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  13704,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784044494123)\/"
+    },
+    {
+        "Id":  14912,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861221)\/"
+    },
+    {
+        "Id":  16336,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  18024,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  20212,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041898594)\/"
+    },
+    {
+        "Id":  20604,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  20920,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  21152,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861547)\/"
+    },
+    {
+        "Id":  21904,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  22072,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861440)\/"
+    },
+    {
+        "Id":  22300,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784044089093)\/"
+    },
+    {
+        "Id":  23112,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  23252,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861356)\/"
+    },
+    {
+        "Id":  24748,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  24832,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  24892,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  25168,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041865195)\/"
+    },
+    {
+        "Id":  25180,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041865196)\/"
+    },
+    {
+        "Id":  25604,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041864728)\/"
+    },
+    {
+        "Id":  26088,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784049599266)\/"
+    },
+    {
+        "Id":  26836,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  28452,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861324)\/"
+    },
+    {
+        "Id":  28860,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861423)\/"
+    },
+    {
+        "Id":  29180,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  29496,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784044368714)\/"
+    },
+    {
+        "Id":  30204,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  30348,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784048867768)\/"
+    },
+    {
+        "Id":  31504,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  32076,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  32956,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  33092,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041864052)\/"
+    },
+    {
+        "Id":  34092,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  35080,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041864744)\/"
+    },
+    {
+        "Id":  35560,
+        "ProcessName":  "msedge",
+        "Path":  null,
+        "StartTime":  null
+    },
+    {
+        "Id":  37004,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784041861276)\/"
+    },
+    {
+        "Id":  37552,
+        "ProcessName":  "msedge",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "StartTime":  "\/Date(1784044494111)\/"
+    },
+    {
+        "Id":  1948,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878537)\/"
+    },
+    {
+        "Id":  6688,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915138)\/"
+    },
+    {
+        "Id":  15976,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915176)\/"
+    },
+    {
+        "Id":  18888,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878465)\/"
+    },
+    {
+        "Id":  19112,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855209)\/"
+    },
+    {
+        "Id":  20056,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915258)\/"
+    },
+    {
+        "Id":  22648,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915279)\/"
+    },
+    {
+        "Id":  23956,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855207)\/"
+    },
+    {
+        "Id":  24036,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855243)\/"
+    },
+    {
+        "Id":  25608,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878632)\/"
+    },
+    {
+        "Id":  26320,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915326)\/"
+    },
+    {
+        "Id":  28648,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855319)\/"
+    },
+    {
+        "Id":  33412,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855001)\/"
+    },
+    {
+        "Id":  33644,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041915259)\/"
+    },
+    {
+        "Id":  33648,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041855050)\/"
+    },
+    {
+        "Id":  36712,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878557)\/"
+    },
+    {
+        "Id":  37136,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878538)\/"
+    },
+    {
+        "Id":  37436,
+        "ProcessName":  "msedgewebview2",
+        "Path":  "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\150.0.4078.65\\msedgewebview2.exe",
+        "StartTime":  "\/Date(1784041878438)\/"
+    },
+    {
+        "Id":  7788,
+        "ProcessName":  "node",
+        "Path":  "C:\\Program Files\\nodejs\\node.exe",
+        "StartTime":  "\/Date(1784053109698)\/"
+    },
+    {
+        "Id":  11792,
+        "ProcessName":  "node",
+        "Path":  "C:\\Program Files\\nodejs\\node.exe",
+        "StartTime":  "\/Date(1784053109402)\/"
+    },
+    {
+        "Id":  18044,
+        "ProcessName":  "node",
+        "Path":  "C:\\Program Files\\nodejs\\node.exe",
+        "StartTime":  "\/Date(1784046100543)\/"
+    },
+    {
+        "Id":  28780,
+        "ProcessName":  "node",
+        "Path":  "C:\\Program Files\\nodejs\\node.exe",
+        "StartTime":  "\/Date(1784050776910)\/"
+    },
+    {
+        "Id":  3672,
+        "ProcessName":  "node_repl",
+        "Path":  "C:\\Users\\a\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\03b1cdac8af3a530\\bin\\node_repl.exe",
+        "StartTime":  "\/Date(1784050776904)\/"
+    },
+    {
+        "Id":  9888,
+        "ProcessName":  "node_repl",
+        "Path":  "C:\\Users\\a\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\03b1cdac8af3a530\\bin\\node_repl.exe",
+        "StartTime":  "\/Date(1784053109692)\/"
+    },
+    {
+        "Id":  34460,
+        "ProcessName":  "node_repl",
+        "Path":  "C:\\Users\\a\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\03b1cdac8af3a530\\bin\\node_repl.exe",
+        "StartTime":  "\/Date(1784046100537)\/"
+    },
+    {
+        "Id":  36164,
+        "ProcessName":  "node_repl",
+        "Path":  "C:\\Users\\a\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\03b1cdac8af3a530\\bin\\node_repl.exe",
+        "StartTime":  "\/Date(1784053109399)\/"
+    },
+    {
+        "Id":  20952,
+        "ProcessName":  "ssh",
+        "Path":  "C:\\WINDOWS\\System32\\OpenSSH\\ssh.exe",
+        "StartTime":  "\/Date(1784050359498)\/"
+    },
+    {
+        "Id":  30784,
+        "ProcessName":  "ssh",
+        "Path":  "C:\\WINDOWS\\System32\\OpenSSH\\ssh.exe",
+        "StartTime":  "\/Date(1784050359651)\/"
+    },
+    {
+        "Id":  19212,
+        "ProcessName":  "StartMenuExperienceHost",
+        "Path":  "C:\\WINDOWS\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe",
+        "StartTime":  "\/Date(1784041854300)\/"
+    }
+]

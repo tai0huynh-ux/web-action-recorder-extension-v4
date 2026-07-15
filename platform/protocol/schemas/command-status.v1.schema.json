@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-action-recorder.local/schemas/command-status.v1.schema.json",
+  "title": "WAR Command Status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "running", "succeeded", "failed", "cancelled"]
+    },
+    "reason": { "type": "string" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  }
+}

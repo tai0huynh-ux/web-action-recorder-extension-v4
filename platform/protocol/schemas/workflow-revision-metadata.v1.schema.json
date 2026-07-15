@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://web-action-recorder.local/schemas/workflow-revision-metadata.v1.schema.json",
+  "title": "WAR Workflow Revision Metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflowId",
+    "revision",
+    "contentHash",
+    "name",
+    "schemaVersion",
+    "createdAt",
+    "updatedAt",
+    "sourceDeviceId",
+    "requiredInputs"
+  ],
+  "properties": {
+    "workflowId": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "schemaVersion": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "sourceDeviceId": { "type": "string", "minLength": 1 },
+    "requiredInputs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

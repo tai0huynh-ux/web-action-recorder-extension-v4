@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>Trình Ghi Thao Tác Web</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Trình Ghi Thao Tác <button id="themeToggleBtn" style="font-size:12px; padding:2px 8px; margin-left:10px;">🌓</button></h1>
+    <button id="runBtn">▶ Chạy Profile</button>
+    <button id="stopBtn" disabled>■ Dừng</button>
+    <button id="openWindowBtn" title="Mở editor trong cửa sổ riêng">▣ Cửa sổ riêng</button>
+  </header>
+
+  <section class="toolbar">
+    <select id="profileSelect"></select>
+    <button id="newProfileBtn">➕ Tạo mới</button>
+    <button id="saveBtn">💾 Lưu</button>
+    <button id="exportBtn">📤 Xuất</button>
+    <label class="import button">📥 Nhập
+      <input id="importFile" type="file" accept="application/json">
+    </label>
+  </section>
+
+  <section class="capture">
+    <div style="width: 100%; margin-bottom: 8px; font-weight: 600; color: #245cff;">Ghi thao tác nhanh:</div>
+    <button id="captureClickBtn">🎯 Ghi Click</button>
+    <button id="captureTypeBtn">⌨ Ghi ô nhập liệu</button>
+    <button id="captureDomainBtn">🌐 Ghi đ.kiện Tên miền</button>
+    <button id="captureTextBtn">📝 Ghi đ.kiện Chữ/Selector</button>
+  </section>
+
+  <main>
+    <label style="font-weight:600;">Tên Profile:
+      <input id="profileName" style="font-weight:normal; margin-top:4px;">
+    </label>
+    <label><input id="profileEnabled" type="checkbox" style="width:auto"> Cho phép chạy profile từ companion LAN</label>
+    <div class="canvas-size-row">
+      <label>Chiều cao vùng lập trình <input id="canvasHeight" type="range" min="320" max="1200" step="20" value="500"></label>
+      <output id="canvasHeightValue">500 px</output>
+    </div>
+    <div id="canvas-container"></div>
+    <div class="root-row">
+      <button id="discoverRootsBtn">🌱 Lấy nút gốc</button>
+      <span id="rootStatus" class="root-status">Chưa lấy nút gốc</span>
+    </div>
+    <div class="add-row">
+      <button data-add="click">➕ Click</button>
+      <button data-add="type">➕ Nhập chữ (Type)</button>
+      <button data-add="condition">➕ Nếu/Thì (If/Else)</button>
+      <button data-add="OR">➕ OR</button>
+      <button data-add="AND">➕ AND</button>
+      <button data-add="IFS">➕ IFS</button>
+      <button data-add="navigate">➕ Chuyển trang (Navigate)</button>
+      <button data-add="switchTab">➕ Chuyển Tab (Switch Tab)</button>
+      <button data-add="log">➕ Ghi Log</button>
+    </div>
+  </main>
+
+  <section class="help-section">
+    <button id="helpToggleBtn" class="help-toggle">📖 Hướng dẫn sử dụng <span>▼</span></button>
+    <div id="helpContent" class="help-content">
+      <div class="help-item"><strong>▶ Chạy Profile</strong>: Chạy danh sách các bước đã định nghĩa ở tab hiện tại. Phím tắt: <code>Alt+Shift+P</code>.</div>
+      <div class="help-item"><strong>➕ Tạo mới / 💾 Lưu</strong>: Tạo profile (kịch bản) mới hoặc lưu lại những thay đổi.</div>
+      <div class="help-item"><strong>🎯 Ghi Click</strong>: Nhấn vào đây, sau đó click vào một thành phần trên trang web. Tiện ích sẽ tự động ghi lại lệnh click đó. Phím tắt: <code>Alt+Shift+R</code>.</div>
+      <div class="help-item"><strong>🌐 Ghi Tên miền</strong>: Nhấn vào trang web để ghi lại điều kiện kiểm tra xem url có chứa tên miền hiện tại không.</div>
+      <div class="help-item"><strong>📝 Ghi Chữ</strong>: Nhấn vào một đoạn chữ trên web, tiện ích sẽ ghi lại điều kiện kiểm tra chữ đó.</div>
+      <div class="help-item"><strong>➕ Các nút thêm bước</strong>: Tự thêm thủ công một bước (Click, Nhập chữ, Chuyển trang, Điều kiện) vào cuối profile.</div>
+      <div class="help-item"><strong>Thư viện đã ghi</strong>: Những gì bạn ghi (bằng các nút Ghi) sẽ hiện ở đây, nhấn "Thêm vào profile" để đưa vào danh sách chạy.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Thư viện đã ghi</h2>
+    <div id="library"></div>
+  </section>
+
+  <section>
+    <h2>Nhật ký (Logs)</h2>
+    <button id="clearLogsBtn">🗑 Xóa</button>
+    <pre id="logs"></pre>
+  </section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

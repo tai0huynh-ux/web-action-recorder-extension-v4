@@ -1,0 +1,12 @@
+{
+  "id": "sample-login-search",
+  "name": "Sample: Domain check then search",
+  "enabled": false,
+  "allowHighRisk": false,
+  "steps": [
+    { "id": "s1", "name": "Check current domain", "type": "condition", "delayAfterMs": 500, "condition": { "kind": "domain", "operator": "matches", "value": "*" }, "ifSteps": ["s2"], "elseSteps": ["s4"] },
+    { "id": "s2", "name": "Click search field", "type": "click", "delayAfterMs": 300, "selector": "input[type=\"search\"], input[name=\"q\"], textarea[name=\"q\"]" },
+    { "id": "s3", "name": "Type example query", "type": "type", "delayAfterMs": 800, "selector": "input[type=\"search\"], input[name=\"q\"], textarea[name=\"q\"]", "text": "OpenClaw web automation" },
+    { "id": "s4", "name": "Log unmatched domain", "type": "log", "delayAfterMs": 0, "message": "Domain condition did not match." }
+  ]
+}

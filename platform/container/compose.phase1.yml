@@ -1,0 +1,29 @@
+services:
+  browser-node:
+    build:
+      context: ../..
+      dockerfile: platform/browser-agent/Dockerfile
+    shm_size: "1gb"
+    restart: unless-stopped
+    environment:
+      WAR_AGENT_HOST: 0.0.0.0
+      WAR_AGENT_PORT: 3766
+      WAR_AGENT_ALLOW_REMOTE: "1"
+      WAR_AGENT_TOKEN: ${WAR_AGENT_TOKEN:?set WAR_AGENT_TOKEN to at least 24 characters}
+      WAR_AGENT_ALLOW: ${WAR_AGENT_ALLOW:-172.17.0.1}
+      WAR_BROWSER_HEADLESS: "false"
+      WAR_AUTO_START_BROWSER: "1"
+      WAR_BROWSER_NO_SANDBOX: ${WAR_BROWSER_NO_SANDBOX:-1}
+    volumes:
+      - browser-agent-data:/data
+    ports:
+      - "127.0.0.1:3766:3766"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3766/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  browser-agent-data:

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>Cai dat - Web Action Recorder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="wide">
+  <h1>Cai dat</h1>
+  <p>Companion Hub mac dinh chi chay localhost. Khi bat LAN, hay dung mang tin cay hoac Tailscale/VPN.</p>
+  <label style="display:flex; gap:8px; align-items:center; margin-top:16px;">
+    <input id="watcher" type="checkbox" style="width:auto; margin:0;">
+    Bat trinh theo doi toan cuc
+  </label>
+  <h2>Companion LAN</h2>
+  <label><input id="externalApi" type="checkbox" style="width:auto"> Bat ket noi companion</label>
+  <label>URL companion <input id="companionUrl" placeholder="http://127.0.0.1:17373"></label>
+  <label>Ten endpoint <input id="companionDeviceName" placeholder="May A - Chrome"></label>
+  <label>Device ID <input id="companionDeviceId" readonly></label>
+  <label>Enrollment token <input id="companionEnrollmentToken" type="password" autocomplete="off"></label>
+  <label>Device token <input id="companionToken" type="password" autocomplete="off"></label>
+  <button id="saveCompanion">Luu cau hinh</button>
+  <p class="muted">Neu co enrollment token, extension se tu enroll va tu luu device token trong lan polling tiep theo.</p>
+  <p id="companionStatus"></p>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

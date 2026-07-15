@@ -1,0 +1,11 @@
+node_modules
+.git
+profiles
+companion
+test
+platform/**/test
+platform/**/integration
+%TEMP%
+*.log
+*.tmp
+package-lock.json.tmp

@@ -1,0 +1,299 @@
+# Project State - Web Action Recorder v4
+
+Updated: 2026-07-15
+Source of truth: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`
+
+Do not use the similarly named OneDrive folder as source. It only contained an empty `.git` directory during audit.
+
+## Current Status
+
+Phase 1: Complete.
+
+Phase 2: Implemented with persistent native X11 backend; Gate Pending until Linux container smoke/performance runs prove the thresholds three consecutive times.
+
+Current Gate: Phase 2 native X11 validation and performance.
+
+Next Step: Run Linux container build, Phase 2 smoke, performance measure/gate, and sync hashes before declaring Phase 2 Complete.
+
+## Current MVP Status
+
+Implemented MVP code path:
+
+- Editor: larger/selectable ports, Enter/Space port selection, Escape cancel, link drop via `elementsFromPoint`, rAF-batched link redraw, standalone editor window, resizable canvas, derived root-node discovery/highlighting with `Gốc` badges.
+- Picker/cursor: candidate chooser, preview/accept/cancel flow, draggable chooser, rAF-batched hover target box, high-contrast target border.
+- Runner: graph validation before run, derived roots sent as explicit `startIds`, sequential multi-root execution in profile order, same-tab navigation continuation with explicit continuation ids, Switch Tab wildcard matching and continuation handoff to the matched web tab, `{{field}}` template inputs, abort-aware selector wait/delay, enabled-profile guard for remote commands.
+- Companion Hub: admin token, enrollment token, per-device token, IP allowlist, LAN opt-in guard, device enroll/register/heartbeat, per-device command queue, lease/ack/result, batch creation, dataset assignment, JSON persistence, and a small web dashboard at `/dashboard`.
+- Tests: unit tests for graph/template/scheduler/shared logic and integration test for two-device Companion queue isolation.
+
+## Verification
+
+Last verified on 2026-07-14:
+
+- `npm run check`: Pass
+- `npm test`: Pass, 25/25
+- `npm run test:all`: Pass
+- `npm run test:browser:switch-tab:edge`: Pass. Edge 150.0.4078.65 executed switch-tab handoff from `http://127.0.0.1:59305/source-site/source-page` to `http://127.0.0.1:59305/target-site/special-path`; latest artifact trace printed under `%TEMP%\war-browser-mv3-artifacts\2026-07-14T09-37-30-706Z-switch-tab\trace.json`.
+
+Phase 0 Chromium Control Platform verification on 2026-07-14:
+
+- Baseline before changes:
+  - `npm run check`: blocked by PowerShell execution policy for `npm.ps1`; rerun as `npm.cmd run check`: Pass.
+  - `npm run test:all`: blocked by PowerShell execution policy for `npm.ps1`; rerun as `npm.cmd run test:all`: Pass, 25/25.
+- After changes:
+  - `npm.cmd run test:platform:input-parser`: Pass, 16/16.
+  - `npm.cmd run test:platform:protocol`: Pass, 3/3.
+  - `npm.cmd run test:platform:workflow-core`: Pass, 3/3.
+  - `npm.cmd run check`: Pass.
+  - `npm.cmd run test:all`: Pass; extension tests 25/25 and platform tests 22/22.
+- `CHROMIUM_CONTROL_PLATFORM_CODEX_PLAN.md` was not present at the source root and was not found by exact filename under `C:\Users`; Phase 0 followed the user-provided checklist.
+- No Browser Agent, streaming, Windows app, Native Messaging, arbitrary JavaScript, remote shell, or public listener code was started.
+
+Manual MVP acceptance attempt on 2026-07-14:
+
+- Chrome 150.0.7871.115 and Edge 150.0.4078.65 were present.
+- Browser unpacked-extension acceptance was blocked in this automation environment: command-line `--load-extension` ignored both this extension and a minimal control MV3 extension; `chrome://extensions` Developer mode controls were visible, but the native "Load unpacked" folder picker was not exposed to automation and no unpacked extension was loaded.
+- Companion Hub API acceptance passed with two enrolled device records: enrollment, heartbeat, profile registration, per-device command isolation, batch result reporting, and stop-batch cancellation.
+- Real Chrome/Edge extension UI, picker, recorder, runner, and real browser-endpoint Companion polling remain not accepted until the extension can be manually loaded in a controllable browser session.
+
+Browser MV3 regression harness added on 2026-07-14:
+
+- Framework selected: dependency-free Chrome DevTools Protocol from Node, so the harness does not require Playwright/Puppeteer or browser downloads.
+- New command `npm run test:browser` defaults to installed Chrome; `npm run test:browser:chrome`, `npm run test:browser:edge`, and `WAR_BROWSER_PATH` are supported.
+- Harness creates a temporary browser profile outside the source tree, loads the unpacked extension with `--load-extension`, detects the MV3 service worker/extension target, opens `ui/sidepanel.html?standalone=1`, creates two nodes, moves them to fixed canvas positions, connects them, saves, reloads, and verifies nodes, positions, visual link, and stored `next` relationship.
+- Chrome 150.0.7871.115 result: Blocked. Chrome ignored/refused `--load-extension`; a minimal MV3 control extension was also not detected. Latest artifact paths printed under `%TEMP%\war-browser-mv3-artifacts\2026-07-14T08-20-07-466Z\`.
+- Edge 150.0.4078.65 result: Pass via `npm run test:browser:edge`. Node/link persistence passed; latest artifact paths printed under `%TEMP%\war-browser-mv3-artifacts\2026-07-14T08-19-58-179Z\`.
+
+Browser picker regression added on 2026-07-14:
+
+- Test wiring corrected: browser acceptance scripts are `test/browser-mv3-persistence.js` and `test/browser-mv3-picker.js`, while dependency-free helper coverage is `test/browser-mv3-harness.test.js`.
+- `npm test` now uses `node --test "test/**/*.test.js"` so future non-browser Node tests using the `.test.js` convention are included automatically without launching Chrome or Edge.
+- `npm run test:browser:picker:edge` validates a local HTTP fixture with picker Accept, Cancel, Escape, scroll/resize target-box alignment, repeated cleanup, and selector persistence.
+- Focused production defect found and fixed in `src/content-script.js`: during picker scroll/resize, body/html hover events could replace the last meaningful target and leave the target box following the page body. The fix keeps the previous meaningful hover target and updates on mousemove as well as mouseover.
+- Edge 150.0.4078.65 picker result: Pass. Latest artifact paths printed under `%TEMP%\war-browser-mv3-artifacts\2026-07-14T08-42-35-625Z-picker\`.
+- Chrome 150.0.7871.115 default browser result remains Blocked, not Fail. Latest blocked artifact paths printed under `%TEMP%\war-browser-mv3-artifacts\2026-07-14T08-42-50-730Z-persistence\`.
+
+Browser root-node regression added on 2026-07-14:
+
+- Root semantics: roots are nodes with no incoming link from `next`, `ifSteps`, `elseSteps`, or `conditions[].next`. Root state is derived from `findRootStepIds()` and no `isRoot` field is persisted.
+- New commands `npm run test:browser:roots` and `npm run test:browser:roots:edge` use the existing dependency-free CDP harness and are not included in `test:all`.
+- Edge 150.0.4078.65 result: Pass via `npm run test:browser:roots:edge`. The regression creates A, B, C, D log nodes, verifies A/C roots, verifies only A after B→C, verifies A/C after removing B→C and after save/reload, runs the profile, and observes log order A, B, C, D with each node executed once.
+- Focused production defect found and fixed in `ui/canvas-editor.js`: root highlights were recalculated for graph edits but not after `loadData()`, so save/reload could display no roots until recalculated manually.
+
+Browser switch-tab regression added on 2026-07-14:
+
+- Switch Tab keeps the existing `tabName` schema field, trims it, rejects empty values, treats `*` as a case-insensitive wildcard over the complete URL/title, preserves substring matching when no `*` is present, and excludes restricted browser/extension URLs as run targets.
+- The content script now awaits `WAR_SWITCH_TAB`; the service worker selects the most recently accessed matching supported web tab, focuses it, retries content-script delivery once via `chrome.scripting.executeScript` on HTTP/HTTPS pages only, sends only continuation `startIds`, and records `runtime.running` against the new tab.
+- Initial profile start now rejects unsupported active pages and falls back to the most recently accessed supported web tab instead of blindly sending to the editor/extension page.
+- New commands `npm run test:browser:switch-tab` and `npm run test:browser:switch-tab:edge` use the existing dependency-free CDP harness and are not included in `test:all`.
+- Edge 150.0.4078.65 result: Pass via `npm run test:browser:switch-tab:edge`. The regression observes `before-switch` in the source tab, wildcard URL matching to the target tab, `after-switch` in the target tab, no receiver-connection error, and a controlled no-match failure that does not execute the destination node.
+
+## Important Files Changed
+
+## Chromium Control Platform Phase 2
+
+Updated: 2026-07-15
+
+Status: Implemented but Gate Blocked.
+
+Phase 2 adds typed Chromium control without WebRTC, VNC/noVNC, Native Messaging, arbitrary JavaScript, generic CDP passthrough, remote shell, file transfer, scheduler expansion, or Phase 3 work.
+
+Implemented:
+
+- Semantic page commands: `page.click`, `page.doubleClick`, `page.hover`, `page.focus`, `page.fill`, `page.type`, `page.press`, `page.selectOption`, `page.check`, `page.uncheck`, `page.scroll`, `page.waitFor`, `page.getElementState`, `page.listInteractiveElements`, `page.uploadFile`, `page.handleDialog`, `page.screenshot`.
+- Raw input commands: `input.mouseMove`, `input.mouseDown`, `input.mouseUp`, `input.click`, `input.wheel`, `input.keyDown`, `input.keyUp`, `input.insertText`, `input.shortcut`, `browser.focusWindow`, `browser.openInternalPage`, `input.stopAll`, `input.getState`.
+- Module split under `platform/browser-agent/src/`: semantic controller, raw input controller, target validator, coordinate mapper, input safety, emergency stop, screenshot controller, artifact registry.
+- Upload allowlist maps `artifactId` to real files under `/data/uploads` only; absolute client paths and `../` are rejected.
+- Browser-space raw input now defaults to a persistent native Xlib/XTest helper over `/run/war/x11-input.sock`; `xdotool` is retained only behind `WAR_X11_BACKEND=xdotool` as an explicit diagnostic fallback.
+- Internal page allowlist covers `chrome://settings/`, `chrome://extensions/`, `chrome://downloads/`, `chrome://version/`, `chrome://flags/`, and the Web Action Recorder extension side panel/page.
+- StopAll releases tracked held keys/buttons, clears queued input, and returns input state to idle.
+
+Latest verification:
+
+- Windows baseline before Phase 2: `npm.cmd run check` Pass; `npm.cmd run test:all` Pass, 85 tests.
+- Linux baseline before Phase 2: `npm run check` Pass; `npm run test:all` Pass, 85 tests; `npm run container:browser-agent:smoke` Pass.
+- Final Windows: `npm.cmd run test:all` Pass, 120 tests.
+- Final Linux: `npm run test:all` Pass, 120 tests.
+- Container Phase 1 regression: `npm run container:browser-agent:smoke` Pass.
+- Container Phase 2 smoke: `npm run container:browser-agent:phase2-smoke` Pass.
+- Phase 2 performance artifact: `artifacts/browser-agent/phase2-performance-1784051657690.json`.
+
+Evidence:
+
+- Chromium: `150.0.7871.114`.
+- Extension ID/version: `edoicfpldmlabgdalemfgflpldiijdmm` / `0.1.0`.
+- Browser-ready: 1795 ms in latest performance run.
+- Image before: `war-browser-agent:phase1 35518cfa30b8 1.35GB`.
+- Image after: `war-browser-agent:phase1 5810cb6e7b7f 1.35GB`.
+- StopAll: 4 ms latest observed latency; held keys/buttons after stop: 0/0.
+
+Gate blocker:
+
+- Previous raw X11 browser click used per-command `xdotool` and measured p95 112 ms, above the Phase 2 target of 80 ms. Native helper implementation is now present, but Phase 2 remains not Complete until Linux container performance gate passes three consecutive runs.
+
+- `src/graph.js`
+- `src/template.js`
+- `src/shared.js`
+- `src/service-worker.js`
+- `src/content-script.js`
+- `ui/canvas-editor.js`
+- `ui/sidepanel.html`
+- `ui/sidepanel.js`
+- `ui/options.html`
+- `ui/options.js`
+- `ui/style.css`
+- `companion/server.js`
+- `companion/auth.js`
+- `companion/store.js`
+- `companion/scheduler.js`
+- `test/graph-template.test.js`
+- `test/scheduler.test.js`
+- `test/companion.integration.test.js`
+- `test/browser-mv3-harness.js`
+- `test/browser-mv3-harness.test.js`
+- `test/browser-mv3-picker.js`
+- `test/browser-mv3-roots.js`
+- `test/browser-mv3-switch-tab.js`
+- `package.json`
+- `README.md`
+- `test/browser-mv3-persistence.js`
+- `docs/ADR-0001-chromium-control-platform-planes.md`
+- `platform/PLATFORM_STATE.md`
+- `platform/input-parser/src/inputParser.js`
+- `platform/input-parser/test/inputParser.test.js`
+- `platform/protocol/schemas/command-status.v1.schema.json`
+- `platform/protocol/schemas/war-control-envelope.v1.schema.json`
+- `platform/protocol/schemas/workflow-revision-metadata.v1.schema.json`
+- `platform/protocol/src/schemaValidator.js`
+- `platform/protocol/test/protocolSchemas.test.js`
+- `platform/workflow-core/src/workflowMetadata.js`
+- `platform/workflow-core/test/workflowMetadata.test.js`
+
+## Remaining Risk
+
+Automated browser coverage now includes the first MV3 persistence harness, but broader UI/E2E is still not present. Before using this as a production workflow runner, manually validate in a controllable Chrome/Edge session where unpacked extension loading is available:
+
+- Load unpacked in Chrome and Edge.
+- Drag link source to target and reload profile.
+- Picker candidate list/preview/accept/cancel on real pages.
+- Stop while waiting for a missing selector.
+- Companion dashboard with at least two real endpoints on LAN/VPN.
+- Phase 0 platform schemas are covered by a lightweight local validator in tests, not by a production JSON Schema validator dependency.
+- The external plan document `CHROMIUM_CONTROL_PLATFORM_CODEX_PLAN.md` was unavailable in the source tree during Phase 0.
+
+## Next Best Step
+
+Bắt đầu Giai đoạn 1 — Browser Agent tối thiểu sau khi người dùng phê duyệt.
+## Chromium Control Platform Phase 1
+
+Updated: 2026-07-14
+
+Status: Implemented but Gate Blocked.
+
+Baseline before Phase 1 changes:
+
+- Node: `v24.14.1`.
+- Docker: unavailable; `docker` was not recognized.
+- Docker Compose: unavailable because `docker` was not recognized.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass; extension tests 25/25 and Phase 0 platform tests 22/22.
+- `docs/CHROMIUM_CONTROL_PLATFORM_CODEX_PLAN.md` was still missing, so Phase 1 followed the user-provided checklist.
+
+Phase 1 adds:
+
+- Browser Agent Node.js modules under `platform/browser-agent/src/`.
+- Persistent `/data/device/identity.json`.
+- Headed Chromium launch support through `playwright-core` and system Chromium.
+- Persistent Chromium profile at `/data/chromium-profile`.
+- Read-only extension loaded detection via `chrome-extension://` service worker target.
+- Browser supervisor states and bounded restart policy.
+- Localhost-first HTTP API: `/health`, `/v1/state`, `/v1/control`.
+- `war-control.v1` command support for `browser.getState`, `browser.start`, `browser.stop`, `browser.restart`, `tab.list`, `tab.open`, `tab.activate`, `tab.navigate`, and `tab.close`.
+- Dockerfile, Xvfb entrypoint, and Phase 1 compose file with localhost port binding, `shm_size: 1gb`, no privileged mode, no host networking, and no Docker socket.
+- Browser Agent unit tests: 30/30 pass.
+- `playwright-core` dependency pinned by `package-lock.json`; Playwright browser downloads are disabled.
+
+Post-change verification:
+
+- `npm.cmd run test:browser-agent:unit`: Pass, 30/30.
+- `npm.cmd run check:browser-agent`: Pass.
+- `npm.cmd run test:platform`: Pass; Phase 0 platform tests 22/22 and Browser Agent tests 30/30.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass; extension tests 25/25, Phase 0 platform tests 22/22, Browser Agent tests 30/30.
+- `npm.cmd run container:browser-agent:build`: Blocked; `docker` is not recognized.
+- `npm.cmd run container:browser-agent:smoke`: Blocked; `docker` is not recognized.
+
+Phase 1 intentionally does not add streaming, VNC, Windows/Tauri app code, Native Messaging, file transfer, clipboard, extension install/update/uninstall APIs, raw X11 input, arbitrary JavaScript, CDP passthrough, remote shell, or public listener defaults.
+
+Container verification remains blocked until Docker is available. Required commands:
+
+- `npm.cmd run container:browser-agent:build`
+- `npm.cmd run container:browser-agent:smoke`
+
+## Next Best Step After Phase 1
+
+Bắt đầu Giai đoạn 2 — Điều khiển Chromium toàn phần sau khi người dùng phê duyệt.
+
+## Chromium Control Platform Phase 1 Gate Closure
+
+Updated: 2026-07-15
+
+Status: Complete.
+
+The Phase 1 real-container Gate was closed on Linux host `root@192.168.1.201`.
+
+Environment:
+
+- Ubuntu 24.04.4 LTS, kernel `6.8.0-124-generic`, x86_64.
+- Docker Engine 29.4.2.
+- Docker Compose v5.1.3.
+- Host Node.js v24.14.1 and npm 11.11.0.
+
+Source sync:
+
+- Windows remains source of truth: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`.
+- Linux deployment path: `/opt/war/web-action-recorder-extension-v4`.
+- SHA-256 matched for package files, manifest, Dockerfile, compose file, and Browser Agent controller/supervisor.
+
+Gate results:
+
+- `npm run test:browser-agent:unit`: Pass, 38/38.
+- `npm run check:browser-agent`: Pass.
+- `npm run test:platform`: Pass, Phase 0 platform 22/22 and Browser Agent 38/38.
+- `npm run check`: Pass.
+- `npm run test:all`: Pass, extension 25/25, Phase 0 platform 22/22, Browser Agent 38/38.
+- `npm run container:browser-agent:build`: Pass.
+- `npm run container:browser-agent:smoke`: Pass.
+- `npm run test:browser-agent:integration`: Pass, 1/1 real Chromium container smoke.
+- `npm run test:browser-agent:soak`: Pass, 100 iterations.
+
+Container evidence:
+
+- Image: `war-browser-agent:phase1`.
+- Image ID: `sha256:35518cfa30b89ce208407345f0917cb07897a63131d07f8c054b61fe8a064659`.
+- Image size: 1.35 GB disk usage, 359 MB content size.
+- Container user: `war` (`uid=1001`), not root.
+- Chromium: `150.0.7871.114`.
+- Container Node.js: `v22.23.1`.
+- `playwright-core`: `1.61.1`.
+- Browser-ready time: 2317 ms.
+- Extension loaded: `edoicfpldmlabgdalemfgflpldiijdmm`, version `0.1.0`.
+- Device ID persisted through container restart.
+- Fixture marker persisted through Chromium restart and container restart.
+- 100-tab soak: average 124 ms, p95 132 ms, 0 errors, 0 timeouts, tab count 1 -> 1, process count 12 -> 11, memory 274.2 MiB -> 300.6 MiB.
+
+Patches added during Gate closure:
+
+- Real Docker smoke/integration runner and 100-tab soak runner.
+- Xvfb readiness check with finite timeout.
+- `chromium-sandbox` and `x11-utils` in the image.
+- Stable tab ID registry and active tab tracking.
+- Extension detection that can confirm the extension page even when the MV3 service worker is asleep.
+- Container remote bind guarded by token and allowlist while host publish remains `127.0.0.1`.
+
+Known deployment risk:
+
+- The Docker host rejects Chromium namespace sandboxing with `Operation not permitted`; Phase 1 gate uses explicit `WAR_BROWSER_NO_SANDBOX=1` and logs a warning. No `--no-sandbox` is silently added by default config.
+
+Next step remains:
+
+Bắt đầu Giai đoạn 2 — Điều khiển Chromium toàn phần sau khi người dùng phê duyệt.

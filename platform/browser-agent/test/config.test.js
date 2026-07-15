@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { loadConfig, serializeConfig } from '../src/config.js';
+
+test('default bind is loopback', () => {
+  const config = loadConfig({}, process.cwd());
+  assert.equal(config.host, '127.0.0.1');
+});
+
+test('non-loopback is rejected without opt-in', () => {
+  assert.throws(() => loadConfig({ WAR_AGENT_HOST: '0.0.0.0' }, process.cwd()), /ALLOW_REMOTE/);
+});
+
+test('short token is rejected for remote bind', () => {
+  assert.throws(() => loadConfig({
+    WAR_AGENT_HOST: '0.0.0.0',
+    WAR_AGENT_ALLOW_REMOTE: '1',
+    WAR_AGENT_TOKEN: 'short',
+    WAR_AGENT_ALLOW: '10.0.0.5'
+  }, process.cwd()), /at least 24/);
+});
+
+test('remote bind is valid with all required guards', () => {
+  const config = loadConfig({
+    WAR_AGENT_HOST: '0.0.0.0',
+    WAR_AGENT_ALLOW_REMOTE: '1',
+    WAR_AGENT_TOKEN: '123456789012345678901234',
+    WAR_AGENT_ALLOW: '10.0.0.5'
+  }, process.cwd());
+  assert.equal(config.host, '0.0.0.0');
+});
+
+test('bad port range is rejected', () => {
+  assert.throws(() => loadConfig({ WAR_AGENT_PORT: '70000' }, process.cwd()), /WAR_AGENT_PORT/);
+});
+
+test('serialized config does not expose secret', () => {
+  const config = loadConfig({ WAR_AGENT_TOKEN: '123456789012345678901234' }, process.cwd());
+  assert.doesNotMatch(JSON.stringify(serializeConfig(config)), /123456789012345678901234/);
+});
