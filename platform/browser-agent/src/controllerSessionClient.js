@@ -51,6 +51,7 @@ export class ControllerSessionClient extends EventEmitter {
     this.queue = [];
     this.stopped = true;
     this.closedSockets = new WeakSet();
+    this.session = null;
   }
 
   start() {
@@ -99,9 +100,12 @@ export class ControllerSessionClient extends EventEmitter {
       const pending = this.pending.get(key);
       this.scheduler.clearTimeout(pending.timer);
       this.pending.delete(key);
+      if (envelope.payload?.session) this.session = envelope.payload.session;
       pending.resolve(envelope);
     }
+    if (envelope.payload?.session) this.session = envelope.payload.session;
     if (envelope.type === 'execution.dispatch') this.emit('dispatch', envelope.payload);
+    if (envelope.type === 'execution.cancel') this.emit('cancel', envelope.payload);
     if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
   }
 
@@ -155,6 +159,48 @@ export class ControllerSessionClient extends EventEmitter {
       sentAt: this.now(),
       deviceId: this.identity.deviceId,
       payload: { deviceId: this.identity.deviceId, status, lastSeenAt: this.now() }
+    });
+  }
+
+  sendExecutionEvent({ jobId, eventType, message, result, idempotencyKey }) {
+    const sentAt = this.now();
+    return this.send({
+      protocolVersion: PROTOCOL_VERSION,
+      messageId: id('execution'),
+      type: eventType === 'job_succeeded' || eventType === 'job_failed' ? 'execution.result' : 'execution.event',
+      sentAt,
+      deviceId: this.identity.deviceId,
+      sessionId: this.session?.sessionId,
+      jobId,
+      deadline: new Date(Date.parse(sentAt) + 30000).toISOString(),
+      idempotencyKey: idempotencyKey || `${jobId}-${eventType}`,
+      payload: {
+        jobId,
+        eventType,
+        sentAt,
+        ...(message ? { message } : {}),
+        ...(result !== undefined ? { result } : {})
+      }
+    });
+  }
+
+  sendExecutionCancelled({ jobId, idempotencyKey }) {
+    const sentAt = this.now();
+    return this.send({
+      protocolVersion: PROTOCOL_VERSION,
+      messageId: id('cancelled'),
+      type: 'execution.cancelled',
+      sentAt,
+      deviceId: this.identity.deviceId,
+      sessionId: this.session?.sessionId,
+      jobId,
+      deadline: new Date(Date.parse(sentAt) + 30000).toISOString(),
+      idempotencyKey: idempotencyKey || `${jobId}-cancelled`,
+      payload: {
+        jobId,
+        eventType: 'job_cancelled',
+        sentAt
+      }
     });
   }
 

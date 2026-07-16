@@ -2,8 +2,9 @@ import { STORAGE_KEYS, DEFAULT_SETTINGS, SAMPLE_PROFILE, clone, normalizeProfile
 import { findRootStepIds, validateGraph } from './graph.js';
 import { NativeBridgeClient, createWorkflowRevisionForBridge, syncWorkflowRevision } from './native-bridge.js';
 
-const runtime = { running: new Map() };
+const runtime = { running: new Map(), reportedControllerJobs: new Set() };
 let nativeBridgeClient = null;
+let nativeBridgePollInFlight = false;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const data = await chrome.storage.local.get([STORAGE_KEYS.profiles, STORAGE_KEYS.activeProfileId, STORAGE_KEYS.settings]);
@@ -14,14 +15,22 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (Object.keys(updates).length) await chrome.storage.local.set(updates);
   chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
   await configureCompanionPolling();
+  await configureNativeBridgePolling();
 });
 
-chrome.runtime.onStartup.addListener(configureCompanionPolling);
+chrome.runtime.onStartup.addListener(() => {
+  configureCompanionPolling();
+  configureNativeBridgePolling();
+});
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[STORAGE_KEYS.settings]) configureCompanionPolling();
+  if (area === 'local' && changes[STORAGE_KEYS.settings]) {
+    configureCompanionPolling();
+    configureNativeBridgePolling();
+  }
 });
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === 'war-companion-poll') pollCompanion().catch(() => {});
+  if (alarm.name === 'war-native-bridge-poll') pollNativeBridge().catch(() => {});
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -53,7 +62,7 @@ async function handleMessage(message, sender) {
     case 'CONTENT_CAPTURED': return addLibraryItem({ ...message.item, source: 'content', capturedAt: new Date().toISOString(), tabId: sender.tab?.id });
     case 'CONTENT_LOG': await addLog(message.entry); return { ok: true };
     case 'WAR_CONTINUE_AFTER_NAVIGATION': return queueNavigationContinuation(sender.tab?.id, message);
-    case 'WAR_RUN_FINISHED': runtime.running.delete(message.runId); return { ok: true };
+    case 'WAR_RUN_FINISHED': return finishRun(message.runId, message.result);
     
     case 'WAR_SWITCH_TAB': return switchTab(message, sender);
     case 'FORWARD_ACTIVE_TAB': {
@@ -135,6 +144,10 @@ async function runProfileOnActiveTab(profileId, inputs = {}) {
   const state = await getState();
   const profile = state.profiles.find((p) => p.id === profileId);
   if (!profile) return { ok: false, error: 'Profile not found' };
+  return runProfilePayloadOnActiveTab(profile, inputs);
+}
+
+async function runProfilePayloadOnActiveTab(profile, inputs = {}, options = {}) {
   if (!Array.isArray(profile.steps) || profile.steps.length === 0) return { ok: false, error: 'Profile has no steps' };
   profile.steps = profile.steps.map(({ isRoot, ...step }) => step);
   const graph = validateGraph(profile);
@@ -145,8 +158,8 @@ async function runProfileOnActiveTab(profileId, inputs = {}) {
   if (!tab?.id) return { ok: false, error: 'No supported web tab is available to run this profile' };
   await chrome.windows.update(tab.windowId, { focused: true });
   await chrome.tabs.update(tab.id, { active: true });
-  const runId = uid('run');
-  runtime.running.set(runId, { profileId, tabId: tab.id, startedAt: Date.now(), inputs });
+  const runId = options.runId || uid('run');
+  runtime.running.set(runId, { profileId: profile.id, tabId: tab.id, startedAt: Date.now(), inputs, controllerJob: options.controllerJob || null });
   await addLog({ level: 'info', message: `Run started: ${profile.name}`, runId });
   const delivered = await sendRunProfileToTab(tab.id, { type: 'WAR_RUN_PROFILE', runId, profile, startIds: graph.roots, inputs }).catch(async (error) => {
     runtime.running.delete(runId);
@@ -154,6 +167,10 @@ async function runProfileOnActiveTab(profileId, inputs = {}) {
     return { ok: false, error: error.message };
   });
   if (!delivered?.ok) return { ok: false, error: delivered?.error || 'Could not start profile' };
+  if (delivered.handedOff) {
+    const run = runtime.running.get(runId);
+    if (run?.controllerJob) runtime.running.set(runId, { ...run, controllerJob: { ...run.controllerJob, awaitingFinishMessage: true } });
+  }
   return { ok: true, runId, status: 'started' };
 }
 
@@ -162,6 +179,16 @@ async function stopProfile(runId) {
   if (run) await sendToTab(run.tabId, { type: 'WAR_STOP_PROFILE', runId }).catch(() => {});
   runtime.running.delete(runId);
   await addLog({ level: 'warn', message: `Run stopped ${runId || ''}`, runId });
+  return { ok: true };
+}
+
+async function finishRun(runId, result = { ok: true }) {
+  const run = runtime.running.get(runId);
+  runtime.running.delete(runId);
+  if (run?.controllerJob && !runtime.reportedControllerJobs.has(run.controllerJob.jobId)) {
+    const normalized = result && typeof result === 'object' ? result : { ok: true };
+    await sendNativeExecutionResult(run.controllerJob, normalized);
+  }
   return { ok: true };
 }
 

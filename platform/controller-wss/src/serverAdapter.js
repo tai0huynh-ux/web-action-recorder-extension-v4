@@ -56,7 +56,9 @@ export class ControllerWssServerAdapter extends EventEmitter {
       const withSession = { ...envelope, deviceId: envelope.deviceId || state.session.deviceId, sessionId: envelope.sessionId || state.session.sessionId, payload: { ...envelope.payload, generation: state.session.generation } };
       if (envelope.type === 'agent.presence') return this.response(envelope, { ok: true, session: await this.sessionManager.handlePresence(withSession) });
       if (envelope.type === 'agent.execution.event' || envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') {
-        return this.response(envelope, { ok: true, event: await this.sessionManager.receiveExecutionEvent(withSession) });
+        const event = await this.sessionManager.receiveExecutionEvent(withSession);
+        this.emit('execution', { jobId: event.jobId, deviceId: event.deviceId, eventType: event.eventType });
+        return this.response(envelope, { ok: true, event });
       }
       throw publicError('unsupported_message', `Unsupported message ${envelope.type}`, 400);
     } catch (error) {
