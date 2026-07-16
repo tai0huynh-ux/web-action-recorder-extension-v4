@@ -55,11 +55,15 @@ export async function runRealWorldContainerGate() {
     mountedDataDir = dataDir;
     await seedAgentData(dataDir);
     fixture = await startSearchFixture();
+    recordEvent(events, 'fixture_started', { url: fixture.url });
     controller = await startController(controllerRoot);
+    recordEvent(events, 'controller_started', { port: controller.port, wss: true });
     await pair(controller.core, DEVICE_ID, CREDENTIAL);
+    recordEvent(events, 'device_paired', { deviceId: DEVICE_ID });
     const revision = workflowRevision(fixture.url);
     await controller.core.workflows.putRevision(revision);
     await seedAgentWorkflow(dataDir, revision);
+    recordEvent(events, 'workflow_imported', { workflowId: revision.workflowId, revision: revision.revision });
 
     const token = crypto.randomBytes(24).toString('hex');
     const allow = await dockerBridgeGateway();
@@ -84,13 +88,20 @@ export async function runRealWorldContainerGate() {
       '-v', `${dataDir}:/data`,
       IMAGE
     ]);
+    recordEvent(events, 'container_started', { container });
 
     const baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
+    recordEvent(events, 'browser_agent_health_ready', {
+      browserState: health.browserState,
+      extensionLoaded: Boolean(health.extensionLoaded),
+      deviceId: health.deviceId
+    });
     result.assertions.browserAgentContainer = true;
     result.assertions.realChromium = health.browserState === 'running' || health.browserState === 'degraded';
     result.assertions.mv3Extension = Boolean(health.extensionLoaded);
     await waitFor(() => controller.core.sessions.getPublicSession(DEVICE_ID), 45000, 'agent WSS session');
+    recordEvent(events, 'device_authenticated', controller.core.sessions.getPublicSession(DEVICE_ID));
     result.assertions.tlsWss = true;
     result.assertions.authenticatedDevice = true;
 
@@ -113,9 +124,16 @@ export async function runRealWorldContainerGate() {
     const jobId = dispatch.data.job.id;
     result.jobId = jobId;
     result.assertions.controllerDispatch = dispatch.data.transport.delivered === true;
+    recordEvent(events, 'job_dispatched', {
+      jobId,
+      delivered: dispatch.data.transport.delivered === true,
+      status: controller.core.jobs.getCommand(jobId).status
+    });
     await waitFor(() => controller.core.events.listRecent({ jobId, limit: 20 }).some((event) => event.eventType === 'job_started'), 120000, 'job_started');
+    recordEvent(events, 'job_started_observed', { jobId, events: summarizeExecutionEvents(controller.core.events.listRecent({ jobId, limit: 20 })) });
     await screenshot(baseUrl, health.deviceId, targetId, token, '03-query-entered.png');
     await waitFor(() => controller.core.jobs.getCommand(jobId).status === 'succeeded', 120000, 'job_succeeded');
+    recordEvent(events, 'job_succeeded_observed', { jobId, status: controller.core.jobs.getCommand(jobId).status });
     await screenshot(baseUrl, health.deviceId, targetId, token, '06-clipboard-verification.png');
     const copied = await control(baseUrl, health.deviceId, 'page.getElementState', {
       targetId,
@@ -125,6 +143,8 @@ export async function runRealWorldContainerGate() {
     assert(copiedText === QUERY, `clipboard verification mismatch: ${copiedText}`);
     const terminal = controller.core.jobs.getCommand(jobId);
     const jobEvents = controller.core.events.listRecent({ jobId, limit: 50 });
+    const terminalEvent = jobEvents.find((event) => ['job_succeeded', 'job_failed', 'job_cancelled', 'job_timed_out'].includes(event.eventType));
+    const startedEvent = jobEvents.find((event) => event.eventType === 'job_started');
     const replay = controller.core.sessions.replayNonTerminal(DEVICE_ID, controller.core.sessions.getPublicSession(DEVICE_ID).generation);
 
     const cancelRevision = cancelWorkflowRevision(fixture.url);
@@ -142,6 +162,11 @@ export async function runRealWorldContainerGate() {
       resultsShown: fixture.events.some((event) => event.type === 'results' && event.value === QUERY),
       copyExecuted: fixture.events.some((event) => event.type === 'copy' && event.value === QUERY),
       clipboardEqualsExpected: copiedText === QUERY,
+      jobAcknowledgedPersisted: jobEvents.some((event) => event.eventType === 'job_acknowledged'),
+      jobStartedPersisted: Boolean(startedEvent),
+      jobSucceededPersisted: jobEvents.some((event) => event.eventType === 'job_succeeded'),
+      startedBeforeTerminal: Boolean(startedEvent && terminalEvent && startedEvent.sequence < terminalEvent.sequence),
+      sameJobIdThroughout: jobEvents.every((event) => event.jobId === jobId),
       resultUplink: jobEvents.some((event) => event.eventType === 'job_succeeded'),
       persistence: terminal.status === 'succeeded',
       duplicateProtection: replay.filter((item) => item.jobId === jobId).length === 0,
@@ -152,15 +177,32 @@ export async function runRealWorldContainerGate() {
     for (const [name, pass] of Object.entries(result.assertions)) assert(pass, `assertion failed: ${name}`);
     result.controlledFallback = 'PASS';
     result.durationMs = Math.round(performance.now() - started);
-    result.executionEvents = jobEvents.map(({ sequence, eventType, jobId: eventJobId, sentAt }) => ({ sequence, eventType, jobId: eventJobId, sentAt }));
+    result.executionEvents = summarizeExecutionEvents(jobEvents);
     await writeEvidence(result);
     return result;
+  } catch (error) {
+    result.controlledFallback = 'FAIL';
+    result.error = sanitize(error.message);
+    result.durationMs = Math.round(performance.now() - started);
+    if (result.jobId && controller?.core) {
+      result.executionEvents = summarizeExecutionEvents(controller.core.events.listRecent({ jobId: result.jobId, limit: 50 }));
+      result.jobSnapshot = sanitizeJobSnapshot(controller.core.jobs.getCommand(result.jobId));
+      recordEvent(events, 'failure_snapshot', {
+        jobId: result.jobId,
+        job: result.jobSnapshot,
+        executionEvents: result.executionEvents
+      });
+    }
+    await writeEvidence(result).catch(() => {});
+    throw error;
   } finally {
     if (container) await docker(['rm', '-f', container]).catch(() => {});
+    recordEvent(events, 'cleanup_started', { container: container || null });
     result.cleanup.containerRunning = container ? await isContainerRunning(container) : false;
     await controller?.shutdown?.();
     await closeServer(fixture?.server).catch(() => {});
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    recordEvent(events, 'cleanup_finished', { containerRunning: result.cleanup.containerRunning });
   }
 }
 
@@ -336,6 +378,7 @@ async function screenshot(baseUrl, deviceId, targetId, token, name) {
 
 async function writeEvidence(result) {
   await fs.writeFile(path.join(ARTIFACT_DIR, 'execution-events.json'), `${JSON.stringify(result.executionEvents || [], null, 2)}\n`);
+  await fs.writeFile(path.join(ARTIFACT_DIR, 'event-timeline.json'), `${JSON.stringify(result.events || [], null, 2)}\n`);
   await fs.writeFile(path.join(ARTIFACT_DIR, 'container-runtime.json'), `${JSON.stringify({
     image: IMAGE,
     localDocker: true,
@@ -354,6 +397,7 @@ Result: ${result.controlledFallback === 'PASS' ? 'PASS' : 'FAIL'}
 - Google case: ${result.googleCase}
 - Controlled fallback: ${result.controlledFallback}
 - Manual computer-use: ${result.manualComputerUse}
+- Error: ${result.error || ''}
 - Controller/WSS: ${pass(result.assertions.tlsWss)}
 - Browser Agent container: ${pass(result.assertions.browserAgentContainer)}
 - MV3 Extension: ${pass(result.assertions.mv3Extension)}
@@ -362,6 +406,24 @@ Result: ${result.controlledFallback === 'PASS' ? 'PASS' : 'FAIL'}
 - Terminal replay protection: ${pass(result.assertions.terminalJobNotReplayed)}
 - Cancel path: ${pass(result.assertions.cancelPath)}
 `;
+}
+
+function recordEvent(events, event, details = {}) {
+  events.push({
+    timestamp: new Date().toISOString(),
+    event,
+    details: sanitizeResult(details)
+  });
+}
+
+function summarizeExecutionEvents(events = []) {
+  return events.map(({ sequence, eventType, jobId, deviceId, sentAt }) => ({ sequence, eventType, jobId, deviceId, sentAt }));
+}
+
+function sanitizeJobSnapshot(job) {
+  if (!job) return null;
+  const { inputs: _inputs, dispatchMetadata: _dispatchMetadata, leaseId: _leaseId, ...safe } = job;
+  return structuredClone(safe);
 }
 
 function sanitizeResult(result) {

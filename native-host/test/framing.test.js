@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { collectNativeMessages, encodeNativeMessage, NativeMessageFramer } from '../framing.js';
 import { createNativeHostManifest, resolveManifestPath, uninstallManifest, writeManifestAtomic } from '../manifest.js';
-import { sendLocalSocketRequest } from '../host.js';
+import { resolveDefaultSocketPath, sendLocalSocketRequest } from '../host.js';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -84,6 +84,12 @@ test('native host local socket client sends NDJSON and parses response', async (
   const response = await sendLocalSocketRequest({ socketPath, message: { correlationId: 'corr-1' }, timeoutMs: 1000 });
   server.close();
   assert.deepEqual(response, { ok: true, correlationId: 'corr-1' });
+});
+
+test('native host defaults to Browser Agent data socket when WAR_DATA_DIR is set', () => {
+  const dataDir = process.platform === 'win32' ? 'C:\\war\\data' : '/data';
+  assert.equal(resolveDefaultSocketPath({ WAR_DATA_DIR: dataDir }), path.join(dataDir, 'run', 'native-bridge.sock'));
+  assert.equal(resolveDefaultSocketPath({ WAR_AGENT_SOCKET_PATH: '/custom/bridge.sock', WAR_DATA_DIR: dataDir }), '/custom/bridge.sock');
 });
 
 function tempSocketPath(name) {

@@ -162,6 +162,7 @@ async function runProfilePayloadOnActiveTab(profile, inputs = {}, options = {}) 
   const runId = options.runId || uid('run');
   runtime.running.set(runId, { profileId: profile.id, tabId: tab.id, startedAt: Date.now(), inputs, controllerJob: options.controllerJob || null });
   await addLog({ level: 'info', message: `Run started: ${profile.name}`, runId });
+  await options.onStarted?.();
   const delivered = await sendRunProfileToTab(tab.id, { type: 'WAR_RUN_PROFILE', runId, profile, startIds: graph.roots, inputs }).catch(async (error) => {
     runtime.running.delete(runId);
     await addLog({ level: 'error', message: error.message, runId });
@@ -496,10 +497,10 @@ async function handleNativeExecutionDispatch(envelope) {
   if (!profile || typeof profile !== 'object') {
     return sendNativeExecutionResult(controllerJob, { ok: false, error: 'Missing workflow profile payload' }, 'job_failed');
   }
-  await sendNativeExecutionEvent({ ...controllerJob, eventType: 'job_started', idempotencyKey: `${jobId}-started` });
   const started = await runProfilePayloadOnActiveTab(profile, dispatch.inputs || {}, {
     runId: `controller-${jobId}`,
-    controllerJob
+    controllerJob,
+    onStarted: () => sendNativeExecutionEvent({ ...controllerJob, eventType: 'job_started', idempotencyKey: `${jobId}-started` })
   });
   if (!started?.ok) return sendNativeExecutionResult(controllerJob, started || { ok: false }, 'job_failed');
   return started;

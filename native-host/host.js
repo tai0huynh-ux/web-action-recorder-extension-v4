@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import net from 'node:net';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { NativeMessageFramer, encodeNativeMessage } from './framing.js';
 import { validateNativeBridgeEnvelope } from '../platform/protocol/src/protocolV2.js';
 
-const DEFAULT_SOCKET_PATH = process.env.WAR_AGENT_SOCKET_PATH || '/run/war/browser-agent/native-bridge.sock';
+const DEFAULT_SOCKET_PATH = resolveDefaultSocketPath(process.env);
 const DEFAULT_TIMEOUT_MS = Number(process.env.WAR_NATIVE_REQUEST_TIMEOUT_MS || 10000);
 const DEFAULT_MAX_PENDING = Number(process.env.WAR_NATIVE_MAX_PENDING || 64);
 const DEFAULT_MAX_QUEUE = Number(process.env.WAR_NATIVE_MAX_QUEUE || 128);
@@ -63,6 +64,11 @@ export class NativeHostBridge {
     this.closed = true;
     this.queue = [];
   }
+}
+
+export function resolveDefaultSocketPath(env = process.env) {
+  return env.WAR_AGENT_SOCKET_PATH
+    || (env.WAR_DATA_DIR ? path.join(env.WAR_DATA_DIR, 'run', 'native-bridge.sock') : '/run/war/browser-agent/native-bridge.sock');
 }
 
 export function sendLocalSocketRequest({ socketPath, message, timeoutMs = DEFAULT_TIMEOUT_MS }) {
