@@ -9,6 +9,7 @@ import { createLogger } from './errors.js';
 import { createWorkflowRegistry } from './workflowRegistry.js';
 import { NativeBridgeHandler } from './nativeBridgeHandler.js';
 import { LocalSocketServer } from './localSocketServer.js';
+import { ControllerSessionClient } from './controllerSessionClient.js';
 
 export async function main() {
   const packageJson = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
@@ -26,6 +27,26 @@ export async function main() {
   const dispatcher = new ControlDispatcher({ supervisor, controller, deviceId: identity.deviceId, config, log });
   const registry = createWorkflowRegistry(config, log);
   const nativeBridge = new NativeBridgeHandler({ identity, registry, version: packageJson.version, supervisor, dispatcher, log });
+  let controllerSession = null;
+  if (config.controllerWssUrl) {
+    controllerSession = new ControllerSessionClient({
+      url: config.controllerWssUrl,
+      credential: config.controllerSessionCredential,
+      identity,
+      version: packageJson.version,
+      minReconnectMs: config.controllerReconnectMinMs,
+      maxReconnectMs: config.controllerReconnectMaxMs,
+      maxPending: config.controllerMaxPendingRequests,
+      maxQueue: config.controllerMaxOutboundQueue,
+      log
+    });
+    controllerSession.on('dispatch', (dispatch) => {
+      log('info', 'agent', 'controller_dispatch_received', { jobId: dispatch.jobId, workflowId: dispatch.workflowId });
+    });
+    controllerSession.start();
+    process.once('SIGTERM', () => controllerSession?.gracefulShutdown());
+    process.once('SIGINT', () => controllerSession?.gracefulShutdown());
+  }
   const socketServer = new LocalSocketServer({
     socketPath: config.nativeBridgeSocketPath,
     maxPayloadBytes: config.nativeBridgeMaxPayloadBytes,

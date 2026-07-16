@@ -8,7 +8,7 @@ Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker h
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Complete.
+Status: Pairing Identity and Outbound Agent WSS Session complete locally.
 
 ## Linux Gate Environment
 
@@ -211,7 +211,46 @@ The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only
 
 ## Next Step
 
-Outbound Agent Session and Controller Core.
+Run Linux/container verification for the paired outbound Agent session path.
+
+## Pairing Identity and Outbound Agent WSS Session
+
+Updated: 2026-07-16
+
+Status: Complete locally.
+
+New modules:
+
+- `platform/controller-core/src/pairingService.js`
+- `platform/controller-core/src/sessionManager.js`
+- `platform/controller-wss/src/serverAdapter.js`
+- `platform/browser-agent/src/controllerSessionClient.js`
+
+Architecture:
+
+- Browser Agent remains the authoritative device identity.
+- Agent connects outbound to Controller over WSS when configured.
+- Controller Core owns pairing/session/job state; WSS is an adapter.
+- Legacy HTTP Agent and Companion HTTP remain for diagnostics, compatibility, and tests.
+
+Security posture:
+
+- Pairing code and session credential plaintext are not persisted.
+- Pending pairing requests have TTL and bounded collection size.
+- Pairing must be explicitly confirmed or rejected.
+- Revoke disables the paired credential; re-pair rotates it.
+- WSS credentials are rejected in URLs and sent by connector header.
+- Protocol version, malformed envelope, oversized payload, and stale session event are rejected.
+- Reconnect delay has min/max and jitter; no zero-delay loop is used.
+
+Latest local verification:
+
+- `npm.cmd run check:controller-core`: Pass.
+- `npm.cmd run test:controller-core`: Pass, 20/20.
+- `npm.cmd run check:controller-wss`: Pass.
+- `npm.cmd run test:controller-wss`: Pass, 2/2.
+- `npm.cmd run check:browser-agent`: Pass.
+- `npm.cmd run test:browser-agent:unit`: Pass, 85/85.
 
 ## Architecture Consolidation Contracts
 

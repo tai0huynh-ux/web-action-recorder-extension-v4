@@ -38,6 +38,8 @@ export function ensureControllerState(state) {
   state.workflowRevisions ||= [];
   state.executionEvents ||= [];
   state.auditEvents ||= [];
+  state.pendingPairings ||= [];
+  state.pairedAgents ||= [];
   state.controllerCore ||= { schemaVersion: 1, migrationVersion: 1 };
   return state;
 }

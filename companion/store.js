@@ -12,7 +12,9 @@ export const EMPTY_STATE = {
   groups: [],
   workflowRevisions: [],
   executionEvents: [],
-  auditEvents: []
+  auditEvents: [],
+  pendingPairings: [],
+  pairedAgents: []
 };
 
 export class JsonStore {

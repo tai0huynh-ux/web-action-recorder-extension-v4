@@ -11,11 +11,45 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Phase 2 Native X11 Gate Complete.
+Current Gate: Pairing Identity and Outbound Agent WSS Session local verification complete.
 
-Current milestone: Native Messaging and Workflow Sync.
+Current milestone: Pairing Identity and Outbound Agent WSS Session.
 
-Next milestone after acceptance: Pairing Identity and Outbound Agent WSS Session.
+Next milestone after acceptance: Linux/container verification for paired outbound sessions.
+
+## Pairing Identity and Outbound Agent WSS Session
+
+Updated: 2026-07-16
+
+Status: Complete locally. Windows checks and unit/session tests pass; Linux/container verification was not run in this environment.
+
+Baseline before changes:
+
+- HEAD: `8048a675524a1cc5da7d50424abffe3bc1cade7b`.
+- Branch: `main`.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 172 tests.
+
+Implemented:
+
+- Controller Core `PairingService` with one-time code, TTL, entropy from `crypto.randomBytes`, device identity binding, explicit confirm/reject, revoke and re-pair, replay rejection, pending-pairing limit, expiry cleanup, structured audit, and no plaintext pairing token or credential persistence.
+- Controller Core `SessionManager` with paired credential authentication, `AgentHello`, presence, heartbeat timeout, online/offline/degraded/reconnecting states, generation-based duplicate session replacement, workflow metadata reconciliation, dispatch, acknowledgement/result handling, cancel, reconnect replay for non-terminal jobs, idempotency ledger, stale-session rejection, and shutdown cleanup.
+- Transport adapter under `platform/controller-wss/src/serverAdapter.js` that calls Controller Core through domain APIs and validates Protocol v2 envelopes without adding transport logic to Controller Core.
+- Browser Agent outbound `ControllerSessionClient` with `wss://` URL enforcement, credential-not-in-URL guard, header-based credential transport, bounded pending request map, bounded outbound queue, exponential reconnect backoff with jitter and min/max delay, Agent restart/controller restart handling, replay dispatch handling, graceful shutdown, and timer cleanup.
+- Browser Agent product config gates for `WAR_CONTROLLER_WSS_URL` and `WAR_CONTROLLER_SESSION_CREDENTIAL`; no public Agent listener was added.
+
+Docs added:
+
+- `docs/ADR-0006-pairing-and-outbound-agent-wss-session.md`
+
+Verification:
+
+- `npm.cmd run check:controller-core`: Pass.
+- `npm.cmd run test:controller-core`: Pass, 20/20.
+- `npm.cmd run check:controller-wss`: Pass.
+- `npm.cmd run test:controller-wss`: Pass, 2/2.
+- `npm.cmd run check:browser-agent`: Pass.
+- `npm.cmd run test:browser-agent:unit`: Pass, 85/85.
 
 ## Architecture Consolidation Contracts
 

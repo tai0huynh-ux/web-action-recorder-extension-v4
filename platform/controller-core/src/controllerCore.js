@@ -6,6 +6,8 @@ import { ExecutionEventStore } from './executionEventStore.js';
 import { GroupRegistry } from './groupRegistry.js';
 import { JobService } from './jobService.js';
 import { PersistenceAdapter } from './persistenceAdapter.js';
+import { PairingService } from './pairingService.js';
+import { SessionManager } from './sessionManager.js';
 import { WorkflowRegistry } from './workflowRegistry.js';
 
 export class ControllerCore {
@@ -20,6 +22,8 @@ export class ControllerCore {
     this.jobs = new JobService({ store: this.store, audit: this.audit, now, id });
     this.events = new ExecutionEventStore({ store: this.store, now });
     this.auth = authPolicy || new AuthPolicy({ verifyCredential: () => false, ipAllowed: () => true });
+    this.pairing = new PairingService({ store: this.store, audit: this.audit, now });
+    this.sessions = new SessionManager({ core: this, now, id });
   }
 
   async load() {
@@ -34,4 +38,6 @@ function defaultId(prefix) {
 export { buildDatasetAssignments } from './datasetAssignment.js';
 export { ControllerCoreError, ERROR_CODES } from './errors.js';
 export { PersistenceAdapter } from './persistenceAdapter.js';
+export { PairingService, hashSecret } from './pairingService.js';
+export { SessionManager } from './sessionManager.js';
 export { assertTransition, companionToUnifiedStatus, TERMINAL_STATUSES, UNIFIED_JOB_STATUSES } from './stateTransitions.js';

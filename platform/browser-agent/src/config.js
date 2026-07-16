@@ -49,6 +49,12 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     nativeBridgeIdleTimeoutMs: readInt(env.WAR_AGENT_SOCKET_IDLE_TIMEOUT_MS, 30000, 1000, 300000, 'WAR_AGENT_SOCKET_IDLE_TIMEOUT_MS'),
     nativeBridgeRequestTimeoutMs: readInt(env.WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS, 10000, 1000, 300000, 'WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS'),
     nativeBridgeMaxConnections: readInt(env.WAR_AGENT_SOCKET_MAX_CONNECTIONS, 8, 1, 128, 'WAR_AGENT_SOCKET_MAX_CONNECTIONS'),
+    controllerWssUrl: readOptionalString(env.WAR_CONTROLLER_WSS_URL),
+    controllerSessionCredential: readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL),
+    controllerReconnectMinMs: readInt(env.WAR_CONTROLLER_RECONNECT_MIN_MS, 500, 100, 60000, 'WAR_CONTROLLER_RECONNECT_MIN_MS'),
+    controllerReconnectMaxMs: readInt(env.WAR_CONTROLLER_RECONNECT_MAX_MS, 30000, 500, 300000, 'WAR_CONTROLLER_RECONNECT_MAX_MS'),
+    controllerMaxPendingRequests: readInt(env.WAR_CONTROLLER_MAX_PENDING_REQUESTS, 128, 1, 5000, 'WAR_CONTROLLER_MAX_PENDING_REQUESTS'),
+    controllerMaxOutboundQueue: readInt(env.WAR_CONTROLLER_MAX_OUTBOUND_QUEUE, 256, 1, 10000, 'WAR_CONTROLLER_MAX_OUTBOUND_QUEUE'),
     workflowRegistryMaxCount: readInt(env.WAR_WORKFLOW_REGISTRY_MAX_COUNT, 1000, 1, 100000, 'WAR_WORKFLOW_REGISTRY_MAX_COUNT'),
     workflowRegistryMaxPayloadBytes: readInt(env.WAR_WORKFLOW_REGISTRY_MAX_PAYLOAD_BYTES, 1024 * 1024, 1024, 10 * 1024 * 1024, 'WAR_WORKFLOW_REGISTRY_MAX_PAYLOAD_BYTES'),
     nodeEnv: readString(env.NODE_ENV, 'development')
@@ -56,6 +62,7 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
   if (config.semanticDefaultTimeoutMs > config.semanticMaxTimeoutMs) {
     throw new AgentError('invalid_config', 'WAR_SEMANTIC_DEFAULT_TIMEOUT_MS must be <= WAR_SEMANTIC_MAX_TIMEOUT_MS');
   }
+  validateControllerSession(config);
   config.paths = {
     deviceDir: path.join(config.dataDir, 'device'),
     profileDir: path.join(config.dataDir, 'chromium-profile'),
@@ -71,7 +78,8 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
 export function serializeConfig(config) {
   return redact({
     ...config,
-    token: config.token ? '[REDACTED]' : undefined
+    token: config.token ? '[REDACTED]' : undefined,
+    controllerSessionCredential: config.controllerSessionCredential ? '[REDACTED]' : undefined
   });
 }
 
@@ -91,6 +99,19 @@ function validateBind(config) {
   }
   if (!Array.isArray(config.allow) || config.allow.length === 0) {
     throw new AgentError('invalid_config', 'Remote bind requires WAR_AGENT_ALLOW with at least one explicit IP');
+  }
+}
+
+function validateControllerSession(config) {
+  if (!config.controllerWssUrl && !config.controllerSessionCredential) return;
+  if (!config.controllerWssUrl || !String(config.controllerWssUrl).startsWith('wss://')) {
+    throw new AgentError('invalid_config', 'WAR_CONTROLLER_WSS_URL must be a wss:// URL when controller session is enabled');
+  }
+  if (!config.controllerSessionCredential || config.controllerSessionCredential.length < 24) {
+    throw new AgentError('invalid_config', 'WAR_CONTROLLER_SESSION_CREDENTIAL must be at least 24 characters');
+  }
+  if (config.controllerReconnectMinMs > config.controllerReconnectMaxMs) {
+    throw new AgentError('invalid_config', 'WAR_CONTROLLER_RECONNECT_MIN_MS must be <= WAR_CONTROLLER_RECONNECT_MAX_MS');
   }
 }
 

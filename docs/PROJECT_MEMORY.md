@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Controller Core Extraction.
+Pairing Identity and Outbound Agent WSS Session.
 
 ## Confirmed Architecture Decisions
 
@@ -37,6 +37,9 @@ Controller Core Extraction.
 - `legacyCompanionPollingEnabled` defaults to true for existing compatibility.
 - Companion HTTP is now a compatibility adapter over Controller Core.
 - Controller Core has no HTTP, WebSocket, Electron, Chrome API, or fixed filesystem path dependency.
+- Pairing/session state is owned by Controller Core; WSS is only an adapter.
+- Browser Agent initiates outbound WSS when configured and does not open a public listener for controller sessions.
+- Session credentials must not be placed in URLs or persisted as plaintext.
 
 ## Tests And Baseline
 
@@ -55,14 +58,12 @@ Architecture contract verification:
 
 ## Known Gaps
 
-- Pairing is contract-only.
-- Outbound persistent Agent-to-Controller sessions are not implemented in this milestone.
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
-- Pairing public-key/runtime is not implemented in this milestone.
+- Linux/container verification for paired outbound sessions has not been run from this Windows environment.
 
 ## Next Milestone
 
-Pairing Identity and Outbound Agent WSS Session.
+Linux/container verification for paired outbound sessions.
 
 ## Open Questions
 
