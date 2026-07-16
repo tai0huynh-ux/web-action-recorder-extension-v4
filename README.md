@@ -18,7 +18,15 @@ npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
 ```
 
-The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Deterministic unsigned development packaging is available; production signing requires external certificate material.
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Container Real-World Gate: PASS in GitHub Actions run `29525195037`. Deterministic unsigned development packaging is available; production signing requires external certificate material.
+
+## Container Real-World Gate
+
+Latest accepted run: GitHub Actions `29525195037`.
+
+The gate verifies a real Browser Agent container, real Chromium, MV3 Extension, Native Messaging, TLS WSS Controller dispatch, Google search/copy workflow execution, controlled fallback execution, result uplink, terminal replay protection, cancel path, and persisted execution events in order: `job_acknowledged`, `job_started`, `job_succeeded`.
+
+Current decision: `READY_FOR_PHYSICAL_LAN_PILOT`. Physical two-machine LAN pilot remains `NOT_RUN_NO_PHYSICAL_MACHINES`; this repository does not claim personal LAN readiness from the container gate alone.
 
 ## Release Packaging
 

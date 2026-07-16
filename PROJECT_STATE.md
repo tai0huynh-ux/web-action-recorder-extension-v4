@@ -9,17 +9,59 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Production Packaging and Release Gate: PASS for unsigned development artifacts.
+Current Gate: Container Real-World Gate: PASS.
 
-Current milestone: Production Packaging and Release Gate.
+Current milestone: Container real-world execution hardening.
 
-Next milestone: Sensitive input policy and production certificate signing execution.
+Next milestone: Physical two-machine LAN pilot.
 
-Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim. Full workflow execution through the Extension is accepted for the local Edge MV3 gate. Deterministic unsigned development packaging now builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate now also passes with a real Browser Agent container, real Chromium, real MV3 Extension, TLS WSS Controller dispatch, Google search/copy workflow execution, result uplink, terminal replay protection, and cancel coverage. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+
+## Container Real-World Gate
+
+Updated: 2026-07-17
+
+Status: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
+
+Baseline before changes:
+
+- HEAD: `62ad9a747d301312906fa42b96d551edada7e5be`.
+- Branch: `main`.
+- Failing GitHub Actions run: `29520410006`, timed out waiting for `job_started`.
+
+Implemented:
+
+- MV3 service worker now emits `job_started` at the tab execution boundary before terminal result delivery can race it.
+- Service worker runtime initialization now starts Native Bridge polling when the worker starts, installs, or starts up.
+- Browser Agent wakes Native Bridge polling after manifest installation, restarts Chromium once after a newly installed native host manifest, probes Native Messaging health, and records probe status in diagnostics.
+- Container runtime now installs the Chromium Native Messaging host manifest under `/etc/chromium/native-messaging-hosts/com.web_action_recorder.native_bridge.json`.
+- Native Host default socket path now follows `WAR_DATA_DIR` when `WAR_AGENT_SOCKET_PATH` is not supplied.
+- Real-world container gate now writes sanitized evidence on failure, preserves event timelines, and asserts persisted `job_acknowledged`, `job_started`, `job_succeeded`, `startedBeforeTerminal`, and `sameJobIdThroughout`.
+- GitHub evidence upload for the Container Real-World Gate runs with `if: always()`.
+
+Verification:
+
+- GitHub Actions Container Real-World Gate run `29525195037`: Pass, job `Controlled container search copy` completed in 1m05s.
+- Artifact: `artifacts/container-real-world-gate-29525195037-download/container-real-world-gate-29525195037/`.
+- Container gate evidence: Browser Agent container true, real Chromium true, MV3 Extension true, TLS WSS true, authenticated device true, controller dispatch true, workflow delivered true, Google case PASS, controlled fallback PASS, clipboard verification PASS, result uplink PASS, terminal replay protection PASS, cancel path PASS, cleanup PASS.
+- Native Bridge probe: `ok=true`, `type=native.bridge.response`.
+- Execution event sequence: `job_acknowledged` sequence 1, `job_started` sequence 2, `job_succeeded` sequence 3 for the same job id.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 290/290 tests.
+- `npm.cmd run test:controller-session:wss-gate`: Pass, artifact `artifacts/controller-wss/wss-gate-1784227652567.json`.
+- `npm.cmd run test:controller-extension:e2e`: Pass, artifact `artifacts/controller-extension-e2e/controller-extension-e2e-1784227654423.json`, event types `job_acknowledged`, `job_started`, `job_succeeded`.
+- `npm.cmd run test:controller-electron:smoke`: Pass.
+- `npm.cmd run test:release:integrity`: Pass, 79 artifacts checked.
+
+Known limitations:
+
+- Physical two-machine LAN pilot was not run in this checkpoint because no two physical machines were available. Status: `NOT_RUN_NO_PHYSICAL_MACHINES`.
+- Production signing remains `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
+- This checkpoint does not claim `READY_FOR_PERSONAL_LAN_USE`; it only closes the GitHub container gate and prepares the next physical LAN pilot.
 
 ## Production Packaging and Release Gate
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 Status: PASS for unsigned development package; production signed release is `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
 

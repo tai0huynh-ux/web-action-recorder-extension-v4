@@ -1,6 +1,6 @@
 # Chromium Control Platform State
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 ## Phase
 
@@ -8,7 +8,22 @@ Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker h
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Production Packaging and Release Gate: PASS for unsigned development artifacts.
+Status: Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
+
+## Container Real-World Gate
+
+- GitHub Actions run `29525195037`: PASS, job `Controlled container search copy` completed in 1m05s.
+- Artifact: `artifacts/container-real-world-gate-29525195037-download/container-real-world-gate-29525195037/`.
+- The gate used a real Browser Agent container, real Chromium, real MV3 Extension, TLS WSS Controller dispatch, authenticated device pairing, Native Messaging, and the Extension graph runner.
+- Google case: PASS.
+- Controlled fallback: PASS.
+- Execution events persisted in order for the same job id: `job_acknowledged`, `job_started`, `job_succeeded`.
+- Native Bridge probe in container diagnostics: `ok=true`, `type=native.bridge.response`.
+- Container Chromium now uses a system Native Messaging host manifest at `/etc/chromium/native-messaging-hosts/com.web_action_recorder.native_bridge.json`.
+- Failure evidence upload now runs with `if: always()` and includes sanitized timeline/result/event artifacts.
+- Physical two-machine LAN pilot: `NOT_RUN_NO_PHYSICAL_MACHINES`.
+- Production signing: `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
+- Current decision is only `READY_FOR_PHYSICAL_LAN_PILOT`; no personal LAN readiness claim is made.
 
 ## Production Packaging and Release Gate
 

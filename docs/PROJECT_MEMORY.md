@@ -1,10 +1,10 @@
 # Project Memory
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 ## Current Milestone
 
-Production Packaging and Release Gate: PASS for unsigned development artifacts.
+Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
 
 ## Confirmed Architecture Decisions
 
@@ -57,6 +57,9 @@ Production Packaging and Release Gate: PASS for unsigned development artifacts.
 - Browser Agent, MV3 Extension, and Native Host are released as sidecar packages rather than silently bundled into the Controller installer.
 - Unsigned development release is supported through `WAR_RELEASE_CHANNEL=development`; production signing is only claimed when a real Authenticode certificate validates.
 - Release manifest and `SHA256SUMS.txt` are generated artifacts and are not tracked.
+- Container Chromium requires a system Native Messaging host manifest for the fixed extension id used by the gate; the Dockerfile installs it under `/etc/chromium/native-messaging-hosts/`.
+- MV3 `job_started` must be emitted at the tab execution boundary before terminal result delivery can race it.
+- Browser Agent must wake Extension Native Bridge polling after native host manifest install and after the one-time Chromium restart used to pick up a newly installed manifest.
 
 ## Tests And Baseline
 
@@ -66,6 +69,7 @@ Baseline before changes:
 - `npm.cmd run check`: Pass.
 - `npm.cmd run test:all`: Pass, 123 tests.
 - Phase 2 Native X11 Gate: Complete.
+- Container Real-World Gate run `29525195037`: Pass; Google case PASS; controlled fallback PASS; `job_acknowledged`, `job_started`, and `job_succeeded` persisted in order for the same job.
 
 Architecture contract verification:
 
@@ -75,13 +79,14 @@ Architecture contract verification:
 
 ## Known Gaps
 
-- Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
+- Windows local Docker was unavailable in this checkpoint; real container acceptance was proven through GitHub Actions run `29525195037`.
 - Chrome can remain blocked where local policy or automation mode rejects `--load-extension`; the accepted local E2E path is Edge MV3.
+- Physical two-machine LAN pilot is `NOT_RUN_NO_PHYSICAL_MACHINES`.
 - Production certificate execution, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
 
 ## Next Milestone
 
-Sensitive input policy and production certificate signing execution.
+Physical two-machine LAN pilot.
 
 ## Open Questions
 

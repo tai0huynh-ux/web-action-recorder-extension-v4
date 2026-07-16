@@ -98,4 +98,7 @@ On Windows, Native Host install/uninstall uses the browser-specific HKCU Native 
 - Auto-update is not implemented in this milestone.
 - Production Authenticode signing requires external certificate material.
 - The Browser Agent container image build remains separate from the Windows release bundle.
-- Real-world Google acceptance can be blocked by CAPTCHA, consent, or network policy; use a controlled local fallback when that happens.
+- GitHub Actions Container Real-World Gate run `29525195037` passed Google search/copy and controlled fallback execution through the real Browser Agent container, real Chromium, MV3 Extension, Native Messaging, TLS WSS dispatch, and result uplink.
+- Real-world Google acceptance can still be blocked by CAPTCHA, consent, or network policy outside the accepted gate; use a controlled local fallback when that happens.
+- Physical two-machine LAN pilot is not part of release packaging and remains `NOT_RUN_NO_PHYSICAL_MACHINES`.
+- Production signing remains `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL` until real signing material is supplied.
