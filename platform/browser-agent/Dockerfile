@@ -51,7 +51,7 @@ COPY src ./extension/src
 COPY ui ./extension/ui
 COPY --from=native-build /native/x11-inputd/war-x11-inputd /usr/local/bin/war-x11-inputd
 
-RUN printf '%s\n' '#!/bin/sh' 'exec node /app/native-host/host.js' > /usr/local/bin/war-native-host \
+RUN printf '%s\n' '#!/bin/sh' 'export WAR_DATA_DIR="${WAR_DATA_DIR:-/data}"' 'export WAR_AGENT_SOCKET_PATH="${WAR_AGENT_SOCKET_PATH:-/data/run/native-bridge.sock}"' 'exec node /app/native-host/host.js' > /usr/local/bin/war-native-host \
     && chmod +x /usr/local/bin/war-native-host
 
 RUN useradd --create-home --shell /usr/sbin/nologin war \

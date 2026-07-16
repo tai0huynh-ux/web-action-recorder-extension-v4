@@ -37,6 +37,7 @@ jobs:
           WAR_BROWSER_NO_SANDBOX: "1"
         run: npm run test:container-real-world
       - name: Upload sanitized evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: container-real-world-gate-${{ github.run_id }}
