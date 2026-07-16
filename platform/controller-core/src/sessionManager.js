@@ -102,8 +102,16 @@ export class SessionManager {
       inputs,
       idempotencyKey
     });
+    if (command.dispatchMetadata) {
+      const result = { command, dispatch: structuredClone(command.dispatchMetadata) };
+      session.pendingJobs.set(command.id, { payload: result.dispatch, generation });
+      this.remember(ledgerKey, result);
+      return structuredClone(result);
+    }
     const leased = await this.core.jobs.leaseNext(deviceId, Math.max(1000, Date.parse(deadline) - Date.parse(this.now())));
+    if (!leased) throw domainError(ERROR_CODES.INVALID_TARGET, 'No dispatchable command available', 409);
     const payload = {
+      schemaVersion: 1,
       jobId: leased.id,
       workflowId,
       workflowRevision,
@@ -114,8 +122,9 @@ export class SessionManager {
       controlPath: 'native_bridge',
       leaseId: leased.leaseId
     };
+    const persisted = await this.core.jobs.setDispatchMetadata(leased.id, payload);
     session.pendingJobs.set(leased.id, { payload, generation });
-    const result = { command, dispatch: payload };
+    const result = { command: persisted, dispatch: payload };
     this.remember(ledgerKey, result);
     return structuredClone(result);
   }
@@ -163,7 +172,19 @@ export class SessionManager {
 
   replayNonTerminal(deviceId, generation) {
     const session = this.requireSession(deviceId, generation);
-    return Array.from(session.pendingJobs.values()).map((item) => structuredClone(item.payload));
+    const nowMs = Date.parse(this.now());
+    const commands = this.core.jobs.listCommandsForDevice(deviceId);
+    const replay = [];
+    for (const command of commands) {
+      const status = companionToUnifiedStatus(command.status);
+      if (TERMINAL_STATUSES.has(status)) continue;
+      if (!command.dispatchMetadata) continue;
+      if (command.dispatchMetadata.deadline && Date.parse(command.dispatchMetadata.deadline) <= nowMs) continue;
+      const payload = structuredClone(command.dispatchMetadata);
+      session.pendingJobs.set(command.id, { payload, generation });
+      replay.push(payload);
+    }
+    return replay;
   }
 
   async disconnect(deviceId, generation, status = 'reconnecting') {

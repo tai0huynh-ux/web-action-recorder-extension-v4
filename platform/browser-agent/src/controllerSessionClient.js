@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
+import WebSocket from 'ws';
 import { PROTOCOL_VERSION, MESSAGE_TYPES } from '../../protocol/src/protocolV2.js';
 
 const DEFAULT_MIN_RECONNECT_MS = 500;
@@ -14,6 +15,7 @@ export class ControllerSessionClient extends EventEmitter {
     identity,
     version = '0.1.0',
     connector = createWebSocketConnector,
+    connectorOptions = {},
     scheduler = globalScheduler,
     random = Math.random,
     now = () => new Date().toISOString(),
@@ -31,6 +33,7 @@ export class ControllerSessionClient extends EventEmitter {
     this.identity = identity;
     this.version = version;
     this.connector = connector;
+    this.connectorOptions = connectorOptions;
     this.scheduler = scheduler;
     this.random = random;
     this.now = now;
@@ -47,6 +50,7 @@ export class ControllerSessionClient extends EventEmitter {
     this.pending = new Map();
     this.queue = [];
     this.stopped = true;
+    this.closedSockets = new WeakSet();
   }
 
   start() {
@@ -57,18 +61,24 @@ export class ControllerSessionClient extends EventEmitter {
   connect() {
     this.clearReconnect();
     this.status = 'reconnecting';
-    this.socket = this.connector(this.url, { headers: { Authorization: `Bearer ${this.credential}` }, credential: this.credential });
-    this.socket.on?.('open', () => this.onOpen());
-    this.socket.on?.('message', (message) => this.onMessage(message));
-    this.socket.on?.('close', () => this.onClose());
+    this.socket = this.connector(this.url, {
+      ...this.connectorOptions,
+      headers: { ...(this.connectorOptions.headers || {}), Authorization: `Bearer ${this.credential}` },
+      credential: this.credential
+    });
+    const socket = this.socket;
+    socket.on?.('open', () => this.onOpen(socket));
+    socket.on?.('message', (message) => this.onMessage(message));
+    socket.on?.('close', () => this.onClose(socket));
     this.socket.on?.('error', (error) => {
-      this.log('warn', 'controllerSession', 'socket_error', { message: error.message });
-      this.onClose();
+      this.log('warn', 'controllerSession', 'socket_error', { message: sanitizeErrorMessage(error?.message) });
+      this.onClose(socket);
     });
     return this.socket;
   }
 
-  onOpen() {
+  onOpen(socket = this.socket) {
+    if (socket !== this.socket || this.stopped) return;
     this.status = 'online';
     this.reconnectAttempts = 0;
     this.send(this.helloEnvelope());
@@ -95,7 +105,9 @@ export class ControllerSessionClient extends EventEmitter {
     if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
   }
 
-  onClose() {
+  onClose(socket = this.socket) {
+    if (socket !== this.socket || this.closedSockets.has(socket)) return;
+    this.closedSockets.add(socket);
     this.clearHeartbeat();
     for (const pending of this.pending.values()) {
       this.scheduler.clearTimeout(pending.timer);
@@ -108,6 +120,7 @@ export class ControllerSessionClient extends EventEmitter {
     }
     this.status = 'reconnecting';
     const delay = this.nextReconnectDelay();
+    this.clearReconnect();
     this.reconnectTimer = this.scheduler.setTimeout(() => this.connect(), delay);
   }
 
@@ -239,18 +252,40 @@ export function buildDeviceDescriptor(identity, version, now) {
 }
 
 export function createWebSocketConnector(url, options = {}) {
-  if (typeof WebSocket !== 'function') throw new Error('Runtime WebSocket client is unavailable');
-  const socket = new WebSocket(url, [], { headers: options.headers || {} });
+  const WebSocketImpl = options.WebSocketImpl || WebSocket;
+  if (typeof WebSocketImpl !== 'function') throw new Error('Runtime WebSocket client is unavailable');
+  const wsOptions = {
+    headers: options.headers || {},
+    ...(options.ca ? { ca: options.ca } : {})
+  };
+  const socket = new WebSocketImpl(url, [], wsOptions);
   return {
     send: (message) => socket.send(message),
     close: () => socket.close(),
     on(event, handler) {
+      if (typeof socket.on === 'function') {
+        if (event === 'message') socket.on('message', (message) => handler(normalizeMessage(message)));
+        else socket.on(event, handler);
+        return;
+      }
       if (event === 'open') socket.addEventListener('open', handler);
       if (event === 'close') socket.addEventListener('close', handler);
       if (event === 'error') socket.addEventListener('error', (error) => handler(error?.error || error));
-      if (event === 'message') socket.addEventListener('message', (message) => handler(message.data));
+      if (event === 'message') socket.addEventListener('message', (message) => handler(normalizeMessage(message.data)));
     }
   };
+}
+
+function normalizeMessage(message) {
+  if (typeof message === 'string') return message;
+  if (Buffer.isBuffer(message)) return message.toString('utf8');
+  if (message instanceof ArrayBuffer) return Buffer.from(message).toString('utf8');
+  if (ArrayBuffer.isView(message)) return Buffer.from(message.buffer, message.byteOffset, message.byteLength).toString('utf8');
+  return String(message);
+}
+
+function sanitizeErrorMessage(message = '') {
+  return String(message).replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
 }
 
 const globalScheduler = {

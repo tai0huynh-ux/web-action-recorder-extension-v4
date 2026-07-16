@@ -21,7 +21,7 @@ Next milestone after acceptance: Linux/container verification for paired outboun
 
 Updated: 2026-07-16
 
-Status: Complete locally. Windows checks and unit/session tests pass; Linux/container verification was not run in this environment.
+Status: Runtime gate closed. Windows local checks, real WSS/TLS gate, Linux WSS gate, and Linux container regression pass.
 
 Baseline before changes:
 
@@ -38,6 +38,19 @@ Implemented:
 - Browser Agent outbound `ControllerSessionClient` with `wss://` URL enforcement, credential-not-in-URL guard, header-based credential transport, bounded pending request map, bounded outbound queue, exponential reconnect backoff with jitter and min/max delay, Agent restart/controller restart handling, replay dispatch handling, graceful shutdown, and timer cleanup.
 - Browser Agent product config gates for `WAR_CONTROLLER_WSS_URL` and `WAR_CONTROLLER_SESSION_CREDENTIAL`; no public Agent listener was added.
 
+Runtime hardening closure on 2026-07-16:
+
+- Baseline commit `0392fab0f5d20954787c411d4f5fbe4b4da4ec5f` was verified before changes.
+- Root causes reproduced: Node global `WebSocket` did not deliver Authorization headers to a real upgrade request; process-restart replay was empty because replay depended on transient `session.pendingJobs`; socket `error` plus `close` could schedule duplicate reconnect timers and stale old-socket events could move a new socket back to reconnecting; pairing/session secret digests used direct string equality.
+- Added dependency `ws` as the runtime WebSocket implementation for authenticated opening headers and real server wrapper support.
+- Added `platform/controller-wss/src/wssServer.js` runtime wrapper over an external HTTP/HTTPS server. It enforces `/v1/agent-session`, parses a single Bearer Authorization header, rejects malformed/missing credentials, uses `ws` max payload handling, and delegates to `ControllerWssServerAdapter`.
+- Browser Agent connector now uses `ws`, keeps credentials out of URL/subprotocol/logs, preserves `wss://` enforcement, supports internal CA injection for tests, normalizes string/Buffer/ArrayBuffer messages, and keeps TLS verification enabled.
+- Dispatch metadata is persisted on the command as `dispatchMetadata` so persistent command state is the replay source of truth. `session.pendingJobs` remains only a transient cache rebuilt from persisted non-terminal commands.
+- Dispatch idempotency survives ControllerCore object restart by returning the same persisted command metadata for duplicate `idempotencyKey`.
+- Reconnect lifecycle now ignores stale socket events and schedules at most one reconnect timer per active socket close path.
+- Pairing code and session credential digest comparison now uses `crypto.timingSafeEqual` through a malformed-safe digest helper.
+- Agent execution-path decision: full graph execution is not connected in this package because the existing NativeBridge handler has execution event/result intake but no scoped typed `execution.dispatch` downlink without expanding protocol/runner scope. Gate remains at transport/session/job-state level.
+
 Docs added:
 
 - `docs/ADR-0006-pairing-and-outbound-agent-wss-session.md`
@@ -50,6 +63,17 @@ Verification:
 - `npm.cmd run test:controller-wss`: Pass, 2/2.
 - `npm.cmd run check:browser-agent`: Pass.
 - `npm.cmd run test:browser-agent:unit`: Pass, 85/85.
+- `npm.cmd run test:controller-session:wss-gate`: Pass, artifact `artifacts/controller-wss/wss-gate-1784198499411.json` (local, redacted, not committed).
+- Linux source path: `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245`.
+- Linux environment: Ubuntu 24.04.4 LTS, kernel `6.8.0-124-generic`, x86_64, Node.js `v24.14.1`, npm `11.11.0`, Docker `29.4.2`.
+- Linux `npm ci`: Pass.
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 213 tests.
+- Linux `npm run test:controller-session:wss-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198588905.json`.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `npm run container:browser-agent:controller-session-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198609263.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/browser-agent/smoke-1784198626814.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/browser-agent/smoke-1784198643920.json`.
 
 ## Architecture Consolidation Contracts
 

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { ControllerCore, hashSecret } from '../src/controllerCore.js';
-import { createMemoryStore } from '../../../companion/store.js';
+import { createMemoryStore, JsonStore } from '../../../companion/store.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 
 test('pair success binds credential to authoritative device identity without storing plaintext token', async () => {
@@ -105,6 +108,46 @@ test('duplicate dispatch is idempotent, cancel works, and non-terminal job repla
   assert.equal(cancel.ok, true);
 });
 
+test('non-terminal dispatch replays after ControllerCore process restart from persistent store', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'war-controller-replay-'));
+  const storePath = path.join(dir, 'controller-state.json');
+  const clock = fakeClock('2026-07-16T00:00:00.000Z');
+  try {
+    let core = new ControllerCore({ store: new JsonStore(storePath), now: clock.now, id: sequenceId() });
+    await core.load();
+    await core.pairing.requestPairing({ device: device(), requestId: 'pair-a' });
+    await core.store.update((state) => {
+      state.pendingPairings[0].tokenHash = hashSecret('code-a');
+    });
+    await core.pairing.confirmPairing('pair-a', 'code-a');
+    await core.store.update((state) => {
+      state.pairedAgents[0].credentialHash = hashSecret('cred-a');
+    });
+    const firstSession = await core.sessions.authenticateHello(agentHello('dev-a'), { credential: 'cred-a' });
+    await core.sessions.reconcileWorkflows('dev-a', firstSession.generation, [revision()]);
+    const first = await core.sessions.dispatch(dispatchArgs(firstSession, { idempotencyKey: 'restart-dispatch' }));
+    const jobId = first.dispatch.jobId;
+    const leaseId = first.dispatch.leaseId;
+    const idempotencyKey = first.dispatch.idempotencyKey;
+    core.sessions.shutdown();
+    core = null;
+
+    const restarted = new ControllerCore({ store: new JsonStore(storePath), now: clock.now, id: sequenceId() });
+    await restarted.load();
+    const nextSession = await restarted.sessions.authenticateHello(agentHello('dev-a', 'nonce-after-restart'), { credential: 'cred-a' });
+    const replay = restarted.sessions.replayNonTerminal('dev-a', nextSession.generation);
+    assert.equal(replay.length, 1);
+    assert.equal(replay[0].jobId, jobId);
+    assert.equal(replay[0].leaseId, leaseId);
+    assert.equal(replay[0].idempotencyKey, idempotencyKey);
+    const duplicate = await restarted.sessions.dispatch(dispatchArgs(nextSession, { idempotencyKey: 'restart-dispatch' }));
+    assert.equal(duplicate.dispatch.jobId, jobId);
+    assert.equal(duplicate.dispatch.leaseId, leaseId);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('terminal result is idempotent and stale session event is rejected', async () => {
   const core = await pairedCore();
   const session = await core.sessions.authenticateHello(agentHello('dev-a'), { credential: 'cred-a' });
@@ -119,6 +162,18 @@ test('wrong protocol version and malformed envelope are rejected by session vali
   const core = await pairedCore();
   await assert.rejects(() => core.sessions.authenticateHello({ ...agentHello('dev-a'), protocolVersion: 'war-control.v1' }, { credential: 'cred-a' }), /Invalid AgentHello|Protocol/);
   await assert.rejects(() => core.sessions.authenticateHello({ protocolVersion: PROTOCOL_VERSION, type: 'agent.hello', payload: {} }, { credential: 'cred-a' }), /Invalid AgentHello/);
+});
+
+test('secret digest comparison uses timingSafeEqual and handles malformed credentials safely', async () => {
+  const core = await pairedCore();
+  assert.throws(() => core.pairing.verifyCredential('dev-a', ''), /rejected/i);
+  assert.throws(() => core.pairing.verifyCredential('dev-a', null), /rejected/i);
+  await core.store.update((state) => {
+    state.pairedAgents[0].credentialHash = 'malformed-hash';
+  });
+  assert.throws(() => core.pairing.verifyCredential('dev-a', 'cred-a'), /rejected/i);
+  const source = await fs.readFile(new URL('../src/pairingService.js', import.meta.url), 'utf8');
+  assert.match(source, /timingSafeEqual/);
 });
 
 async function fixtureCore(clock = fakeClock()) {

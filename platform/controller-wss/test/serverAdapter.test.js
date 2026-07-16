@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import http from 'node:http';
+import WebSocket from 'ws';
 import { ControllerCore, hashSecret } from '../../controller-core/src/controllerCore.js';
 import { createMemoryStore } from '../../../companion/store.js';
 import { ControllerWssServerAdapter } from '../src/serverAdapter.js';
+import { ControllerWssRuntimeServer, parseAuthorization } from '../src/wssServer.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 
 test('controller WSS adapter authenticates AgentHello and rejects oversized or wrong-version envelopes', async () => {
@@ -28,6 +31,39 @@ test('controller WSS adapter cleans socket listeners on shutdown', async () => {
   adapter.shutdown();
   assert.equal(adapter.connections.size, 0);
   assert.equal(connection.closed, true);
+});
+
+test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
+  assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
+  assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });
+  assert.equal(parseAuthorization(undefined).ok, false);
+  assert.equal(parseAuthorization('Basic credential-a').ok, false);
+  assert.equal(parseAuthorization('Bearer    ').ok, false);
+  assert.equal(parseAuthorization('Bearer one, Bearer two').ok, false);
+  assert.equal(parseAuthorization(['Bearer one', 'Bearer two']).ok, false);
+});
+
+test('runtime WSS wrapper accepts configured path with Authorization and rejects other upgrades', async () => {
+  const server = http.createServer();
+  const accepted = [];
+  const adapter = {
+    accept(connection, context) {
+      accepted.push(context);
+      connection.close();
+    }
+  };
+  const runtime = new ControllerWssRuntimeServer({ server, adapter, path: '/v1/agent-session' });
+  await listen(server);
+  try {
+    const { port } = server.address();
+    await assert.rejects(() => connect(`ws://127.0.0.1:${port}/wrong`, { Authorization: 'Bearer credential-a' }));
+    await assert.rejects(() => connect(`ws://127.0.0.1:${port}/v1/agent-session`));
+    await connect(`ws://127.0.0.1:${port}/v1/agent-session`, { Authorization: 'Bearer credential-a' });
+    assert.deepEqual(accepted, [{ credential: 'credential-a' }]);
+  } finally {
+    runtime.shutdown();
+    await close(server);
+  }
 });
 
 class FakeConnection extends EventEmitter {
@@ -106,4 +142,21 @@ function device() {
     status: 'online',
     lastSeenAt: '2026-07-16T00:00:00.000Z'
   };
+}
+
+function listen(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+}
+
+function close(server) {
+  return new Promise((resolve) => server.close(resolve));
+}
+
+function connect(url, headers) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, [], { headers });
+    socket.on('open', () => resolve(socket));
+    socket.on('close', () => resolve(socket));
+    socket.on('error', reject);
+  });
 }

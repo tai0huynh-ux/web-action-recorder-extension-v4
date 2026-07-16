@@ -54,7 +54,7 @@ export class PairingService {
         request.status = 'expired';
         throw domainError(ERROR_CODES.JOB_EXPIRED, 'Pairing request expired', 410);
       }
-      if (request.tokenHash !== hashSecret(code)) throw domainError(ERROR_CODES.AUTH_DENIED, 'Pairing token rejected', 401);
+      if (!timingSafeDigestEqual(request.tokenHash, hashSecret(code))) throw domainError(ERROR_CODES.AUTH_DENIED, 'Pairing token rejected', 401);
       request.status = 'accepted';
       request.consumedAt = decidedAt;
       state.pairedAgents ||= [];
@@ -104,7 +104,7 @@ export class PairingService {
   verifyCredential(deviceId, credential) {
     const state = this.store.snapshot();
     const record = (state.pairedAgents || []).find((item) => item.deviceId === deviceId && !item.revokedAt);
-    if (!record || record.credentialHash !== hashSecret(credential)) throw domainError(ERROR_CODES.AUTH_DENIED, 'Agent session credential rejected', 401);
+    if (!record || !timingSafeDigestEqual(record.credentialHash, hashSecret(credential))) throw domainError(ERROR_CODES.AUTH_DENIED, 'Agent session credential rejected', 401);
     const device = requireDevice(state, deviceId);
     rejectRevoked(device);
     return true;
@@ -118,6 +118,15 @@ export class PairingService {
 
 export function hashSecret(secret) {
   return crypto.createHash('sha256').update(String(secret)).digest('hex');
+}
+
+export function timingSafeDigestEqual(storedDigest, candidateDigest) {
+  if (typeof storedDigest !== 'string' || typeof candidateDigest !== 'string') return false;
+  if (!/^[a-f0-9]+$/i.test(storedDigest) || !/^[a-f0-9]+$/i.test(candidateDigest)) return false;
+  const stored = Buffer.from(storedDigest, 'hex');
+  const candidate = Buffer.from(candidateDigest, 'hex');
+  if (stored.length !== candidate.length || stored.length === 0) return false;
+  return crypto.timingSafeEqual(stored, candidate);
 }
 
 export function cleanupExpiredPairings(state, nowIso, { removeExpired = false } = {}) {

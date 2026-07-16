@@ -378,3 +378,60 @@ Verification:
 - Linux `npm run container:browser-agent:build`: Pass.
 - Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `smoke-1784140800752.json`.
 - Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `smoke-1784140817335.json`.
+
+## Pairing Identity and Outbound Agent WSS Runtime Gate
+
+Updated: 2026-07-16
+
+Status: Complete. Linux WSS/TLS gate and Browser Agent container regression passed on `root@192.168.1.201`.
+
+Environment:
+
+- Ubuntu 24.04.4 LTS, kernel `6.8.0-124-generic`, x86_64.
+- Node.js `v24.14.1`, npm `11.11.0`.
+- Docker Engine `29.4.2`.
+- Source deployment path: `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245`.
+
+Source sync evidence:
+
+- Exact working tree archive was copied from Windows source and extracted into the timestamped Linux path.
+- SHA-256 was recorded for `package.json`, `package-lock.json`, `platform/controller-wss/src/wssServer.js`, `platform/browser-agent/src/controllerSessionClient.js`, `platform/controller-core/src/sessionManager.js`, `platform/controller-core/src/jobService.js`, `platform/controller-wss/integration/wssGate.js`, and `platform/browser-agent/Dockerfile`.
+- `npm ci`: Pass.
+
+TLS/WSS topology:
+
+- Gate uses a temporary test CA and server certificate with SAN for `localhost`, `127.0.0.1`, and `controller-gate`.
+- Controller WSS runtime is bound to an external HTTPS server and accepts only `/v1/agent-session`.
+- Browser/client trust is provided by the temporary CA certificate.
+- TLS verification stays enabled; no `NODE_TLS_REJECT_UNAUTHORIZED=0`, no `rejectUnauthorized=false`, and no curl `-k` evidence is used.
+- Private keys exist only in the temporary gate directory and are cleaned up by the gate.
+
+WSS scenarios verified:
+
+- TLS verification succeeds with the test CA.
+- Connection fails when the CA is not provided.
+- Authorization header reaches the Controller runtime.
+- Missing credential is rejected at upgrade.
+- Invalid and revoked credentials receive authentication failure.
+- Two Agents authenticate independently.
+- Workflow reconciliation and dispatch create persisted command metadata.
+- ControllerCore/process object restart plus reconnect replays the same non-terminal job.
+- Replay preserves `jobId` and `idempotencyKey`.
+- Terminal job does not replay.
+- Duplicate reconnect timer guard is covered by focused unit tests and reported as `0` in the gate artifact.
+- Runtime shutdown and temp key cleanup pass.
+
+Verification:
+
+- Linux `npm run check`: Pass.
+- Linux `npm run test:all`: Pass, 213 tests.
+- Linux `npm run test:controller-session:wss-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198588905.json`.
+- Linux `npm run container:browser-agent:build`: Pass.
+- Linux `npm run container:browser-agent:controller-session-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198609263.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run container:browser-agent:smoke`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/browser-agent/smoke-1784198626814.json`.
+- Linux `WAR_BROWSER_NO_SANDBOX=1 npm run test:browser-agent:integration`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/browser-agent/smoke-1784198643920.json`.
+
+Remaining deployment risk:
+
+- The Docker host still rejects Chromium namespace sandboxing with `Operation not permitted`; container browser gates use explicit `WAR_BROWSER_NO_SANDBOX=1`. No sandbox support is claimed.
+- The Browser Agent receives Controller dispatch over WSS, but this package intentionally does not add a new extension execution runner or protocol expansion for full workflow execution E2E.

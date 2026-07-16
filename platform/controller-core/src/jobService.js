@@ -151,6 +151,19 @@ export class JobService {
     return command;
   }
 
+  listCommandsForDevice(deviceId) {
+    return this.store.snapshot().commands.filter((item) => item.deviceId === deviceId).map((item) => structuredClone(item));
+  }
+
+  setDispatchMetadata(commandId, dispatchMetadata) {
+    return this.store.update((state) => {
+      const command = state.commands.find((item) => item.id === commandId);
+      if (!command) throw domainError(ERROR_CODES.INVALID_TARGET, 'Command not found', 404);
+      command.dispatchMetadata = structuredClone(dispatchMetadata);
+      return structuredClone(command);
+    });
+  }
+
   createCommand(fields) {
     return {
       id: fields.id,
@@ -166,7 +179,8 @@ export class JobService {
       notBefore: fields.notBefore || this.now(),
       batchId: fields.batchId,
       targetSnapshot: fields.targetSnapshot,
-      idempotencyKey: fields.idempotencyKey
+      idempotencyKey: fields.idempotencyKey,
+      dispatchMetadata: fields.dispatchMetadata
     };
   }
 

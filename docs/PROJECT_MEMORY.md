@@ -40,6 +40,13 @@ Pairing Identity and Outbound Agent WSS Session.
 - Pairing/session state is owned by Controller Core; WSS is only an adapter.
 - Browser Agent initiates outbound WSS when configured and does not open a public listener for controller sessions.
 - Session credentials must not be placed in URLs or persisted as plaintext.
+- `ws` is the runtime WebSocket implementation for authenticated outbound Controller sessions and Controller WSS runtime wrapping.
+- Node/global WebSocket must not be used for authenticated opening headers.
+- Persistent command state is the restart replay source of truth; `session.pendingJobs` is only a transient cache.
+- Dispatch metadata and idempotency keys must persist with the command so duplicate dispatch after Controller restart returns the same command.
+- Reconnect lifecycle must schedule one reconnect per active socket close path and ignore stale socket events.
+- Pairing code and session credential digest comparison uses `crypto.timingSafeEqual`.
+- Real Linux WSS/TLS gate is mandatory before accepting this milestone.
 
 ## Tests And Baseline
 
@@ -59,11 +66,11 @@ Architecture contract verification:
 ## Known Gaps
 
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
-- Linux/container verification for paired outbound sessions has not been run from this Windows environment.
+- Paired outbound session Linux/container verification passed on `root@192.168.1.201`, but full workflow execution E2E over WSS remains a later NativeBridge/Extension integration step.
 
 ## Next Milestone
 
-Linux/container verification for paired outbound sessions.
+Secure Electron Controller Shell.
 
 ## Open Questions
 
