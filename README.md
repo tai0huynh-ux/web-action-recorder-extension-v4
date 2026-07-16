@@ -18,7 +18,18 @@ npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
 ```
 
-The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Sensitive workflow inputs, packaging, and signing are later milestones.
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Deterministic unsigned development packaging is available; production signing requires external certificate material.
+
+## Release Packaging
+
+Build the release bundle explicitly:
+
+```powershell
+npm.cmd run release:bundle
+npm.cmd run test:release:gate
+```
+
+The release bundle writes ignored artifacts under `dist/release/`: Windows NSIS installer, Windows portable Controller executable, `win-unpacked` packaged smoke target, Browser Agent ZIP, MV3 Extension ZIP, `release-manifest.json`, and `SHA256SUMS.txt`. See `docs/RELEASE_PACKAGING.md` for signing variables, integrity checks, installer/uninstall testing, and known limitations.
 
 ## Controller-to-Extension E2E
 

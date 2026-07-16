@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron';
 import { createElectronControllerRuntime } from './electronRuntime.js';
+import { maybeRunPackagedSmoke } from '../release/packagedSmoke.js';
 
 const runtime = createElectronControllerRuntime({
   app,
@@ -10,7 +11,9 @@ const runtime = createElectronControllerRuntime({
   session,
 });
 
-runtime.start().catch((error) => {
+runtime.start().then(async () => {
+  await maybeRunPackagedSmoke({ app, runtime });
+}).catch((error) => {
   process.exitCode = 1;
   console.error(JSON.stringify({
     level: 'fatal',

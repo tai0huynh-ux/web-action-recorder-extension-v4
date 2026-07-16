@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="WAR Controller icon">
+  <rect width="256" height="256" rx="48" fill="#102820"/>
+  <path d="M50 78h156v100H50z" fill="#f7f3e8"/>
+  <path d="M67 98h122v18H67zm0 36h76v18H67z" fill="#2f6f63"/>
+  <circle cx="184" cy="143" r="16" fill="#d64545"/>
+  <path d="M72 196h112" stroke="#f7f3e8" stroke-width="18" stroke-linecap="round"/>
+</svg>

@@ -50,6 +50,9 @@ Diagnostics shows application version, protocol version, WSS status, safe bind h
 npm.cmd run check:controller-electron
 npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
+npm.cmd run package:controller-electron
+npm.cmd run dist:controller-electron
+npm.cmd run test:controller-electron:packaged
 npm.cmd run test:controller-electron
 ```
 
@@ -57,8 +60,16 @@ npm.cmd run test:controller-electron
 
 `test:controller-extension:e2e` runs the local Edge MV3 Controller-to-Extension gate through Browser Agent, Native Messaging, and the generated temporary Windows native host executable shim.
 
+## Packaging
+
+`package:controller-electron` builds the unpacked Windows package under `dist/release/controller-electron/win-unpacked/`.
+
+`dist:controller-electron` builds the Windows NSIS installer and portable executable. The packaged gate launches the unpacked executable and a temp-installed NSIS copy with temporary state and TLS/WSS configuration, then uninstalls the temp copy.
+
+Development artifacts are unsigned unless a real signing certificate is supplied through the release signing environment. See `docs/RELEASE_PACKAGING.md`.
+
 ## Known Limitations
 
 - Sensitive workflow inputs are unsupported.
-- Packaging and code signing are not included.
+- Production Authenticode signing was not executed without external certificate material.
 - Production LAN/TLS deployment remains an explicit opt-in and is not covered by this local shell acceptance.

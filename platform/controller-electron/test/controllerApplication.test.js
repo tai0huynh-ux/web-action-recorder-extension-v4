@@ -66,6 +66,24 @@ test('transport failure preserves persisted dispatch for reconnect replay withou
   assert.equal(core.sessions.replayNonTerminal('dev-a', 1)[0].jobId, commands[0].id);
 });
 
+test('application runtime status reports the actual bound WSS port', async () => {
+  const core = await connectedCore();
+  const app = new ControllerApplicationService({
+    core,
+    wssRuntime: { server: { address: () => ({ port: 49152 }) }, adapter: {} },
+    config: {
+      dataPath: 'data',
+      degraded: false,
+      errors: [],
+      wss: { enabled: true, requested: true, status: 'enabled', host: '127.0.0.1', port: 0, tls: {} }
+    }
+  });
+  const status = app.getRuntimeStatus().data;
+  assert.equal(status.enabled, true);
+  assert.equal(status.status, 'running');
+  assert.equal(status.port, 49152);
+});
+
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());

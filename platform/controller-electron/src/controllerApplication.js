@@ -20,7 +20,7 @@ export class ControllerApplicationService extends EventEmitter {
       enabled: Boolean(this.wssRuntime),
       status: this.wssRuntime ? 'running' : (publicConfig?.wss?.status || 'disabled'),
       bindHost: publicConfig?.wss?.host || '127.0.0.1',
-      port: publicConfig?.wss?.port ?? 0,
+      port: this.wssRuntime?.server?.address?.()?.port || publicConfig?.wss?.port || 0,
       storeStatus: publicConfig?.storeStatus || 'loaded',
       degraded: Boolean(publicConfig?.degraded),
       applicationVersion: this.version,

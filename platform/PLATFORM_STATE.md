@@ -8,7 +8,18 @@ Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker h
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
+Status: Production Packaging and Release Gate: PASS for unsigned development artifacts.
+
+## Production Packaging and Release Gate
+
+- Electron Controller packaging uses `electron-builder@26.15.3` with ASAR enabled, Windows x64 NSIS and portable targets, and an explicit Controller runtime file allowlist.
+- Controller package outputs are under ignored `dist/release/controller-electron/`.
+- Browser Agent is distributed as a separate ignored ZIP sidecar under `dist/release/browser-agent/`; it includes runtime source, `ws`, `playwright-core`, protocol files, MV3 runtime files, native-host JS runtime, and startup docs.
+- MV3 Extension is distributed as a deterministic ZIP under `dist/release/extension/` with `manifest.json` at archive root.
+- Release manifest and `SHA256SUMS.txt` are generated under `dist/release/`.
+- Packaged Controller smoke launches the packaged executable, verifies `war-controller://app/`, typed preload, seven views, renderer labels, secure BrowserWindow preferences, state outside ASAR, WSS TLS startup, natural shutdown, NSIS install into a temp location, installed launch, and uninstall cleanup.
+- Production native-host distribution uses JS install/uninstall helpers with Windows HKCU registry support. E2E generated `.exe` shims remain temporary and uncommitted.
+- Production signing variables are wired through Electron Builder-compatible `CSC_LINK`/`WIN_CSC_LINK` and WAR-prefixed aliases, but no certificate was supplied in this run.
 
 ## Controller-to-Extension Workflow Execution Downlink and E2E Gate
 

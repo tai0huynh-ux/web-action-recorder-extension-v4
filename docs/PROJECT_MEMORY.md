@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
+Production Packaging and Release Gate: PASS for unsigned development artifacts.
 
 ## Confirmed Architecture Decisions
 
@@ -53,6 +53,10 @@ Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
 - Browser Agent only bridges WSS and Native Messaging for execution downlink/uplink; it does not create a second graph runner.
 - Windows Native Messaging E2E uses a generated temporary executable shim, not a committed binary and not a `.cmd`/`.bat` wrapper.
 - Edge Native Messaging registry lifecycle is test-scoped: install for the gate, remove during cleanup.
+- Electron Controller packaging uses Electron Builder with an explicit runtime allowlist and ASAR enabled.
+- Browser Agent, MV3 Extension, and Native Host are released as sidecar packages rather than silently bundled into the Controller installer.
+- Unsigned development release is supported through `WAR_RELEASE_CHANNEL=development`; production signing is only claimed when a real Authenticode certificate validates.
+- Release manifest and `SHA256SUMS.txt` are generated artifacts and are not tracked.
 
 ## Tests And Baseline
 
@@ -73,11 +77,11 @@ Architecture contract verification:
 
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
 - Chrome can remain blocked where local policy or automation mode rejects `--load-extension`; the accepted local E2E path is Edge MV3.
-- Packaging/signing, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
+- Production certificate execution, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
 
 ## Next Milestone
 
-Production packaging/signing and sensitive input policy.
+Sensitive input policy and production certificate signing execution.
 
 ## Open Questions
 

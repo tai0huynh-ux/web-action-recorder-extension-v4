@@ -9,13 +9,53 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
+Current Gate: Production Packaging and Release Gate: PASS for unsigned development artifacts.
 
-Current milestone: Controller-to-Extension Workflow Execution Downlink and E2E Gate.
+Current milestone: Production Packaging and Release Gate.
 
-Next milestone: Production packaging/signing and sensitive input policy.
+Next milestone: Sensitive input policy and production certificate signing execution.
 
-Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim. Full workflow execution through the Extension is accepted for the local Edge MV3 gate. Sensitive workflow inputs remain unsupported. Packaging/signing is not included.
+Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim. Full workflow execution through the Extension is accepted for the local Edge MV3 gate. Deterministic unsigned development packaging now builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+
+## Production Packaging and Release Gate
+
+Updated: 2026-07-16
+
+Status: PASS for unsigned development package; production signed release is `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
+
+Baseline before changes:
+
+- HEAD: `31afda0e742ea8b00f77d1b59ae4f78e49099ba1`.
+- Branch: `main`.
+- Electron: `43.1.1`.
+
+Implemented:
+
+- `electron-builder@26.15.3` pinned exactly for Windows Electron packaging.
+- Electron Builder config under `platform/controller-electron/release/` with ASAR enabled, Windows x64 NSIS and portable targets, deterministic artifact naming, explicit runtime file allowlist, and `ws` as the Controller runtime dependency.
+- Packaged smoke mode for the real packaged executable, enabled only by `WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT`.
+- Release scripts for `package:controller-electron`, `dist:controller-electron`, `package:browser-agent`, `package:extension`, `release:bundle`, `test:release:integrity`, `test:controller-electron:packaged`, and `test:release:gate`.
+- Browser Agent ZIP sidecar with runtime source, `ws`, `playwright-core`, protocol files, MV3 runtime files, native-host JS runtime, and startup documentation.
+- MV3 Extension deterministic ZIP with manifest at archive root and only extension runtime files.
+- Native Messaging production install/uninstall helper now supports Windows HKCU browser registry keys without committing generated `.exe` shims or credentials.
+- `release-manifest.json` and `SHA256SUMS.txt` generation for release artifacts.
+- Integrity gate verifies hashes, tamper detection, and a minimal secret/path scan.
+- Packaged Controller gate launches `win-unpacked`, verifies protocol/preload/seven views/security/state/WSS, installs the NSIS installer to a temp location, launches the installed executable, then uninstalls and verifies the installed executable is removed.
+
+Verification:
+
+- `npm.cmd run check:release`: Pass.
+- `npm.cmd run check:controller-electron`: Pass.
+- `npm.cmd run test:controller-electron:unit`: Pass, 77/77.
+- `npm.cmd run test:release:integrity`: Pass.
+- `npm.cmd run test:controller-electron:packaged`: Pass.
+- `npm.cmd run test:release:gate`: Pass.
+
+Known limitations:
+
+- Generated `dist/` release artifacts are local-only and ignored.
+- Production Authenticode signing was not executed because no certificate was supplied.
+- Real-world Google remote-control acceptance is environment/external-service dependent and remains a manual acceptance follow-up after packaging gate.
 
 ## Controller-to-Extension Workflow Execution Downlink and E2E Gate
 
