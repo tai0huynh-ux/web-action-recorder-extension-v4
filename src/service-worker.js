@@ -7,21 +7,26 @@ const runtime = { running: new Map(), reportedControllerJobs: new Set(), reporte
 let nativeBridgeClient = null;
 let nativeBridgePollInFlight = false;
 
+initializeRuntime().catch(() => {});
+
 chrome.runtime.onInstalled.addListener(async () => {
+  await initializeRuntime({ configureSidePanel: true });
+});
+
+async function initializeRuntime({ configureSidePanel = false } = {}) {
   const data = await chrome.storage.local.get([STORAGE_KEYS.profiles, STORAGE_KEYS.activeProfileId, STORAGE_KEYS.settings]);
   const updates = {};
   if (!Array.isArray(data[STORAGE_KEYS.profiles])) updates[STORAGE_KEYS.profiles] = [SAMPLE_PROFILE];
   if (!data[STORAGE_KEYS.activeProfileId]) updates[STORAGE_KEYS.activeProfileId] = SAMPLE_PROFILE.id;
   if (!data[STORAGE_KEYS.settings]) updates[STORAGE_KEYS.settings] = DEFAULT_SETTINGS;
   if (Object.keys(updates).length) await chrome.storage.local.set(updates);
-  chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
+  if (configureSidePanel) chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
   await configureCompanionPolling();
   await configureNativeBridgePolling();
-});
+}
 
 chrome.runtime.onStartup.addListener(() => {
-  configureCompanionPolling();
-  configureNativeBridgePolling();
+  initializeRuntime().catch(() => {});
 });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[STORAGE_KEYS.settings]) {
