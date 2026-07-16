@@ -71,7 +71,7 @@ test('phase2 semantic upload validates artifact path', async () => {
   const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-uploads-'));
   fs.writeFileSync(path.join(uploadsDir, 'a.txt'), 'ok');
   const registry = new ArtifactRegistry({ uploadsDir });
-  assert.equal(await registry.resolveUpload('a.txt'), fs.realpathSync(path.join(uploadsDir, 'a.txt')));
+  assert.equal(await registry.resolveUpload('a.txt'), await fs.promises.realpath(path.join(uploadsDir, 'a.txt')));
   await assert.rejects(() => registry.resolveUpload('../a.txt'), /invalid/);
 });
 
