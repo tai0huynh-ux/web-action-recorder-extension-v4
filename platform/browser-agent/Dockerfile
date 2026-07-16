@@ -54,6 +54,17 @@ COPY --from=native-build /native/x11-inputd/war-x11-inputd /usr/local/bin/war-x1
 RUN printf '%s\n' '#!/bin/sh' 'export WAR_DATA_DIR="${WAR_DATA_DIR:-/data}"' 'export WAR_AGENT_SOCKET_PATH="${WAR_AGENT_SOCKET_PATH:-/data/run/native-bridge.sock}"' 'exec node /app/native-host/host.js' > /usr/local/bin/war-native-host \
     && chmod +x /usr/local/bin/war-native-host
 
+RUN mkdir -p /etc/chromium/native-messaging-hosts \
+    && printf '%s\n' \
+      '{' \
+      '  "name": "com.web_action_recorder.native_bridge",' \
+      '  "description": "Web Action Recorder container native bridge",' \
+      '  "path": "/usr/local/bin/war-native-host",' \
+      '  "type": "stdio",' \
+      '  "allowed_origins": ["chrome-extension://edoicfpldmlabgdalemfgflpldiijdmm/"]' \
+      '}' \
+      > /etc/chromium/native-messaging-hosts/com.web_action_recorder.native_bridge.json
+
 RUN useradd --create-home --shell /usr/sbin/nologin war \
     && mkdir -p /data/device /data/chromium-profile /data/downloads /data/uploads /data/logs /run/war \
     && chown -R war:war /data /app /run/war \
