@@ -15,6 +15,8 @@ export class BrowserController {
     this.pageByTargetId = new Map();
     this.activeTargetId = undefined;
     this.nativeBridgePollTriggeredFor = new Set();
+    this.nativeBridgeRestartedFor = new Set();
+    this.pendingNativeBridgeRestartFor = null;
     this.extensionStatus = {
       configuredPath: config.extensionDir,
       loaded: false,
@@ -48,6 +50,13 @@ export class BrowserController {
     for (const page of this.context.pages()) this.registerPage(page);
     this.context.on('page', (page) => this.registerPage(page));
     await this.refreshExtensionStatus();
+    if (this.pendingNativeBridgeRestartFor && !this.nativeBridgeRestartedFor.has(this.pendingNativeBridgeRestartFor)) {
+      const extensionId = this.pendingNativeBridgeRestartFor;
+      this.pendingNativeBridgeRestartFor = null;
+      this.nativeBridgeRestartedFor.add(extensionId);
+      await this.stop();
+      return this.start();
+    }
     if (!this.context.pages().length) this.registerPage(await this.context.newPage());
     if (!this.activeTargetId) this.activeTargetId = this.firstOpenTargetId();
     return this.getState();
@@ -201,7 +210,7 @@ export class BrowserController {
           version: manifest?.version,
           lastError: undefined
         };
-        this.ensureNativeMessagingManifest(extensionId);
+        if (this.ensureNativeMessagingManifest(extensionId)) this.pendingNativeBridgeRestartFor = extensionId;
         await this.triggerNativeBridgePolling(extensionId);
       } else {
         this.extensionStatus.lastError = 'No extension target or loadable extension page detected';
@@ -214,7 +223,7 @@ export class BrowserController {
 
   ensureNativeMessagingManifest(extensionId) {
     const hostPath = process.env.WAR_NATIVE_HOST_PATH;
-    if (!hostPath) return;
+    if (!hostPath) return false;
     if (!path.isAbsolute(hostPath)) throw new AgentError('invalid_config', 'WAR_NATIVE_HOST_PATH must be absolute');
     const hostDir = path.join(os.homedir(), '.config', 'chromium', 'NativeMessagingHosts');
     fs.mkdirSync(hostDir, { recursive: true, mode: 0o700 });
@@ -226,7 +235,10 @@ export class BrowserController {
       type: 'stdio',
       allowed_origins: [`chrome-extension://${extensionId}/`]
     };
-    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+    const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+    if (fs.existsSync(manifestPath) && fs.readFileSync(manifestPath, 'utf8') === serialized) return false;
+    fs.writeFileSync(manifestPath, serialized, { mode: 0o600 });
+    return true;
   }
 
   async triggerNativeBridgePolling(extensionId) {

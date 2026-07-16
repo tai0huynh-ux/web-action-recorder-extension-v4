@@ -84,7 +84,7 @@ test('extension detection works when service worker is asleep but extension page
 
 test('native bridge manifest creation wakes extension polling after load', async () => {
   const extensionDir = tempExtension();
-  const hostPath = path.join(os.tmpdir(), 'war-native-host-test');
+  const hostPath = path.join(os.tmpdir(), `war-native-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const previousHostPath = process.env.WAR_NATIVE_HOST_PATH;
   process.env.WAR_NATIVE_HOST_PATH = hostPath;
   let evaluated = false;
@@ -103,6 +103,7 @@ test('native bridge manifest creation wakes extension polling after load', async
     assert.equal(status.loaded, true);
     assert.equal(evaluated, true);
     assert.equal(controller.nativeBridgePollTriggeredFor.has('abc123'), true);
+    assert.equal(controller.pendingNativeBridgeRestartFor, 'abc123');
   } finally {
     if (previousHostPath === undefined) delete process.env.WAR_NATIVE_HOST_PATH;
     else process.env.WAR_NATIVE_HOST_PATH = previousHostPath;
