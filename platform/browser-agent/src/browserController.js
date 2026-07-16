@@ -255,7 +255,37 @@ export class BrowserController {
         await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: false } });
         await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: true } });
       });
+      this.extensionStatus.nativeBridgeProbe = await page.evaluate((hostName) => new Promise((resolve) => {
+        let port;
+        const timer = setTimeout(() => {
+          try { port?.disconnect?.(); } catch {}
+          resolve({ ok: false, error: 'native_bridge_probe_timeout' });
+        }, 3000);
+        try {
+          port = chrome.runtime.connectNative(hostName);
+          port.onMessage.addListener((message) => {
+            clearTimeout(timer);
+            resolve({ ok: Boolean(message?.payload?.ok), type: message?.type, error: message?.payload?.error?.code });
+            try { port.disconnect(); } catch {}
+          });
+          port.onDisconnect.addListener(() => {
+            clearTimeout(timer);
+            resolve({ ok: false, error: chrome.runtime.lastError?.message || 'native_bridge_disconnected' });
+          });
+          port.postMessage({
+            protocolVersion: 'war-control.v2',
+            messageId: `probe-${Date.now()}`,
+            type: 'bridge.health',
+            sentAt: new Date().toISOString(),
+            payload: {}
+          });
+        } catch (error) {
+          clearTimeout(timer);
+          resolve({ ok: false, error: error.message });
+        }
+      }), 'com.web_action_recorder.native_bridge');
     } catch (error) {
+      this.extensionStatus.nativeBridgeProbe = { ok: false, error: error.message };
       this.log('warn', 'browserController', 'native_bridge_poll_trigger_failed', { message: error.message });
     } finally {
       await page?.close().catch(() => {});

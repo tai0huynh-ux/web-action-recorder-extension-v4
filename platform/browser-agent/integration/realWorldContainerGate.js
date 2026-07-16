@@ -40,6 +40,7 @@ export async function runRealWorldContainerGate() {
   let controller;
   let fixture;
   let container;
+  let agentToken;
   const started = performance.now();
   const result = {
     query: QUERY,
@@ -66,6 +67,7 @@ export async function runRealWorldContainerGate() {
     recordEvent(events, 'workflow_imported', { workflowId: revision.workflowId, revision: revision.revision });
 
     const token = crypto.randomBytes(24).toString('hex');
+    agentToken = token;
     const allow = await dockerBridgeGateway();
     container = `war-real-world-${Date.now()}-${process.pid}`;
     await docker([
@@ -92,10 +94,12 @@ export async function runRealWorldContainerGate() {
 
     const baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
+    const readyState = await agentState(baseUrl, token).catch((error) => ({ error: sanitize(error.message) }));
     recordEvent(events, 'browser_agent_health_ready', {
       browserState: health.browserState,
       extensionLoaded: Boolean(health.extensionLoaded),
-      deviceId: health.deviceId
+      deviceId: health.deviceId,
+      extension: readyState.extension
     });
     result.assertions.browserAgentContainer = true;
     result.assertions.realChromium = health.browserState === 'running' || health.browserState === 'degraded';
@@ -124,10 +128,12 @@ export async function runRealWorldContainerGate() {
     const jobId = dispatch.data.job.id;
     result.jobId = jobId;
     result.assertions.controllerDispatch = dispatch.data.transport.delivered === true;
+    const dispatchedState = await agentState(baseUrl, token).catch((error) => ({ error: sanitize(error.message) }));
     recordEvent(events, 'job_dispatched', {
       jobId,
       delivered: dispatch.data.transport.delivered === true,
-      status: controller.core.jobs.getCommand(jobId).status
+      status: controller.core.jobs.getCommand(jobId).status,
+      extension: dispatchedState.extension
     });
     await waitFor(() => controller.core.events.listRecent({ jobId, limit: 20 }).some((event) => event.eventType === 'job_started'), 120000, 'job_started');
     recordEvent(events, 'job_started_observed', { jobId, events: summarizeExecutionEvents(controller.core.events.listRecent({ jobId, limit: 20 })) });
@@ -185,12 +191,14 @@ export async function runRealWorldContainerGate() {
     result.error = sanitize(error.message);
     result.durationMs = Math.round(performance.now() - started);
     if (result.jobId && controller?.core) {
+      const failureState = container && agentToken ? await getContainerBaseUrl(container).then((url) => agentState(url, agentToken).catch((error) => ({ error: sanitize(error.message) }))).catch(() => null) : null;
       result.executionEvents = summarizeExecutionEvents(controller.core.events.listRecent({ jobId: result.jobId, limit: 50 }));
       result.jobSnapshot = sanitizeJobSnapshot(controller.core.jobs.getCommand(result.jobId));
       recordEvent(events, 'failure_snapshot', {
         jobId: result.jobId,
         job: result.jobSnapshot,
-        executionEvents: result.executionEvents
+        executionEvents: result.executionEvents,
+        extension: failureState?.extension
       });
     }
     await writeEvidence(result).catch(() => {});
@@ -365,6 +373,15 @@ async function control(baseUrl, deviceId, type, payload, token) {
   });
   const body = await response.json();
   if (!response.ok) throw new Error(`${type} failed: ${JSON.stringify(body)}`);
+  return body;
+}
+
+async function agentState(baseUrl, token) {
+  const response = await fetch(`${baseUrl}/v1/state`, {
+    headers: { authorization: `Bearer ${token}` }
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(`state failed: ${JSON.stringify(body)}`);
   return body;
 }
 
