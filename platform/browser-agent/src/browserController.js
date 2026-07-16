@@ -14,6 +14,7 @@ export class BrowserController {
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId = new Map();
     this.activeTargetId = undefined;
+    this.nativeBridgePollTriggeredFor = new Set();
     this.extensionStatus = {
       configuredPath: config.extensionDir,
       loaded: false,
@@ -201,6 +202,7 @@ export class BrowserController {
           lastError: undefined
         };
         this.ensureNativeMessagingManifest(extensionId);
+        await this.triggerNativeBridgePolling(extensionId);
       } else {
         this.extensionStatus.lastError = 'No extension target or loadable extension page detected';
       }
@@ -225,6 +227,27 @@ export class BrowserController {
       allowed_origins: [`chrome-extension://${extensionId}/`]
     };
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  }
+
+  async triggerNativeBridgePolling(extensionId) {
+    if (!process.env.WAR_NATIVE_HOST_PATH || this.nativeBridgePollTriggeredFor.has(extensionId)) return;
+    this.nativeBridgePollTriggeredFor.add(extensionId);
+    let page;
+    try {
+      page = await this.context.newPage();
+      this.registerPage(page);
+      await page.goto(`chrome-extension://${extensionId}/ui/sidepanel.html?standalone=1`, { waitUntil: 'domcontentloaded', timeout: 5000 });
+      await page.evaluate(async () => {
+        const data = await chrome.storage.local.get('war_settings');
+        const settings = data.war_settings || {};
+        await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: false } });
+        await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: true } });
+      });
+    } catch (error) {
+      this.log('warn', 'browserController', 'native_bridge_poll_trigger_failed', { message: error.message });
+    } finally {
+      await page?.close().catch(() => {});
+    }
   }
 
   async describePage(page, active = false) {

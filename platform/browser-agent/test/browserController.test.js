@@ -82,6 +82,33 @@ test('extension detection works when service worker is asleep but extension page
   assert.equal(status.extensionId, 'abc123');
 });
 
+test('native bridge manifest creation wakes extension polling after load', async () => {
+  const extensionDir = tempExtension();
+  const hostPath = path.join(os.tmpdir(), 'war-native-host-test');
+  const previousHostPath = process.env.WAR_NATIVE_HOST_PATH;
+  process.env.WAR_NATIVE_HOST_PATH = hostPath;
+  let evaluated = false;
+  try {
+    const controller = fakeController({ extensionDir });
+    controller.extensionStatus.extensionId = 'abc123';
+    controller.context._newPage = async () => fakePage('about:blank', {
+      goto: async function goto(url) {
+        this._url = url;
+      },
+      evaluate: async () => {
+        evaluated = true;
+      }
+    });
+    const status = await controller.refreshExtensionStatus();
+    assert.equal(status.loaded, true);
+    assert.equal(evaluated, true);
+    assert.equal(controller.nativeBridgePollTriggeredFor.has('abc123'), true);
+  } finally {
+    if (previousHostPath === undefined) delete process.env.WAR_NATIVE_HOST_PATH;
+    else process.env.WAR_NATIVE_HOST_PATH = previousHostPath;
+  }
+});
+
 test('extension detection reports bad path', async () => {
   const controller = fakeController({ extensionDir: path.join(os.tmpdir(), 'missing-war-extension') });
   const status = await controller.refreshExtensionStatus();
@@ -137,6 +164,7 @@ function fakePage(url, methods = {}) {
   page.goto = methods.goto || (async (nextUrl) => {
     page._url = nextUrl;
   });
+  page.evaluate = methods.evaluate || (async () => {});
   page.close = async () => {
     page._closed = true;
     page.emit('close');
