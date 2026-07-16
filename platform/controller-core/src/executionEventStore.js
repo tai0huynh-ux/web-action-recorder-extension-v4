@@ -33,6 +33,11 @@ export class ExecutionEventStore {
   listByDevice(deviceId) {
     return this.store.snapshot().executionEvents.filter((event) => event.deviceId === deviceId);
   }
+
+  listRecent({ jobId, deviceId, limit = 50, afterSequence = 0 } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200 || !Number.isInteger(afterSequence) || afterSequence < 0) throw domainError(ERROR_CODES.INVALID_TARGET, 'Invalid event query');
+    return this.store.snapshot().executionEvents.filter((event) => event.sequence > afterSequence && (!jobId || event.jobId === jobId) && (!deviceId || event.deviceId === deviceId)).slice(-limit).map((event) => structuredClone(event));
+  }
 }
 
 function normalizeStatus(status) {

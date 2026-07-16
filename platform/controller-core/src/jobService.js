@@ -155,6 +155,12 @@ export class JobService {
     return this.store.snapshot().commands.filter((item) => item.deviceId === deviceId).map((item) => structuredClone(item));
   }
 
+  listCommands({ deviceId, status, limit = 50, cursor } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200 || (cursor !== undefined && !Number.isInteger(cursor))) throw domainError(ERROR_CODES.INVALID_TARGET, 'Invalid job query');
+    const commands = this.store.snapshot().commands.filter((item) => (!deviceId || item.deviceId === deviceId) && (!status || item.status === status)).toSorted((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    return commands.slice(cursor || 0, (cursor || 0) + limit).map(({ inputs: _inputs, ...item }) => structuredClone(item));
+  }
+
   setDispatchMetadata(commandId, dispatchMetadata) {
     return this.store.update((state) => {
       const command = state.commands.find((item) => item.id === commandId);

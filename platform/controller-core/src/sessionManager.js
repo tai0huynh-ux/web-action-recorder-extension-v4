@@ -204,6 +204,15 @@ export class SessionManager {
     this.idempotency.clear();
   }
 
+  listSessions() {
+    return [...this.sessions.values()].map(publicSession);
+  }
+
+  getPublicSession(deviceId) {
+    const session = this.sessions.get(deviceId);
+    return session ? publicSession(session) : null;
+  }
+
   requireSession(deviceId, generation) {
     const session = this.sessions.get(deviceId);
     if (!session || (generation !== undefined && session.generation !== generation)) throw domainError(ERROR_CODES.AUTH_DENIED, 'Active session not found', 401);

@@ -17,6 +17,14 @@ export class PairingService {
     this.maxPending = maxPending;
   }
 
+  listPendingPairings() {
+    return this.store.snapshot().pendingPairings.map(({ tokenHash: _tokenHash, ...item }) => structuredClone(item));
+  }
+
+  listPairedAgents() {
+    return this.store.snapshot().pairedAgents.map(({ credentialHash: _credentialHash, tokenHash: _tokenHash, ...item }) => structuredClone(item));
+  }
+
   requestPairing({ device, displayName, requestId }) {
     const requestedAt = this.now();
     const expiresAt = new Date(Date.parse(requestedAt) + this.ttlMs).toISOString();
