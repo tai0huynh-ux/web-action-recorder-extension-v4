@@ -124,6 +124,19 @@ export class JobService {
     });
   }
 
+  cancelCommand(commandId) {
+    return this.store.update((state) => {
+      const command = state.commands.find((item) => item.id === commandId);
+      if (!command) throw domainError(ERROR_CODES.INVALID_TARGET, 'Command not found', 404);
+      if (!TERMINAL_STATUSES.has(companionToUnifiedStatus(command.status))) {
+        this.transition(command, 'cancelled');
+        command.completedAt = this.now();
+        this.audit.append(state, 'job.cancelled', { commandId });
+      }
+      return structuredClone(command);
+    });
+  }
+
   cancelBatch(batchId) {
     return this.store.update((state) => {
       const batch = state.batches.find((item) => item.id === batchId);

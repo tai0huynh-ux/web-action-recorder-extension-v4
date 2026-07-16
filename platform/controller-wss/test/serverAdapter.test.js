@@ -33,6 +33,61 @@ test('controller WSS adapter cleans socket listeners on shutdown', async () => {
   assert.equal(connection.closed, true);
 });
 
+test('controller WSS adapter registers only authenticated active connections', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const unauthenticated = new FakeConnection();
+  adapter.accept(unauthenticated, { credential: 'cred-a' });
+  assert.throws(() => adapter.sendDispatch('dev-a', 1, dispatchPayload()), /offline/i);
+
+  unauthenticated.emit('message', JSON.stringify(agentHello()));
+  await tick();
+  const session = core.sessions.getPublicSession('dev-a');
+  const result = adapter.sendDispatch('dev-a', session.generation, dispatchPayload());
+  assert.deepEqual(result, { delivered: true, deviceId: 'dev-a', generation: session.generation });
+  assert.equal(JSON.parse(unauthenticated.sent.at(-1)).type, 'execution.dispatch');
+});
+
+test('controller WSS adapter replaces same-device connections and ignores stale close', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const first = new FakeConnection();
+  adapter.accept(first, { credential: 'cred-a' });
+  first.emit('message', JSON.stringify(agentHello()));
+  await tick();
+  const firstSession = core.sessions.getPublicSession('dev-a');
+
+  const second = new FakeConnection();
+  adapter.accept(second, { credential: 'cred-a' });
+  second.emit('message', JSON.stringify(agentHello('nonce-b')));
+  await tick();
+  const secondSession = core.sessions.getPublicSession('dev-a');
+  assert.equal(secondSession.generation, firstSession.generation + 1);
+  assert.equal(first.closed, true);
+
+  first.emit('close');
+  adapter.sendDispatch('dev-a', secondSession.generation, dispatchPayload({ jobId: 'job-new' }));
+  assert.equal(JSON.parse(second.sent.at(-1)).payload.jobId, 'job-new');
+});
+
+test('controller WSS adapter rejects stale, offline, closed, and failed sends', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const connection = new FakeConnection();
+  adapter.accept(connection, { credential: 'cred-a' });
+  connection.emit('message', JSON.stringify(agentHello()));
+  await tick();
+  const session = core.sessions.getPublicSession('dev-a');
+  assert.equal(codeOf(() => adapter.sendDispatch('dev-a', session.generation + 1, dispatchPayload())), 'SESSION_STALE');
+  connection.open = false;
+  assert.equal(codeOf(() => adapter.sendDispatch('dev-a', session.generation, dispatchPayload())), 'SESSION_OFFLINE');
+  connection.open = true;
+  connection.failSend = true;
+  assert.equal(codeOf(() => adapter.sendDispatch('dev-a', session.generation, dispatchPayload())), 'WSS_SEND_FAILED');
+  adapter.shutdown();
+  assert.equal(codeOf(() => adapter.sendDispatch('dev-a', session.generation, dispatchPayload())), 'SESSION_OFFLINE');
+});
+
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
   assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
   assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });
@@ -71,14 +126,22 @@ class FakeConnection extends EventEmitter {
     super();
     this.sent = [];
     this.closed = false;
+    this.open = true;
+    this.failSend = false;
   }
 
   send(message) {
+    if (this.failSend) throw new Error('send failed');
     this.sent.push(message);
+  }
+
+  isOpen() {
+    return this.open && !this.closed;
   }
 
   close() {
     this.closed = true;
+    this.open = false;
     this.emit('close');
   }
 }
@@ -98,10 +161,10 @@ async function pairedCore() {
   return core;
 }
 
-function agentHello() {
+function agentHello(nonce = 'nonce-a') {
   return {
     protocolVersion: PROTOCOL_VERSION,
-    messageId: 'hello-a',
+    messageId: `hello-a-${nonce}`,
     type: 'agent.hello',
     sentAt: '2026-07-16T00:00:00.000Z',
     deviceId: 'dev-a',
@@ -109,10 +172,39 @@ function agentHello() {
       protocolVersion: PROTOCOL_VERSION,
       device: device(),
       supportedMessageTypes: ['agent.hello', 'agent.presence', 'agent.execution.event'],
-      sessionNonce: 'nonce-a',
+      sessionNonce: nonce,
       sentAt: '2026-07-16T00:00:00.000Z'
     }
   };
+}
+
+function dispatchPayload(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    jobId: 'job-a',
+    workflowId: 'wf-a',
+    workflowRevision: 1,
+    workflowContentHash: 'a'.repeat(64),
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-a',
+    controlPath: 'native_bridge',
+    leaseId: 'lease-a',
+    ...overrides
+  };
+}
+
+function codeOf(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return error.code;
+  }
+  return null;
+}
+
+function tick() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function device() {

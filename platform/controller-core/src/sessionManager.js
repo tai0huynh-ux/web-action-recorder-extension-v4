@@ -136,17 +136,9 @@ export class SessionManager {
     if (existing) return structuredClone(existing);
     const job = this.core.jobs.getCommand(jobId);
     if (job.deviceId !== deviceId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Job does not belong to device', 409);
-    if (!TERMINAL_STATUSES.has(job.status)) {
-      await this.core.store.update((state) => {
-        const command = state.commands.find((item) => item.id === jobId);
-        if (command && !TERMINAL_STATUSES.has(command.status)) {
-          this.core.jobs.transition(command, 'cancelled');
-          command.completedAt = this.now();
-        }
-      });
-    }
+    const cancelled = await this.core.jobs.cancelCommand(jobId);
     session.pendingJobs.delete(jobId);
-    const result = { ok: true, jobId };
+    const result = { ok: true, job: cancelled };
     this.remember(ledgerKey, result);
     return result;
   }

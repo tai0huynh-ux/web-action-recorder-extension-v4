@@ -67,6 +67,10 @@ class WsConnection extends EventEmitter {
     if (this.ws.readyState === 1) this.ws.send(message);
   }
 
+  isOpen() {
+    return this.ws.readyState === 1;
+  }
+
   close() {
     this.ws.close();
   }

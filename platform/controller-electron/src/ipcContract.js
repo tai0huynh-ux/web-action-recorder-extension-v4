@@ -116,7 +116,7 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.jobs.list, LIST_PAYLOAD],
   [IPC_CHANNELS.jobs.get, objectSchema({ jobId: 'id' })],
   [IPC_CHANNELS.jobs.events, objectSchema({ jobId: 'id', limit: 'limit' })],
-  [IPC_CHANNELS.jobs.dispatch, objectSchema({ workflowId: 'id', target: 'object', inputs: 'optionalObject', deadline: 'deadline' })],
+  [IPC_CHANNELS.jobs.dispatch, objectSchema({ deviceId: 'id', workflowId: 'id', revision: 'positiveInteger', inputs: 'optionalObject', deadlineSeconds: 'optionalPositiveInteger' })],
   [IPC_CHANNELS.jobs.cancel, objectSchema({ jobId: 'id' })],
   [IPC_CHANNELS.dialog.importDevice, NO_PAYLOAD],
   [IPC_CHANNELS.dialog.importWorkflow, NO_PAYLOAD],
@@ -172,6 +172,8 @@ function sanitizeValue(key, value, rule) {
   if (rule === 'id') return sanitizeRequiredId(key, value);
   if (rule === 'limit') return sanitizeLimit(value);
   if (rule === 'deadline') return sanitizeDeadline(value);
+  if (rule === 'positiveInteger') return sanitizePositiveInteger(key, value, { optional: false });
+  if (rule === 'optionalPositiveInteger') return sanitizePositiveInteger(key, value, { optional: true });
   if (rule === 'object') return sanitizeRequiredObject(key, value);
   if (rule === 'optionalObject') return sanitizeOptionalObject(key, value);
   if (rule === 'optionalString') return sanitizeOptionalString(key, value);
@@ -197,6 +199,14 @@ function sanitizeDeadline(value) {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
   if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))) return value;
   throw createIpcContractError('ERR_IPC_INVALID_DEADLINE', 'Invalid deadline');
+}
+
+function sanitizePositiveInteger(key, value, { optional }) {
+  if (value === undefined && optional) return undefined;
+  if (!Number.isInteger(value) || value < 1) {
+    throw createIpcContractError('ERR_IPC_INVALID_INTEGER', `Invalid ${key}`);
+  }
+  return value;
 }
 
 function sanitizeRequiredObject(key, value) {

@@ -58,7 +58,7 @@ test('unknown property is rejected', () => {
 });
 
 test('payload over 256 KiB is rejected', () => {
-  const oversized = { workflowId: 'workflow-1', target: { selector: 'body' }, inputs: { value: 'x'.repeat(MAX_IPC_PAYLOAD_BYTES) } };
+  const oversized = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { value: 'x'.repeat(MAX_IPC_PAYLOAD_BYTES) } };
   assertErrorCode(
     () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, oversized),
     'ERR_IPC_PAYLOAD_TOO_LARGE',
@@ -95,7 +95,7 @@ test('top-level dangerous key is rejected', () => {
 });
 
 test('nested dangerous key is rejected', () => {
-  const payload = JSON.parse('{"workflowId":"workflow-1","target":{"constructor":{"polluted":true}}}');
+  const payload = JSON.parse('{"deviceId":"device-1","workflowId":"workflow-1","revision":1,"inputs":{"constructor":{"polluted":true}}}');
   assertErrorCode(
     () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, payload),
     'ERR_IPC_DANGEROUS_KEY',
@@ -104,31 +104,32 @@ test('nested dangerous key is rejected', () => {
 
 test('valid dispatch payload is accepted as a sanitized clone', () => {
   const payload = {
+    deviceId: 'device-1',
     workflowId: 'workflow-1',
-    target: { deviceId: 'device-1' },
+    revision: 1,
     inputs: { url: 'https://example.test' },
-    deadline: '2030-01-01T00:00:00.000Z',
+    deadlineSeconds: 300,
   };
   const validated = validateIpcPayload(IPC_CHANNELS.jobs.dispatch, payload);
   assert.deepEqual(validated, payload);
   assert.notEqual(validated, payload);
-  assert.notEqual(validated.target, payload.target);
+  assert.notEqual(validated.inputs, payload.inputs);
 });
 
 test('dispatch payload rejects main-owned fields', () => {
-  for (const key of ['generation', 'jobId', 'idempotencyKey']) {
+  for (const key of ['generation', 'sessionId', 'jobId', 'leaseId', 'workflowContentHash', 'controlPath', 'idempotencyKey', 'deadline']) {
     assertErrorCode(
-      () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, { workflowId: 'workflow-1', target: {}, [key]: 'main-owned' }),
+      () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, [key]: 'main-owned' }),
       'ERR_IPC_UNKNOWN_PROPERTY',
     );
   }
 });
 
 test('validator does not mutate input', () => {
-  const payload = { workflowId: 'workflow-1', target: { deviceId: 'device-1' }, inputs: { count: 1 } };
+  const payload = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { count: 1 } };
   const before = JSON.stringify(payload);
   const validated = validateIpcPayload(IPC_CHANNELS.jobs.dispatch, payload);
-  validated.target.deviceId = 'changed';
+  validated.inputs.count = 2;
   assert.equal(JSON.stringify(payload), before);
 });
 
@@ -142,14 +143,18 @@ test('channel without payload rejects extra data', () => {
   );
 });
 
-test('object channels reject non-object payloads and invalid deadlines', () => {
+test('object channels reject non-object payloads and invalid integers', () => {
   assertErrorCode(
     () => validateIpcPayload(IPC_CHANNELS.devices.get, 'device-1'),
     'ERR_IPC_INVALID_PAYLOAD',
   );
   assertErrorCode(
-    () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, { workflowId: 'workflow-1', target: {}, deadline: 'soon' }),
-    'ERR_IPC_INVALID_DEADLINE',
+    () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, { deviceId: 'device-1', workflowId: 'workflow-1', revision: 0 }),
+    'ERR_IPC_INVALID_INTEGER',
+  );
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.jobs.dispatch, { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, deadlineSeconds: 1.5 }),
+    'ERR_IPC_INVALID_INTEGER',
   );
 });
 

@@ -24,6 +24,29 @@ test('IPC handlers validate sender before application calls and map AUTH_DENIED 
   assert.equal(application.calls.length, 0);
 });
 
+test('IPC dispatch rejects invalid sender before creating a persisted job', async () => {
+  const ipcMain = fakeIpcMain();
+  const application = fakeApplication();
+  application.persistedJobs = 0;
+  application.dispatchWorkflow = (payload) => {
+    application.persistedJobs += 1;
+    application.calls.push(['dispatchWorkflow', payload]);
+    return { jobId: 'job-created' };
+  };
+  registerControllerIpcHandlers({ ipcMain, mainWindow: trustedWindow(), application, dialog: {}, fs: {}, path: {} });
+  const result = await ipcMain.handlers.get(IPC_CHANNELS.jobs.dispatch)(untrustedEvent('https://app/'), {
+    deviceId: 'device-1',
+    workflowId: 'workflow-1',
+    revision: 1,
+    inputs: {},
+    deadlineSeconds: 300,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'AUTH_DENIED');
+  assert.equal(application.persistedJobs, 0);
+  assert.equal(application.calls.length, 0);
+});
+
 test('IPC handlers validate payloads and call the exact application method', async () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();
