@@ -18,7 +18,17 @@ npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
 ```
 
-The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Full Controller-to-Extension execution E2E, sensitive workflow inputs, packaging, and signing are later milestones.
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Sensitive workflow inputs, packaging, and signing are later milestones.
+
+## Controller-to-Extension E2E
+
+Run the local Controller-to-Extension gate:
+
+```powershell
+npm.cmd run test:controller-extension:e2e
+```
+
+The gate starts a real Controller WSS runtime, real Browser Agent, real Edge/Chromium MV3 extension, Native Messaging host, and the existing Extension graph runner. On Windows it compiles a temporary native host executable shim for the gate, registers the Edge Native Messaging manifest under HKCU, verifies the executable path, runs workflow dispatch/result/cancel/replay checks, then removes the registry key during cleanup. Generated executables, manifests, config files, logs, and artifacts are local-only and are not committed.
 
 ## MVP Features
 
@@ -36,7 +46,7 @@ The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-i
 1. Open `chrome://extensions` or the Edge equivalent.
 2. Enable Developer mode.
 3. Click Load unpacked.
-4. Select this folder: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`.
+4. Select this folder: `C:\Users\a\Documents\web-action-recorder-extension-v4`.
 5. Open a normal web page and click the extension icon.
 
 ## Developer Checks

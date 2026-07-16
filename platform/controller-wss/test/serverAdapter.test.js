@@ -88,6 +88,30 @@ test('controller WSS adapter rejects stale, offline, closed, and failed sends', 
   assert.equal(codeOf(() => adapter.sendDispatch('dev-a', session.generation, dispatchPayload())), 'SESSION_OFFLINE');
 });
 
+test('controller WSS adapter emits execution invalidation after persisted result', async () => {
+  const core = await pairedCore();
+  await core.workflows.putRevision(revision());
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const state = {};
+  await adapter.handleMessage(JSON.stringify(agentHello()), state, 'cred-a', () => {});
+  const session = core.sessions.getPublicSession('dev-a');
+  const { dispatch } = await core.sessions.dispatch({
+    deviceId: 'dev-a',
+    generation: session.generation,
+    workflowId: 'wf-a',
+    workflowRevision: 1,
+    workflowContentHash: 'a'.repeat(64),
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-a'
+  });
+  const events = [];
+  adapter.on('execution', (event) => events.push(event));
+  const response = await adapter.handleMessage(JSON.stringify(executionResult(session, dispatch.jobId)), state, 'cred-a', () => {});
+  assert.equal(response.payload.ok, true);
+  assert.deepEqual(events, [{ jobId: dispatch.jobId, deviceId: 'dev-a', eventType: 'job_succeeded' }]);
+});
+
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
   assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
   assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });
@@ -191,6 +215,37 @@ function dispatchPayload(overrides = {}) {
     controlPath: 'native_bridge',
     leaseId: 'lease-a',
     ...overrides
+  };
+}
+
+function executionResult(session, jobId) {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    messageId: `result-${jobId}`,
+    type: 'execution.result',
+    sentAt: '2026-07-16T00:00:01.000Z',
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: `result-${jobId}`,
+    deviceId: session.deviceId,
+    sessionId: session.sessionId,
+    jobId,
+    payload: { jobId, eventType: 'job_succeeded', sentAt: '2026-07-16T00:00:01.000Z', result: { ok: true }, generation: session.generation }
+  };
+}
+
+function revision() {
+  return {
+    workflowId: 'wf-a',
+    revision: 1,
+    schemaVersion: 'war-workflow-revision.v2',
+    contentHash: 'a'.repeat(64),
+    name: 'Workflow',
+    description: '',
+    createdAt: '2026-07-16T00:00:00.000Z',
+    updatedAt: '2026-07-16T00:00:00.000Z',
+    sourceDeviceId: 'dev-a',
+    requiredInputs: [],
+    profilePayload: { id: 'wf-a', steps: [] }
   };
 }
 

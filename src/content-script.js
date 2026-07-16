@@ -313,13 +313,13 @@ async function runProfile(runId, profile, startIds = null, inputs = {}) {
   if (!steps.length) {
     activeRuns.delete(runId);
     log('error', 'Profile has no steps', runId);
-    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: false, error: 'Profile has no steps' } }).catch(() => {});
     return { ok: false, error: 'Profile has no steps' };
   }
   if (!Array.isArray(startIds) || !startIds.length) {
     activeRuns.delete(runId);
     log('error', 'Missing startIds', runId);
-    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: false, error: 'Missing startIds' } }).catch(() => {});
     return { ok: false, error: 'Missing startIds' };
   }
   log('info', `Đang chạy ${steps.length} bước`, runId);
@@ -332,19 +332,19 @@ async function runProfile(runId, profile, startIds = null, inputs = {}) {
       if (!activeRuns.has(runId)) break;
       const result = await executeGraphNode(root, stepById, runId, profile, new Set(), inputs, executed);
       if (result?.ok === false) {
-        chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result }).catch(() => {});
         return result;
       }
   }
   if (!activeRuns.has(runId)) {
     if (handedOffRuns.delete(runId)) return { ok: true, runId, handedOff: true };
-    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId }).catch(() => {});
+    chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: false, cancelled: true } }).catch(() => {});
     return { ok: false, runId };
   }
   
   activeRuns.delete(runId);
   log('info', `Hoàn thành chạy: ${profile?.name || 'profile'}`, runId);
-  chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: true, runId } }).catch(() => {});
   return { ok: true, runId };
 }
 
@@ -554,18 +554,28 @@ function waitForSelector(selector, timeoutMs, runId) {
     const found = document.querySelector(selector);
     if (found) return resolve(found);
     let timer = null;
+    let stopCheck = null;
     const observer = new MutationObserver(() => {
       if (!activeRuns.has(runId)) {
         observer.disconnect();
         clearTimeout(timer);
+        clearInterval(stopCheck);
         reject(new Error('Run stopped'));
         return;
       }
       const el = document.querySelector(selector);
-      if (el) { observer.disconnect(); clearTimeout(timer); resolve(el); }
+      if (el) { observer.disconnect(); clearTimeout(timer); clearInterval(stopCheck); resolve(el); }
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    timer = setTimeout(() => { observer.disconnect(); reject(new Error(`Không tìm thấy phần tử: ${selector}`)); }, timeoutMs);
+    stopCheck = setInterval(() => {
+      if (!activeRuns.has(runId)) {
+        observer.disconnect();
+        clearTimeout(timer);
+        clearInterval(stopCheck);
+        reject(new Error('Run stopped'));
+      }
+    }, 100);
+    timer = setTimeout(() => { observer.disconnect(); clearInterval(stopCheck); reject(new Error(`Không tìm thấy phần tử: ${selector}`)); }, timeoutMs);
   });
 }
 

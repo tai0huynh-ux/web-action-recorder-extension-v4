@@ -9,13 +9,65 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Secure Electron Controller Shell accepted.
+Current Gate: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
 
-Current milestone: Secure Electron Controller Shell.
+Current milestone: Controller-to-Extension Workflow Execution Downlink and E2E Gate.
 
-Next milestone: Controller-to-Extension Workflow Execution Downlink and E2E Gate.
+Next milestone: Production packaging/signing and sensitive input policy.
 
-Electron dispatch transport is complete. Full workflow execution through the Extension is not yet accepted. Sensitive workflow inputs are unsupported. Packaging/signing is not included.
+Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim. Full workflow execution through the Extension is accepted for the local Edge MV3 gate. Sensitive workflow inputs remain unsupported. Packaging/signing is not included.
+
+## Controller-to-Extension Workflow Execution Downlink and E2E Gate
+
+Updated: 2026-07-16
+
+Status: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
+
+Baseline before changes:
+
+- HEAD: `8f6e64cdaa00498364cb2db186eb8cd1b6a5c7c5`.
+- Branch: `main`.
+
+Implemented:
+
+- Controller WSS dispatch now flows to Browser Agent `ControllerSessionClient`, through `NativeBridgeHandler`, into the MV3 service worker, and then into the existing Extension graph runner.
+- Extension execution progress and terminal results are sent back through Native Messaging to Browser Agent and persisted by Controller Core as execution events/results.
+- Controller-side cancel sends an `execution.cancel` downlink to the Extension runner and keeps replay/idempotency bounded after terminal jobs.
+- Browser Agent and Extension completed-job caches are bounded to avoid unbounded replay/deduplication growth.
+- Electron runtime invalidates Jobs when WSS execution results arrive so the UI can refresh persisted execution state.
+- Windows Edge E2E uses a generated temporary `war-native-host-shim.exe` compiled from `platform/controller-wss/integration/windows-native-host-shim.cs`; no native binary is committed.
+- The shim has no protocol logic. It validates a three-line config beside the executable, launches Node directly with `UseShellExecute=false`, forwards binary stdin/stdout/stderr, and keeps stdout reserved for Native Messaging frames.
+- The Edge Native Messaging HKCU registry key is created only for the gate and removed during cleanup.
+
+Verification:
+
+- `npm.cmd run check:browser-agent`: Pass.
+- `npm.cmd run test:browser-agent:unit`: Pass, 91/91.
+- `npm.cmd run check:controller-wss`: Pass.
+- `npm.cmd run test:controller-wss`: Pass, 14/14.
+- `npm.cmd run check:controller-electron`: Pass.
+- `npm.cmd run test:controller-electron:unit`: Pass, 58/58.
+- `npm.cmd run test:controller-session:wss-gate`: Pass, artifact `artifacts/controller-wss/wss-gate-1784217821941.json` (local, redacted, not committed).
+- `npm.cmd run test:controller-extension:e2e`: Pass on Edge `Edg/150.0.4078.65`, artifact `artifacts/controller-extension-e2e/controller-extension-e2e-1784217823686.json` (local, redacted, not committed).
+
+E2E artifact highlights:
+
+- TLS verified: true.
+- Real Browser Agent: true.
+- Real Chromium/Edge: true.
+- Real MV3 Extension: true.
+- Workflow executed: true.
+- Result persisted: true.
+- Execution events: `job_acknowledged`, `job_started`, `job_succeeded`.
+- Cancel case: true.
+- Replay after terminal count: 0.
+- Cleanup: true.
+
+Known limitations:
+
+- The accepted browser path is local Edge MV3. Chrome can still be blocked by local policy or automation restrictions around `--load-extension`.
+- The Windows executable shim is generated in a temporary directory during the gate; production packaging/signing is still a later milestone.
+- Sensitive workflow inputs remain blocked.
 
 ## Secure Electron Controller Shell
 
@@ -310,7 +362,7 @@ Manual MVP acceptance attempt on 2026-07-14:
 - Chrome 150.0.7871.115 and Edge 150.0.4078.65 were present.
 - Browser unpacked-extension acceptance was blocked in this automation environment: command-line `--load-extension` ignored both this extension and a minimal control MV3 extension; `chrome://extensions` Developer mode controls were visible, but the native "Load unpacked" folder picker was not exposed to automation and no unpacked extension was loaded.
 - Companion Hub API acceptance passed with two enrolled device records: enrollment, heartbeat, profile registration, per-device command isolation, batch result reporting, and stop-batch cancellation.
-- Real Chrome/Edge extension UI, picker, recorder, runner, and real browser-endpoint Companion polling remain not accepted until the extension can be manually loaded in a controllable browser session.
+- At that checkpoint, real Chrome/Edge extension UI, picker, recorder, runner, and real browser-endpoint Companion polling were still pending until the extension could be manually loaded in a controllable browser session. Later Edge MV3 harnesses and the Controller-to-Extension E2E gate closed the Edge runner path.
 
 Browser MV3 regression harness added on 2026-07-14:
 

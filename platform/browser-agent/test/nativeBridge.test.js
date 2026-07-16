@@ -117,6 +117,82 @@ test('native host socket client completes workflow upload and execution event ro
   assert.equal(event.payload.accepted, true);
 });
 
+test('native bridge queues controller dispatch and cancel for extension polling', async () => {
+  const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
+  registry.putRevision(revisionFixture({ contentHash: 'e'.repeat(64), profilePayload: { id: 'wf-1', name: 'Workflow', steps: [{ id: 's1', type: 'log', message: 'ok' }] } }));
+  const handler = new NativeBridgeHandler({
+    identity: { deviceId: 'device-1' },
+    registry,
+    version: '0.1.0',
+    supervisor: { getState: () => ({ browserState: 'running', extensionLoaded: true }) },
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const queued = handler.enqueueDispatch({
+    jobId: 'job-1',
+    workflowId: 'wf-1',
+    workflowRevision: 1,
+    workflowContentHash: 'e'.repeat(64),
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-1'
+  });
+  handler.enqueueCancel({ jobId: 'job-1', deadline: '2026-07-16T00:05:00.000Z', idempotencyKey: 'cancel-1' });
+  const cancel = await handler.handle(envelope('bridge.health.request', {}));
+  const dispatch = await handler.handle(envelope('bridge.health.request', {}));
+  const empty = await handler.handle(envelope('bridge.health.request', {}));
+  assert.deepEqual(queued, { queued: true });
+  assert.equal(cancel.type, 'execution.cancel');
+  assert.equal(cancel.payload.jobId, 'job-1');
+  assert.equal(dispatch.type, 'execution.dispatch');
+  assert.equal(dispatch.payload.profilePayload.steps[0].message, 'ok');
+  assert.equal(empty.payload.pending, 0);
+});
+
+test('native bridge forwards extension execution envelopes and deduplicates completed jobs', async () => {
+  const forwarded = [];
+  const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
+  registry.putRevision(revisionFixture({ contentHash: 'f'.repeat(64) }));
+  const handler = new NativeBridgeHandler({
+    identity: { deviceId: 'device-1' },
+    registry,
+    version: '0.1.0',
+    supervisor: { getState: () => ({ browserState: 'running', extensionLoaded: true }) },
+    onExecutionEnvelope: (envelope) => forwarded.push(envelope),
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  handler.enqueueDispatch({
+    jobId: 'job-1',
+    workflowId: 'wf-1',
+    workflowRevision: 1,
+    workflowContentHash: 'f'.repeat(64),
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-1'
+  });
+  const result = await handler.handle({
+    ...envelope('execution.result', {
+      eventType: 'job_succeeded',
+      jobId: 'job-1',
+      sentAt: '2026-07-16T00:00:00.000Z',
+      result: { ok: true }
+    }),
+    jobId: 'job-1',
+    idempotencyKey: 'job-1-succeeded'
+  });
+  const duplicate = handler.enqueueDispatch({
+    jobId: 'job-1',
+    workflowId: 'wf-1',
+    workflowRevision: 1,
+    workflowContentHash: 'f'.repeat(64),
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-1'
+  });
+  assert.equal(result.payload.accepted, true);
+  assert.equal(forwarded.length, 1);
+  assert.deepEqual(duplicate, { queued: false, duplicate: true });
+});
+
 function revisionFixture(overrides = {}) {
   return {
     workflowId: 'wf-1',

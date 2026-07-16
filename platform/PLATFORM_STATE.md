@@ -8,7 +8,19 @@ Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker h
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Secure Electron Controller Shell accepted locally.
+Status: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
+
+## Controller-to-Extension Workflow Execution Downlink and E2E Gate
+
+- Controller WSS dispatch reaches the Browser Agent outbound session, is queued as Native Bridge `execution.dispatch`, and is polled by the MV3 Extension service worker.
+- The Extension uses the existing graph runner for real workflow execution; Browser Agent does not add a second graph runner.
+- Execution progress and terminal results flow back from content script/service worker through Native Messaging to Browser Agent and Controller Core.
+- Cancel uses a controller-originated `execution.cancel` downlink and is covered by the local Edge E2E gate.
+- Terminal replay is idempotent: completed jobs are not replayed after terminal result/cancel, and completed-job caches are bounded.
+- Windows Native Messaging gate uses a generated temporary `.exe` shim instead of a `.cmd` wrapper. The manifest points directly to the executable, the HKCU Edge registry key is removed during cleanup, and no generated binary is committed.
+- Latest local E2E command: `npm.cmd run test:controller-extension:e2e`.
+- Latest local E2E artifact: `artifacts/controller-extension-e2e/controller-extension-e2e-1784217823686.json`.
+- Gate result: real Browser Agent true, real Edge/Chromium true, real MV3 Extension true, workflow executed true, result persisted true, cancel case true, replay after terminal count 0, cleanup true.
 
 ## Secure Electron Controller Shell
 
@@ -16,7 +28,7 @@ Status: Secure Electron Controller Shell accepted locally.
 - Functional renderer is complete with Overview, Pairing, Devices, Groups, Workflows, Jobs, and Diagnostics.
 - Renderer security policy is enforced by a production scanner and strict CSP.
 - Real Electron smoke runs Electron `43.1.1` with temporary userData/state and covers window security, renderer isolation, CSP, navigation/window/permission denial, trusted IPC, untrusted IPC denial, persistence restart, pairing sanitization, dispatch rejection, and cleanup.
-- Electron dispatch transport is complete; full Extension workflow execution E2E remains the next milestone.
+- Electron dispatch transport is complete, and the later Controller-to-Extension E2E gate is now accepted on the local Edge MV3 path.
 
 ## Linux Gate Environment
 
@@ -35,9 +47,9 @@ Status: Secure Electron Controller Shell accepted locally.
 
 Source of truth remains the Windows repo:
 
-`C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`
+`C:\Users\a\Documents\web-action-recorder-extension-v4`
 
-The source was archived from Windows, excluding `node_modules`, `.git`, artifacts, profiles, temp files, and logs, then deployed to:
+The historical Linux source was archived from Windows, excluding `node_modules`, `.git`, artifacts, profiles, temp files, and logs, then deployed to:
 
 `/opt/war/web-action-recorder-extension-v4`
 
@@ -219,7 +231,7 @@ The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only
 
 ## Next Step
 
-Run Linux/container verification for the paired outbound Agent session path.
+Production packaging/signing and sensitive input policy remain future work.
 
 ## Pairing Identity and Outbound Agent WSS Session
 

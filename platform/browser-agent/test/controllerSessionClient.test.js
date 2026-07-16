@@ -145,6 +145,31 @@ test('agent restart sends fresh hello, receives replay dispatch, and shutdown cl
   assert.equal(socket.closed, true);
 });
 
+test('controller session tracks session, emits cancel, and sends execution events with session id', () => {
+  const scheduler = fakeScheduler();
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler,
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const cancels = [];
+  client.on('cancel', (item) => cancels.push(item));
+  client.start();
+  socket.emit('open');
+  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
+  socket.emit('message', JSON.stringify({ type: 'execution.cancel', payload: { jobId: 'job-1' } }));
+  client.sendExecutionEvent({ jobId: 'job-1', eventType: 'job_started', idempotencyKey: 'job-1-started' });
+  const sent = JSON.parse(socket.sent.at(-1));
+  assert.deepEqual(cancels, [{ jobId: 'job-1' }]);
+  assert.equal(sent.type, 'execution.event');
+  assert.equal(sent.sessionId, 'session-1');
+  assert.equal(sent.payload.eventType, 'job_started');
+});
+
 class FakeSocket extends EventEmitter {
   constructor() {
     super();

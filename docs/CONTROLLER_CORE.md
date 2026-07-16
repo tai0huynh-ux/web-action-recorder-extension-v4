@@ -44,7 +44,7 @@ Outbound Agent WSS and Electron Controller should call Controller Core services 
 
 Electron Controller now calls Controller Core through the main-process application service. Renderer code cannot access Controller Core, persistence, WSS sockets, generation/session metadata, content hashes, lease IDs, or idempotency keys directly. Electron dispatch persists a Controller Core job and reports transport state separately from execution state.
 
-Full Controller-to-Extension workflow execution remains a later downlink/E2E milestone.
+Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS. Controller Core remains the persistence and state-transition authority while WSS, Browser Agent, Native Messaging, and the Extension runner carry the execution downlink/uplink. Terminal result replay is idempotent, completed jobs are bounded in the bridge caches, and cancel is represented as controller-side state plus an Extension cancel downlink.
 
 ## Test Strategy
 

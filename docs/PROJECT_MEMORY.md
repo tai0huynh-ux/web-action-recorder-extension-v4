@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Secure Electron Controller Shell accepted.
+Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
 
 ## Confirmed Architecture Decisions
 
@@ -48,7 +48,11 @@ Secure Electron Controller Shell accepted.
 - Pairing code and session credential digest comparison uses `crypto.timingSafeEqual`.
 - Real Linux WSS/TLS gate is mandatory before accepting this milestone.
 - Electron Controller renderer must remain plain HTML/CSS/ES modules with no renderer framework, no remote assets, no storage-based credential persistence, no generic IPC, and no direct Node/Electron APIs.
-- Electron dispatch UI may create persisted jobs and report transport delivery/warning, but must not claim full Extension execution.
+- Electron dispatch UI may create persisted jobs and report transport delivery/warning.
+- Controller-to-Extension execution uses the existing Extension graph runner as the execution authority.
+- Browser Agent only bridges WSS and Native Messaging for execution downlink/uplink; it does not create a second graph runner.
+- Windows Native Messaging E2E uses a generated temporary executable shim, not a committed binary and not a `.cmd`/`.bat` wrapper.
+- Edge Native Messaging registry lifecycle is test-scoped: install for the gate, remove during cleanup.
 
 ## Tests And Baseline
 
@@ -68,12 +72,12 @@ Architecture contract verification:
 ## Known Gaps
 
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
-- Paired outbound session Linux/container verification passed on `root@192.168.1.201`, but full workflow execution E2E over WSS remains a later NativeBridge/Extension integration step.
-- Secure Electron Controller Shell is accepted locally; packaging/signing, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
+- Chrome can remain blocked where local policy or automation mode rejects `--load-extension`; the accepted local E2E path is Edge MV3.
+- Packaging/signing, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
 
 ## Next Milestone
 
-Controller-to-Extension Workflow Execution Downlink and E2E Gate.
+Production packaging/signing and sensitive input policy.
 
 ## Open Questions
 

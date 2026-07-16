@@ -38,6 +38,8 @@ Use Jobs to dispatch one workflow revision to one paired, online device. The ren
 
 The Jobs view separates job persistence, transport delivered/warning, acknowledgement, execution status, and cancel state. Cancel is controller-side and reports transport delivery separately.
 
+Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS. When WSS execution updates arrive from a paired Browser Agent, the Electron runtime invalidates the Jobs view so persisted acknowledgement, progress, result, and cancel state can be refreshed from Controller Core.
+
 ## Diagnostics
 
 Diagnostics shows application version, protocol version, WSS status, safe bind host, port, store loaded/degraded indicator, and last refresh time. It does not show environment, full state path, certificate path, private key path, credentials, tokens, hashes, raw store, raw errors, or stacks.
@@ -53,9 +55,10 @@ npm.cmd run test:controller-electron
 
 `test:controller-electron:smoke` runs real Electron `43.1.1`, uses temporary userData and controller state, writes a sanitized local artifact under `artifacts/controller-electron/`, and cleans up the runtime.
 
+`test:controller-extension:e2e` runs the local Edge MV3 Controller-to-Extension gate through Browser Agent, Native Messaging, and the generated temporary Windows native host executable shim.
+
 ## Known Limitations
 
-- Full Controller-to-Extension workflow execution E2E is not accepted in this milestone.
 - Sensitive workflow inputs are unsupported.
 - Packaging and code signing are not included.
 - Production LAN/TLS deployment remains an explicit opt-in and is not covered by this local shell acceptance.

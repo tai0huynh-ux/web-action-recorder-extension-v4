@@ -25,9 +25,35 @@ export async function main() {
   const supervisor = new BrowserSupervisor({ controller, log });
   supervisor.installSignalHandlers();
   const dispatcher = new ControlDispatcher({ supervisor, controller, deviceId: identity.deviceId, config, log });
-  const registry = createWorkflowRegistry(config, log);
-  const nativeBridge = new NativeBridgeHandler({ identity, registry, version: packageJson.version, supervisor, dispatcher, log });
   let controllerSession = null;
+  const registry = createWorkflowRegistry(config, log);
+  const nativeBridge = new NativeBridgeHandler({
+    identity,
+    registry,
+    version: packageJson.version,
+    supervisor,
+    dispatcher,
+    log,
+    onExecutionEnvelope: (envelope) => {
+      if (!controllerSession) return;
+      const event = envelope.payload || {};
+      const sendResult = envelope.type === 'execution.cancelled'
+        ? controllerSession.sendExecutionCancelled({ jobId: envelope.jobId || event.jobId, idempotencyKey: envelope.idempotencyKey })
+        : controllerSession.sendExecutionEvent({
+            jobId: envelope.jobId || event.jobId,
+            eventType: event.eventType,
+            message: event.message,
+            result: event.result,
+            idempotencyKey: envelope.idempotencyKey
+          });
+      Promise.resolve(sendResult).catch((error) => {
+        log('warn', 'agent', 'controller_execution_event_forward_failed', {
+          jobId: envelope.jobId || event.jobId,
+          message: error.message
+        });
+      });
+    }
+  });
   if (config.controllerWssUrl) {
     controllerSession = new ControllerSessionClient({
       url: config.controllerWssUrl,
@@ -42,6 +68,21 @@ export async function main() {
     });
     controllerSession.on('dispatch', (dispatch) => {
       log('info', 'agent', 'controller_dispatch_received', { jobId: dispatch.jobId, workflowId: dispatch.workflowId });
+      try {
+        nativeBridge.enqueueDispatch(dispatch);
+      } catch (error) {
+        log('warn', 'agent', 'controller_dispatch_rejected', { jobId: dispatch.jobId, message: error.message });
+        controllerSession.sendExecutionEvent({
+          jobId: dispatch.jobId,
+          eventType: 'job_failed',
+          message: error.message,
+          result: { ok: false, error: 'dispatch_rejected' },
+          idempotencyKey: `${dispatch.jobId}-dispatch-rejected`
+        });
+      }
+    });
+    controllerSession.on('cancel', (cancel) => {
+      nativeBridge.enqueueCancel(cancel);
     });
     controllerSession.start();
     process.once('SIGTERM', () => controllerSession?.gracefulShutdown());

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import net from 'node:net';
+import { pathToFileURL } from 'node:url';
 import { NativeMessageFramer, encodeNativeMessage } from './framing.js';
 import { validateNativeBridgeEnvelope } from '../platform/protocol/src/protocolV2.js';
 
@@ -126,4 +127,4 @@ export function runNativeHost({ stdin = process.stdin, stdout = process.stdout, 
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) runNativeHost();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) runNativeHost();
