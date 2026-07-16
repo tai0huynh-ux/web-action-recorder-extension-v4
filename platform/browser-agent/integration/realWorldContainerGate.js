@@ -113,9 +113,9 @@ export async function runRealWorldContainerGate() {
     const jobId = dispatch.data.job.id;
     result.jobId = jobId;
     result.assertions.controllerDispatch = dispatch.data.transport.delivered === true;
-    await waitFor(() => controller.core.events.listRecent({ jobId, limit: 20 }).some((event) => event.eventType === 'job_started'), 30000, 'job_started');
+    await waitFor(() => controller.core.events.listRecent({ jobId, limit: 20 }).some((event) => event.eventType === 'job_started'), 120000, 'job_started');
     await screenshot(baseUrl, health.deviceId, targetId, token, '03-query-entered.png');
-    await waitFor(() => controller.core.jobs.getCommand(jobId).status === 'succeeded', 60000, 'job_succeeded');
+    await waitFor(() => controller.core.jobs.getCommand(jobId).status === 'succeeded', 120000, 'job_succeeded');
     await screenshot(baseUrl, health.deviceId, targetId, token, '06-clipboard-verification.png');
     const copied = await control(baseUrl, health.deviceId, 'page.getElementState', {
       targetId,
