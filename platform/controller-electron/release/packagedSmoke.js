@@ -24,7 +24,7 @@ export async function maybeRunPackagedSmoke({ app, runtime }) {
 
   try {
     await run('packaged process and protocol', async () => {
-      const url = runtime.mainWindow?.webContents?.getURL?.() || '';
+      const url = await waitForRendererUrl(runtime.mainWindow?.webContents);
       assert(url.startsWith('war-controller://app/'), 'packaged renderer did not load war-controller://app/');
       assert(app.isPackaged === true, 'app is not running as packaged executable');
       return { url, appPath: redactPath(app.getAppPath()), userDataBase: path.basename(app.getPath('userData')) };
@@ -108,6 +108,16 @@ export async function maybeRunPackagedSmoke({ app, runtime }) {
 
 function js(runtime, source) {
   return runtime.mainWindow.webContents.executeJavaScript(source, true);
+}
+
+async function waitForRendererUrl(webContents, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const url = webContents?.getURL?.() || '';
+    if (url.startsWith('war-controller://app/')) return url;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return webContents?.getURL?.() || '';
 }
 
 function assert(condition, message) {
