@@ -1,5 +1,275 @@
-export const CHANNELS = Object.freeze({ bootstrap: 'war:system:bootstrap', runtime: 'war:system:runtime' });
+const CHANNEL_PREFIX = 'war-controller:v1:';
+const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export const MAX_IPC_PAYLOAD_BYTES = 262144;
+export const MAX_LIST_LIMIT = 200;
+
+export const IPC_CHANNELS = deepFreeze({
+  system: {
+    getBootstrap: `${CHANNEL_PREFIX}system:get-bootstrap`,
+    getRuntime: `${CHANNEL_PREFIX}system:get-runtime`,
+  },
+  pairings: {
+    list: `${CHANNEL_PREFIX}pairings:list`,
+    request: `${CHANNEL_PREFIX}pairings:request`,
+    confirm: `${CHANNEL_PREFIX}pairings:confirm`,
+    reject: `${CHANNEL_PREFIX}pairings:reject`,
+    revoke: `${CHANNEL_PREFIX}pairings:revoke`,
+  },
+  devices: {
+    list: `${CHANNEL_PREFIX}devices:list`,
+    get: `${CHANNEL_PREFIX}devices:get`,
+  },
+  sessions: {
+    list: `${CHANNEL_PREFIX}sessions:list`,
+  },
+  groups: {
+    list: `${CHANNEL_PREFIX}groups:list`,
+    create: `${CHANNEL_PREFIX}groups:create`,
+    update: `${CHANNEL_PREFIX}groups:update`,
+    delete: `${CHANNEL_PREFIX}groups:delete`,
+    addDevice: `${CHANNEL_PREFIX}groups:add-device`,
+    removeDevice: `${CHANNEL_PREFIX}groups:remove-device`,
+  },
+  workflows: {
+    list: `${CHANNEL_PREFIX}workflows:list`,
+    get: `${CHANNEL_PREFIX}workflows:get`,
+    import: `${CHANNEL_PREFIX}workflows:import`,
+  },
+  jobs: {
+    list: `${CHANNEL_PREFIX}jobs:list`,
+    get: `${CHANNEL_PREFIX}jobs:get`,
+    events: `${CHANNEL_PREFIX}jobs:events`,
+    dispatch: `${CHANNEL_PREFIX}jobs:dispatch`,
+    cancel: `${CHANNEL_PREFIX}jobs:cancel`,
+  },
+  dialog: {
+    importDevice: `${CHANNEL_PREFIX}dialog:import-device`,
+    importWorkflow: `${CHANNEL_PREFIX}dialog:import-workflow`,
+  },
+  events: {
+    invalidation: `${CHANNEL_PREFIX}events:invalidation`,
+  },
+});
+
+export const REQUEST_CHANNELS = deepFreeze([
+  IPC_CHANNELS.system.getBootstrap,
+  IPC_CHANNELS.system.getRuntime,
+  IPC_CHANNELS.pairings.list,
+  IPC_CHANNELS.pairings.request,
+  IPC_CHANNELS.pairings.confirm,
+  IPC_CHANNELS.pairings.reject,
+  IPC_CHANNELS.pairings.revoke,
+  IPC_CHANNELS.devices.list,
+  IPC_CHANNELS.devices.get,
+  IPC_CHANNELS.sessions.list,
+  IPC_CHANNELS.groups.list,
+  IPC_CHANNELS.groups.create,
+  IPC_CHANNELS.groups.update,
+  IPC_CHANNELS.groups.delete,
+  IPC_CHANNELS.groups.addDevice,
+  IPC_CHANNELS.groups.removeDevice,
+  IPC_CHANNELS.workflows.list,
+  IPC_CHANNELS.workflows.get,
+  IPC_CHANNELS.workflows.import,
+  IPC_CHANNELS.jobs.list,
+  IPC_CHANNELS.jobs.get,
+  IPC_CHANNELS.jobs.events,
+  IPC_CHANNELS.jobs.dispatch,
+  IPC_CHANNELS.jobs.cancel,
+  IPC_CHANNELS.dialog.importDevice,
+  IPC_CHANNELS.dialog.importWorkflow,
+]);
+
+export const EVENT_CHANNELS = deepFreeze([
+  IPC_CHANNELS.events.invalidation,
+]);
+
+export const CHANNELS = Object.freeze({
+  bootstrap: IPC_CHANNELS.system.getBootstrap,
+  runtime: IPC_CHANNELS.system.getRuntime,
+});
+
+const NO_PAYLOAD = Object.freeze({ kind: 'none' });
+const LIST_PAYLOAD = Object.freeze({ kind: 'object', properties: Object.freeze({ limit: 'limit' }) });
+
+const CHANNEL_SCHEMAS = new Map([
+  [IPC_CHANNELS.system.getBootstrap, NO_PAYLOAD],
+  [IPC_CHANNELS.system.getRuntime, NO_PAYLOAD],
+  [IPC_CHANNELS.pairings.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.pairings.request, objectSchema({ deviceId: 'id', name: 'optionalString', deadline: 'deadline' })],
+  [IPC_CHANNELS.pairings.confirm, objectSchema({ pairingId: 'id', deadline: 'deadline' })],
+  [IPC_CHANNELS.pairings.reject, objectSchema({ pairingId: 'id', reason: 'optionalString' })],
+  [IPC_CHANNELS.pairings.revoke, objectSchema({ pairingId: 'id' })],
+  [IPC_CHANNELS.devices.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.devices.get, objectSchema({ deviceId: 'id' })],
+  [IPC_CHANNELS.sessions.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.groups.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.groups.create, objectSchema({ name: 'id', deviceIds: 'optionalIdArray' })],
+  [IPC_CHANNELS.groups.update, objectSchema({ groupId: 'id', name: 'optionalString' })],
+  [IPC_CHANNELS.groups.delete, objectSchema({ groupId: 'id' })],
+  [IPC_CHANNELS.groups.addDevice, objectSchema({ groupId: 'id', deviceId: 'id' })],
+  [IPC_CHANNELS.groups.removeDevice, objectSchema({ groupId: 'id', deviceId: 'id' })],
+  [IPC_CHANNELS.workflows.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.workflows.get, objectSchema({ workflowId: 'id' })],
+  [IPC_CHANNELS.workflows.import, objectSchema({ workflow: 'object', deadline: 'deadline' })],
+  [IPC_CHANNELS.jobs.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.jobs.get, objectSchema({ jobId: 'id' })],
+  [IPC_CHANNELS.jobs.events, objectSchema({ jobId: 'id', limit: 'limit' })],
+  [IPC_CHANNELS.jobs.dispatch, objectSchema({ workflowId: 'id', target: 'object', inputs: 'optionalObject', deadline: 'deadline' })],
+  [IPC_CHANNELS.jobs.cancel, objectSchema({ jobId: 'id' })],
+  [IPC_CHANNELS.dialog.importDevice, NO_PAYLOAD],
+  [IPC_CHANNELS.dialog.importWorkflow, NO_PAYLOAD],
+  [IPC_CHANNELS.events.invalidation, NO_PAYLOAD],
+]);
+
 export function assertKnownChannel(channel) {
-  if (!Object.values(CHANNELS).includes(channel)) throw new Error('Unknown IPC channel');
+  if (!CHANNEL_SCHEMAS.has(channel)) {
+    throw createIpcContractError('ERR_IPC_UNKNOWN_CHANNEL', 'Unknown IPC channel');
+  }
   return channel;
+}
+
+export function validateIpcPayload(channel, payload) {
+  const schema = CHANNEL_SCHEMAS.get(channel);
+  if (!schema) {
+    throw createIpcContractError('ERR_IPC_UNKNOWN_CHANNEL', 'Unknown IPC channel');
+  }
+
+  validatePayloadSize(payload);
+  assertNoDangerousKeys(payload);
+
+  if (schema.kind === 'none') {
+    if (payload === undefined || payload === null) return {};
+    if (isPlainObject(payload) && Reflect.ownKeys(payload).length === 0) return {};
+    throw createIpcContractError('ERR_IPC_UNEXPECTED_PAYLOAD', 'Channel does not accept payload data');
+  }
+
+  if (!isPlainObject(payload)) {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', 'IPC payload must be an object');
+  }
+
+  const allowedProperties = Object.keys(schema.properties);
+  for (const key of Reflect.ownKeys(payload)) {
+    if (typeof key === 'symbol' || !allowedProperties.includes(key)) {
+      throw createIpcContractError('ERR_IPC_UNKNOWN_PROPERTY', 'IPC payload contains an unknown property');
+    }
+  }
+
+  const clone = {};
+  for (const [key, rule] of Object.entries(schema.properties)) {
+    if (!Object.hasOwn(payload, key)) continue;
+    clone[key] = sanitizeValue(key, payload[key], rule);
+  }
+  return clone;
+}
+
+function objectSchema(properties) {
+  return Object.freeze({ kind: 'object', properties: Object.freeze({ ...properties }) });
+}
+
+function sanitizeValue(key, value, rule) {
+  if (rule === 'id') return sanitizeRequiredId(key, value);
+  if (rule === 'limit') return sanitizeLimit(value);
+  if (rule === 'deadline') return sanitizeDeadline(value);
+  if (rule === 'object') return sanitizeRequiredObject(key, value);
+  if (rule === 'optionalObject') return sanitizeOptionalObject(key, value);
+  if (rule === 'optionalString') return sanitizeOptionalString(key, value);
+  if (rule === 'optionalIdArray') return sanitizeOptionalIdArray(key, value);
+  throw createIpcContractError('ERR_IPC_SCHEMA', 'Unsupported IPC payload schema rule');
+}
+
+function sanitizeRequiredId(key, value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw createIpcContractError('ERR_IPC_INVALID_ID', `Invalid ${key}`);
+  }
+  return value;
+}
+
+function sanitizeLimit(value) {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_LIST_LIMIT) {
+    throw createIpcContractError('ERR_IPC_INVALID_LIMIT', 'Invalid list limit');
+  }
+  return value;
+}
+
+function sanitizeDeadline(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Date.parse(value))) return value;
+  throw createIpcContractError('ERR_IPC_INVALID_DEADLINE', 'Invalid deadline');
+}
+
+function sanitizeRequiredObject(key, value) {
+  if (!isPlainObject(value)) {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
+  }
+  return deepCloneJson(value);
+}
+
+function sanitizeOptionalObject(key, value) {
+  if (value === undefined) return undefined;
+  return sanitizeRequiredObject(key, value);
+}
+
+function sanitizeOptionalString(key, value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
+  }
+  return value;
+}
+
+function sanitizeOptionalIdArray(key, value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
+  }
+  return value.map((item) => sanitizeRequiredId(key, item));
+}
+
+function validatePayloadSize(payload) {
+  if (payload === undefined) return;
+  let serialized;
+  try {
+    serialized = JSON.stringify(payload);
+  } catch {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', 'IPC payload must be JSON serializable');
+  }
+  if (serialized === undefined) {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', 'IPC payload must be JSON serializable');
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_IPC_PAYLOAD_BYTES) {
+    throw createIpcContractError('ERR_IPC_PAYLOAD_TOO_LARGE', 'IPC payload exceeds maximum size');
+  }
+}
+
+function assertNoDangerousKeys(value) {
+  if (!value || typeof value !== 'object') return;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key === 'string' && DANGEROUS_KEYS.has(key)) {
+      throw createIpcContractError('ERR_IPC_DANGEROUS_KEY', 'IPC payload contains a dangerous key');
+    }
+    assertNoDangerousKeys(value[key]);
+  }
+}
+
+function deepCloneJson(value) {
+  assertNoDangerousKeys(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+
+function createIpcContractError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
