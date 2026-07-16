@@ -2,6 +2,24 @@
 
 Manifest V3 Chrome/Edge extension for recording, editing, and running browser workflows. The MVP includes a local drag-drop editor, target picker, graph runner, and a Node Companion Hub for secure LAN control of multiple extension endpoints.
 
+## Secure Electron Controller
+
+Run the local Controller shell:
+
+```powershell
+npm.cmd run controller:electron
+```
+
+Focused Electron gates:
+
+```powershell
+npm.cmd run check:controller-electron
+npm.cmd run test:controller-electron:unit
+npm.cmd run test:controller-electron:smoke
+```
+
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Full Controller-to-Extension execution E2E, sensitive workflow inputs, packaging, and signing are later milestones.
+
 ## MVP Features
 
 - Side panel and standalone editor window.

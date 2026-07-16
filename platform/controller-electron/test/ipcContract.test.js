@@ -116,6 +116,18 @@ test('valid dispatch payload is accepted as a sanitized clone', () => {
   assert.notEqual(validated.inputs, payload.inputs);
 });
 
+test('pairing request and confirmation payloads are narrow and sanitized', () => {
+  const device = { deviceId: 'dev-a', displayName: 'Agent A' };
+  const request = validateIpcPayload(IPC_CHANNELS.pairings.request, { device, displayName: 'Agent A', requestId: 'pair-a' });
+  assert.deepEqual(request, { device, displayName: 'Agent A', requestId: 'pair-a' });
+  assert.notEqual(request.device, device);
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.pairings.confirm, { requestId: 'pair-a', code: 'code-a' }), { requestId: 'pair-a', code: 'code-a' });
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.pairings.confirm, { pairingId: 'pair-a', code: 'code-a' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('dispatch payload rejects main-owned fields', () => {
   for (const key of ['generation', 'sessionId', 'jobId', 'leaseId', 'workflowContentHash', 'controlPath', 'idempotencyKey', 'deadline']) {
     assertErrorCode(

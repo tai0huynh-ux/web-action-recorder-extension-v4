@@ -1,9 +1,7 @@
 # Project State - Web Action Recorder v4
 
 Updated: 2026-07-16
-Source of truth: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`
-
-Do not use the similarly named OneDrive folder as source. It only contained an empty `.git` directory during audit.
+Source of truth: `C:\Users\a\Documents\web-action-recorder-extension-v4`
 
 ## Current Status
 
@@ -11,11 +9,51 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Pairing Identity and Outbound Agent WSS Session local verification complete.
+Current Gate: Secure Electron Controller Shell accepted.
 
-Current milestone: Pairing Identity and Outbound Agent WSS Session.
+Current milestone: Secure Electron Controller Shell.
 
-Next milestone after acceptance: Linux/container verification for paired outbound sessions.
+Next milestone: Controller-to-Extension Workflow Execution Downlink and E2E Gate.
+
+Electron dispatch transport is complete. Full workflow execution through the Extension is not yet accepted. Sensitive workflow inputs are unsupported. Packaging/signing is not included.
+
+## Secure Electron Controller Shell
+
+Updated: 2026-07-16
+
+Status: Accepted locally.
+
+Baseline before changes:
+
+- HEAD: `b282279655b09a1c214e3523b657366213d3940b`.
+- Branch: `main`.
+- Electron: `43.1.1`.
+
+Implemented:
+
+- Functional plain HTML/CSS/ES module renderer under `platform/controller-electron/renderer/`.
+- Overview, Pairing, Devices, Groups, Workflows, Jobs, and Diagnostics sections.
+- One-time pairing credential handling with no storage persistence and clear-on-view-change behavior.
+- Sanitized device, pairing, workflow, job, and diagnostics rendering.
+- Groups CRUD and device membership controls.
+- Workflow JSON import and safe revision/profile payload rendering.
+- Single-device dispatch form that does not accept main-owned dispatch fields.
+- Controller-side cancel and separate persisted/transport/execution status display.
+- Strict renderer CSP aligned with `appProtocol.js`.
+- Renderer production safety scanner.
+- Expanded real Electron smoke using Electron `43.1.1`, temporary userData/state, window security checks, renderer isolation checks, CSP checks, navigation/window/permission checks, trusted IPC, untrusted IPC denial, persistence restart, pairing sanitization, dispatch rejection checks, and natural cleanup.
+
+Docs added:
+
+- `docs/ADR-0007-secure-electron-controller-shell.md`
+- `docs/ELECTRON_CONTROLLER.md`
+
+Verification:
+
+- `npm.cmd run check:controller-electron`: Pass.
+- `npm.cmd run test:controller-electron:unit`: Pass, 58/58.
+- `npm.cmd run test:controller-electron:smoke`: Pass, artifact under `artifacts/controller-electron/` local only.
+- Linux/container WSS regression was not rerun for this checkpoint because production Controller WSS and Browser Agent behavior were not changed.
 
 ## Pairing Identity and Outbound Agent WSS Session
 

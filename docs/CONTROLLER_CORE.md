@@ -42,6 +42,10 @@ Stable domain codes include `DEVICE_NOT_FOUND`, `DEVICE_REVOKED`, `WORKFLOW_NOT_
 
 Outbound Agent WSS and Electron Controller should call Controller Core services directly instead of reaching through HTTP route handlers. Pairing identity should plug into AuthPolicy and DeviceRegistry without changing Companion compatibility routes.
 
+Electron Controller now calls Controller Core through the main-process application service. Renderer code cannot access Controller Core, persistence, WSS sockets, generation/session metadata, content hashes, lease IDs, or idempotency keys directly. Electron dispatch persists a Controller Core job and reports transport state separately from execution state.
+
+Full Controller-to-Extension workflow execution remains a later downlink/E2E milestone.
+
 ## Test Strategy
 
 Core tests cover independence, injected clock/id/random, devices, workflows, groups, jobs, execution events, dataset assignment, persistence/migration/recovery, and Companion HTTP compatibility behavior.

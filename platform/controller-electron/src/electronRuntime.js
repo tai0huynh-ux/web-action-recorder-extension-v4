@@ -50,9 +50,15 @@ export function createElectronControllerRuntime(dependencies = {}) {
     get mainWindow() { return state.mainWindow; },
     async start() {
       if (state.started) return this;
+      state.shuttingDown = false;
       requireDependencies(state);
-      state.app.enableSandbox();
-      state.protocol.registerSchemesAsPrivileged?.([{ scheme: 'war-controller', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+      if (!state.app.isReady?.()) {
+        state.app.enableSandbox();
+        state.protocol.registerSchemesAsPrivileged?.([{ scheme: 'war-controller', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+      } else if (!state.app.isReady) {
+        state.app.enableSandbox();
+        state.protocol.registerSchemesAsPrivileged?.([{ scheme: 'war-controller', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+      }
       if (state.app.requestSingleInstanceLock && !state.app.requestSingleInstanceLock()) {
         state.app.quit?.();
         return this;
@@ -70,7 +76,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.core = new state.ControllerCore({ store: state.store });
       await state.core.load();
       await maybeStartWss(state);
-      state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, version: state.version });
+      state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, config: state.config, version: state.version });
       state.ipcRegistration = registerControllerIpcHandlers({
         ipcMain: state.ipcMain,
         mainWindow: () => state.mainWindow,
@@ -83,7 +89,9 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.mainWindow = createMainWindow(state);
       await state.mainWindow.loadURL('war-controller://app/');
       state.mainWindow.once?.('ready-to-show', () => state.mainWindow?.show?.());
-      state.app.on?.('window-all-closed', () => state.app.quit?.());
+      state.app.on?.('window-all-closed', () => {
+        if (!state.shuttingDown) state.app.quit?.();
+      });
       state.started = true;
       return this;
     },
@@ -94,7 +102,8 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.wssRuntime?.shutdown?.();
       state.httpsServer?.close?.();
       state.core?.sessions?.shutdown?.();
-      if (state.mainWindow && !state.mainWindow.isDestroyed?.()) state.mainWindow.close?.();
+      if (state.mainWindow && !state.mainWindow.isDestroyed?.()) await closeWindow(state.mainWindow);
+      state.protocol.unhandle?.('war-controller');
       state.mainWindow = null;
       state.application = null;
       state.core = null;
@@ -102,6 +111,23 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.started = false;
     },
   };
+}
+
+async function closeWindow(window) {
+  if (typeof window.close !== 'function') return;
+  let closed = false;
+  const waitForClosed = typeof window.once === 'function'
+    ? new Promise((resolve) => {
+      window.once('closed', () => {
+        closed = true;
+        resolve();
+      });
+      setTimeout(resolve, 250);
+    })
+    : Promise.resolve();
+  window.close();
+  await waitForClosed;
+  if (!closed && typeof window.destroy === 'function' && !window.isDestroyed?.()) window.destroy();
 }
 
 function requireDependencies(state) {

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
+import { toPublicRuntimeConfig } from './runtimeConfig.js';
 
 export const DISPATCH_DEADLINE_SECONDS = Object.freeze({ min: 10, default: 300, max: 86400 });
 // Serialized renderer-provided workflow inputs are capped before command dispatch.
@@ -9,24 +10,40 @@ const MAX_INPUT_DEPTH = 8;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, version = '0.1.0', now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.version = version; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, config = null, version = '0.1.0', now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.config = config; this.version = version; this.now = now; this.id = id; this.sequence = 0; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
-  getRuntimeStatus() { return this.result({ enabled: Boolean(this.wssRuntime), status: this.wssRuntime ? 'running' : 'disabled' }); }
+  getRuntimeStatus() {
+    const publicConfig = this.config ? toPublicRuntimeConfig(this.config) : null;
+    return this.result({
+      enabled: Boolean(this.wssRuntime),
+      status: this.wssRuntime ? 'running' : (publicConfig?.wss?.status || 'disabled'),
+      bindHost: publicConfig?.wss?.host || '127.0.0.1',
+      port: publicConfig?.wss?.port ?? 0,
+      storeStatus: publicConfig?.storeStatus || 'loaded',
+      degraded: Boolean(publicConfig?.degraded),
+      applicationVersion: this.version,
+      protocolVersion: 'v1'
+    });
+  }
   listPairings() { return this.result({ pending: this.core.pairing.listPendingPairings(), paired: this.core.pairing.listPairedAgents() }); }
+  async requestPairing({ device, displayName, requestId }) { const data = await this.core.pairing.requestPairing({ device, displayName, requestId }); this.invalidate('pairings', { deviceId: device?.deviceId }); return this.result(data); }
+  async confirmPairing({ requestId, code }) { const data = await this.core.pairing.confirmPairing(requestId, code); this.invalidate('pairings', { deviceId: data.deviceId }); this.invalidate('devices', { deviceId: data.deviceId }); return this.result(data); }
+  async rejectPairing({ pairingId, reason }) { const data = await this.core.pairing.rejectPairing(pairingId, reason); this.invalidate('pairings'); return this.result(data); }
+  async revokeAgent({ deviceId }) { const data = await this.core.pairing.revoke(deviceId); this.invalidate('pairings', { deviceId }); this.invalidate('devices', { deviceId }); return this.result(data); }
   listDevices() { return this.result(this.core.devices.listDevices()); }
   getDevice({ deviceId }) { return this.result(this.core.devices.getDevice(deviceId)); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   listGroups() { return this.result(this.core.groups.listGroups()); }
-  createGroup(payload) { const data = this.core.groups.createGroup(payload); this.invalidate('groups'); return this.result(data); }
-  updateGroup({ groupId, ...payload }) { const data = this.core.groups.updateGroup(groupId, payload); this.invalidate('groups'); return this.result(data); }
-  deleteGroup({ groupId }) { const data = this.core.groups.deleteGroup(groupId); this.invalidate('groups'); return this.result(data); }
-  addDeviceToGroup({ groupId, deviceId }) { const data = this.core.groups.addDevice(groupId, deviceId); this.invalidate('groups', { deviceId }); return this.result(data); }
-  removeDeviceFromGroup({ groupId, deviceId }) { const data = this.core.groups.removeDevice(groupId, deviceId); this.invalidate('groups', { deviceId }); return this.result(data); }
+  async createGroup(payload) { const data = await this.core.groups.createGroup(payload); this.invalidate('groups'); return this.result(data); }
+  async updateGroup({ groupId, ...payload }) { const data = await this.core.groups.updateGroup(groupId, payload); this.invalidate('groups'); return this.result(data); }
+  async deleteGroup({ groupId }) { const data = await this.core.groups.deleteGroup(groupId); this.invalidate('groups'); return this.result(data); }
+  async addDeviceToGroup({ groupId, deviceId }) { const data = await this.core.groups.addDevice(groupId, deviceId); this.invalidate('groups', { deviceId }); return this.result(data); }
+  async removeDeviceFromGroup({ groupId, deviceId }) { const data = await this.core.groups.removeDevice(groupId, deviceId); this.invalidate('groups', { deviceId }); return this.result(data); }
   listWorkflows() { return this.result({ workflows: this.core.workflows.listMetadata() }); }
   getWorkflowRevision({ workflowId, revision }) { return this.result(this.core.workflows.getRevision(workflowId, revision)); }
-  importWorkflowRevision({ workflow }) { const data = this.core.workflows.putRevision(workflow); this.invalidate('workflows'); return this.result(data); }
+  async importWorkflowRevision({ workflow }) { const data = await this.core.workflows.putRevision(workflow); this.invalidate('workflows'); return this.result(data); }
   listJobs(payload) { return this.result({ jobs: this.core.jobs.listCommands(payload) }); }
   getJob({ jobId }) { return this.result(this.core.jobs.getCommand(jobId)); }
   listJobEvents(payload) { return this.result({ events: this.core.events.listRecent(payload) }); }

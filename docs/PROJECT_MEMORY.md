@@ -4,7 +4,7 @@ Updated: 2026-07-16
 
 ## Current Milestone
 
-Pairing Identity and Outbound Agent WSS Session.
+Secure Electron Controller Shell accepted.
 
 ## Confirmed Architecture Decisions
 
@@ -47,6 +47,8 @@ Pairing Identity and Outbound Agent WSS Session.
 - Reconnect lifecycle must schedule one reconnect per active socket close path and ignore stale socket events.
 - Pairing code and session credential digest comparison uses `crypto.timingSafeEqual`.
 - Real Linux WSS/TLS gate is mandatory before accepting this milestone.
+- Electron Controller renderer must remain plain HTML/CSS/ES modules with no renderer framework, no remote assets, no storage-based credential persistence, no generic IPC, and no direct Node/Electron APIs.
+- Electron dispatch UI may create persisted jobs and report transport delivery/warning, but must not claim full Extension execution.
 
 ## Tests And Baseline
 
@@ -67,10 +69,11 @@ Architecture contract verification:
 
 - Real browser/container acceptance still depends on the local environment providing Edge/Chrome automation and Docker.
 - Paired outbound session Linux/container verification passed on `root@192.168.1.201`, but full workflow execution E2E over WSS remains a later NativeBridge/Extension integration step.
+- Secure Electron Controller Shell is accepted locally; packaging/signing, production LAN/TLS deployment, and sensitive workflow inputs remain out of scope.
 
 ## Next Milestone
 
-Secure Electron Controller Shell.
+Controller-to-Extension Workflow Execution Downlink and E2E Gate.
 
 ## Open Questions
 

@@ -2,7 +2,19 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MIME = Object.freeze({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' });
-export const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; connect-src 'none'";
+export const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self'",
+  "font-src 'self'",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+].join('; ');
 
 export function resolveRendererAsset(rendererRoot, requestUrl) {
   if (/%2e|%5c|%00/i.test(String(requestUrl))) throw new Error('Invalid renderer asset');

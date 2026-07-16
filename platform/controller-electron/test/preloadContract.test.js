@@ -65,7 +65,7 @@ test('preload methods invoke the fixed IPC contract channels with intact payload
     [api.groups.removeDevice, IPC_CHANNELS.groups.removeDevice],
     [api.workflows.list, IPC_CHANNELS.workflows.list],
     [api.workflows.get, IPC_CHANNELS.workflows.get],
-    [api.workflows.importFile, IPC_CHANNELS.dialog.importWorkflow],
+    [api.workflows.importFile, IPC_CHANNELS.workflows.import],
     [api.jobs.list, IPC_CHANNELS.jobs.list],
     [api.jobs.get, IPC_CHANNELS.jobs.get],
     [api.jobs.events, IPC_CHANNELS.jobs.events],

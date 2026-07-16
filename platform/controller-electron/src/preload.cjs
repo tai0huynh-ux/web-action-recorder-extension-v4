@@ -107,7 +107,7 @@ const api = deepFreeze({
   workflows: {
     list: call(IPC_CHANNELS.workflows.list),
     get: call(IPC_CHANNELS.workflows.get),
-    importFile: call(IPC_CHANNELS.dialog.importWorkflow),
+    importFile: call(IPC_CHANNELS.workflows.import),
   },
   jobs: {
     list: call(IPC_CHANNELS.jobs.list),
