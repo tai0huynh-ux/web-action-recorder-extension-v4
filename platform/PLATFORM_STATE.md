@@ -1,4 +1,4 @@
-﻿# Chromium Control Platform State
+# Chromium Control Platform State
 
 Updated: 2026-07-16
 
@@ -424,7 +424,7 @@ WSS scenarios verified:
 Verification:
 
 - Linux `npm run check`: Pass.
-- Linux `npm run test:all`: Pass, 213 tests.
+- Linux `npm run test:all`: Pass, 195 tests.
 - Linux `npm run test:controller-session:wss-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198588905.json`.
 - Linux `npm run container:browser-agent:build`: Pass.
 - Linux `npm run container:browser-agent:controller-session-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198609263.json`.

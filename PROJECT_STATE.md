@@ -68,7 +68,7 @@ Verification:
 - Linux environment: Ubuntu 24.04.4 LTS, kernel `6.8.0-124-generic`, x86_64, Node.js `v24.14.1`, npm `11.11.0`, Docker `29.4.2`.
 - Linux `npm ci`: Pass.
 - Linux `npm run check`: Pass.
-- Linux `npm run test:all`: Pass, 213 tests.
+- Linux `npm run test:all`: Pass, 195 tests.
 - Linux `npm run test:controller-session:wss-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198588905.json`.
 - Linux `npm run container:browser-agent:build`: Pass.
 - Linux `npm run container:browser-agent:controller-session-gate`: Pass, artifact `/opt/war/web-action-recorder-extension-v4-wss-runtime-20260716104245/artifacts/controller-wss/wss-gate-1784198609263.json`.
