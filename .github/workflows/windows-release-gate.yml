@@ -1,0 +1,71 @@
+name: Windows Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_prerelease:
+        description: Create a draft development pre-release for unsigned artifacts.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  unsigned_windows_release:
+    name: Unsigned Windows release
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      WAR_RELEASE_CHANNEL: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install
+        run: npm.cmd ci
+      - name: Build release bundle
+        run: npm.cmd run release:bundle
+      - name: Integrity gate
+        run: npm.cmd run test:release:integrity
+      - name: Packaged Controller gate
+        run: npm.cmd run test:controller-electron:packaged
+      - name: Release gate
+        run: npm.cmd run test:release:gate
+      - name: Static checks
+        run: npm.cmd run check
+      - name: Full tests
+        run: npm.cmd run test:all
+      - name: Audit
+        run: npm.cmd audit
+      - name: Upload sanitized release gate artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-windows-release-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            dist/release/release-manifest.json
+            dist/release/SHA256SUMS.txt
+            dist/release/controller-electron/*.exe
+            dist/release/controller-electron/win-unpacked/**
+            dist/release/browser-agent/*.zip
+            dist/release/extension/*.zip
+            artifacts/release-packaging/*.json
+            !dist/release/**/*.blockmap
+            !dist/release/**/builder-debug.yml
+            !dist/release/**/builder-effective-config.yaml

@@ -71,7 +71,7 @@ test('phase2 semantic upload validates artifact path', async () => {
   const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-uploads-'));
   fs.writeFileSync(path.join(uploadsDir, 'a.txt'), 'ok');
   const registry = new ArtifactRegistry({ uploadsDir });
-  assert.equal(await registry.resolveUpload('a.txt'), path.join(uploadsDir, 'a.txt'));
+  assert.equal(await registry.resolveUpload('a.txt'), fs.realpathSync(path.join(uploadsDir, 'a.txt')));
   await assert.rejects(() => registry.resolveUpload('../a.txt'), /invalid/);
 });
 
@@ -124,6 +124,8 @@ test('phase2 raw input key allowlist blocks bad key', async () => {
 
 test('phase2 raw input shortcut validation allows only typed shortcuts', () => {
   assert.equal(validateShortcut(['CTRL', 'L']), 'CTRL+L');
+  assert.equal(validateShortcut(['CTRL', 'A']), 'CTRL+A');
+  assert.equal(validateShortcut(['CTRL', 'C']), 'CTRL+C');
   assert.throws(() => validateShortcut(['CTRL', 'ALT', 'DELETE']), /shortcut/);
 });
 

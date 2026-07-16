@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { chromium } from 'playwright-core';
 import { AgentError, redactUrl } from './errors.js';
 
@@ -199,6 +200,7 @@ export class BrowserController {
           version: manifest?.version,
           lastError: undefined
         };
+        this.ensureNativeMessagingManifest(extensionId);
       } else {
         this.extensionStatus.lastError = 'No extension target or loadable extension page detected';
       }
@@ -206,6 +208,23 @@ export class BrowserController {
       this.extensionStatus.lastError = error.message;
     }
     return this.extensionStatus;
+  }
+
+  ensureNativeMessagingManifest(extensionId) {
+    const hostPath = process.env.WAR_NATIVE_HOST_PATH;
+    if (!hostPath) return;
+    if (!path.isAbsolute(hostPath)) throw new AgentError('invalid_config', 'WAR_NATIVE_HOST_PATH must be absolute');
+    const hostDir = path.join(os.homedir(), '.config', 'chromium', 'NativeMessagingHosts');
+    fs.mkdirSync(hostDir, { recursive: true, mode: 0o700 });
+    const manifestPath = path.join(hostDir, 'com.web_action_recorder.native_bridge.json');
+    const manifest = {
+      name: 'com.web_action_recorder.native_bridge',
+      description: 'Web Action Recorder container native bridge',
+      path: hostPath,
+      type: 'stdio',
+      allowed_origins: [`chrome-extension://${extensionId}/`]
+    };
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   }
 
   async describePage(page, active = false) {

@@ -21,7 +21,22 @@ export const DEFAULT_SETTINGS = {
   nativeHostName: 'com.web_action_recorder.native_bridge'
 };
 
-export const STEP_TYPES = new Set(['click', 'type', 'navigate', 'switchTab', 'log', 'condition', 'OR', 'AND', 'IFS']);
+export const STEP_TYPES = new Set(['click', 'type', 'shortcut', 'navigate', 'switchTab', 'log', 'condition', 'OR', 'AND', 'IFS']);
+
+export const SAFE_SHORTCUTS = new Set(['CTRL+A', 'CTRL+C']);
+
+export function normalizeShortcut(keys) {
+  const list = Array.isArray(keys) ? keys : String(keys || '').split('+');
+  const normalized = list.map((key) => String(key).trim().toUpperCase()).filter(Boolean);
+  if (!normalized.length || normalized.length !== list.length || normalized.length > 3) throw new Error('Shortcut khong hop le');
+  return normalized.join('+');
+}
+
+export function validateSafeShortcut(keys) {
+  const shortcut = normalizeShortcut(keys);
+  if (!SAFE_SHORTCUTS.has(shortcut)) throw new Error(`Shortcut khong duoc ho tro: ${shortcut}`);
+  return shortcut;
+}
 
 export const SAMPLE_PROFILE = {
   id: 'sample-login-search',
@@ -70,6 +85,7 @@ export function validateProfile(profile) {
   for (const [index, step] of profile.steps.entries()) {
     if (!step || typeof step !== 'object') throw new Error(`Bước ${index + 1} không hợp lệ`);
     if (!STEP_TYPES.has(step.type || 'click')) throw new Error(`Loại bước không được hỗ trợ: ${step.type}`);
+    if (step.type === 'shortcut') validateSafeShortcut(step.keys || step.shortcut);
     if (step.id && ids.has(step.id)) throw new Error(`Trùng step id: ${step.id}`);
     if (step.id) ids.add(step.id);
     if (Number(step.delayAfterMs || 0) < 0 || Number(step.delayAfterMs || 0) > 3600000) throw new Error(`Delay không hợp lệ ở bước ${index + 1}`);

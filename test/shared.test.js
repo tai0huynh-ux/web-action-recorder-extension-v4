@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSupportedRunUrl, matchesSwitchTabPattern, matchesText, normalizeProfile, validateProfile, wildcardToRegExp } from '../src/shared.js';
+import { isSupportedRunUrl, matchesSwitchTabPattern, matchesText, normalizeProfile, validateProfile, validateSafeShortcut, wildcardToRegExp } from '../src/shared.js';
 
 test('wildcard matching is anchored and case insensitive', () => {
   assert.equal(wildcardToRegExp('*Example.COM*').test('www.example.com'), true);
@@ -17,6 +17,13 @@ test('normalize profile supplies safe defaults', () => {
 test('validation rejects duplicate ids and unsupported types', () => {
   assert.throws(() => validateProfile({ name: 'x', steps: [{ id: 'a', type: 'log' }, { id: 'a', type: 'log' }] }), /Tr/);
   assert.throws(() => validateProfile({ name: 'x', steps: [{ type: 'javascript' }] }), /kh/);
+});
+
+test('validation allows only safe copy shortcuts', () => {
+  assert.equal(validateSafeShortcut(['CTRL', 'A']), 'CTRL+A');
+  assert.equal(validateSafeShortcut('CTRL+C'), 'CTRL+C');
+  assert.equal(validateProfile({ name: 'copy', steps: [{ id: 'a', type: 'shortcut', keys: ['CTRL', 'C'] }] }), true);
+  assert.throws(() => validateProfile({ name: 'bad', steps: [{ id: 'a', type: 'shortcut', keys: ['CTRL', 'V'] }] }), /Shortcut/);
 });
 
 test('switch tab wildcard matches URL path', () => {

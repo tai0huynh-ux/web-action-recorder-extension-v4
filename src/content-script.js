@@ -475,6 +475,21 @@ async function executeStep(step, runId, profile, inputs) {
       log('info', `Đã nhập: ${step.name}`, runId);
       return { ok: true };
     }
+    if (step.type === 'shortcut') {
+      const shortcut = validateSafeShortcut(step.keys || step.shortcut);
+      const el = step.selector ? await waitForSelector(step.selector, step.timeoutMs || 8000, runId) : document.activeElement;
+      if (!el || el === document.body || el === document.documentElement) throw new Error('Shortcut requires a focused element or selector');
+      el.focus();
+      if (shortcut === 'CTRL+A') {
+        if (typeof el.select === 'function') el.select();
+        else document.getSelection()?.selectAllChildren(el);
+      } else if (shortcut === 'CTRL+C') {
+        const copied = document.execCommand('copy');
+        if (!copied) throw new Error('Copy command was rejected');
+      }
+      log('info', `Da thuc hien shortcut: ${shortcut}`, runId);
+      return { ok: true, shortcut };
+    }
     
     if (step.type === 'navigate') {
       log('info', `Chuyển hướng: ${step.url}`, runId);
@@ -599,7 +614,7 @@ function labelFor(el) { return (el?.innerText || el?.value || el?.getAttribute?.
 function textOf(el) { return el ? (el.innerText || el.value || el.textContent || '') : ''; }
 function resolveStepTemplates(step, inputs = {}) {
   const next = { ...step };
-  for (const key of ['selector', 'text', 'url', 'message', 'tabName']) {
+  for (const key of ['selector', 'text', 'url', 'message', 'tabName', 'shortcut']) {
     if (typeof next[key] === 'string') next[key] = resolveTemplate(next[key], inputs);
   }
   if (next.condition) next.condition = resolveConditionTemplate(next.condition, inputs);
@@ -618,6 +633,17 @@ function resolveTemplate(value, inputs = {}) {
     if (!Object.prototype.hasOwnProperty.call(inputs, key)) throw new Error(`Missing input: ${key}`);
     return String(inputs[key] ?? '');
   });
+}
+function normalizeShortcut(keys) {
+  const list = Array.isArray(keys) ? keys : String(keys || '').split('+');
+  const normalized = list.map((key) => String(key).trim().toUpperCase()).filter(Boolean);
+  if (!normalized.length || normalized.length !== list.length || normalized.length > 3) throw new Error('Shortcut khong hop le');
+  return normalized.join('+');
+}
+function validateSafeShortcut(keys) {
+  const shortcut = normalizeShortcut(keys);
+  if (!['CTRL+A', 'CTRL+C'].includes(shortcut)) throw new Error(`Shortcut khong duoc ho tro: ${shortcut}`);
+  return shortcut;
 }
 function delay(ms, runId) {
   return new Promise((resolve) => {

@@ -1,2 +1,8 @@
 artifacts/
 dist/
+release/
+*.blockmap
+*.pfx
+*.p12
+*.pem
+*.key

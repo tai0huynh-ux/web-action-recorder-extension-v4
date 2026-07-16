@@ -45,10 +45,14 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY platform/browser-agent/src ./platform/browser-agent/src
 COPY platform/protocol/src ./platform/protocol/src
 COPY platform/protocol/schemas ./platform/protocol/schemas
+COPY native-host ./native-host
 COPY manifest.json ./extension/manifest.json
 COPY src ./extension/src
 COPY ui ./extension/ui
 COPY --from=native-build /native/x11-inputd/war-x11-inputd /usr/local/bin/war-x11-inputd
+
+RUN printf '%s\n' '#!/bin/sh' 'exec node /app/native-host/host.js' > /usr/local/bin/war-native-host \
+    && chmod +x /usr/local/bin/war-native-host
 
 RUN useradd --create-home --shell /usr/sbin/nologin war \
     && mkdir -p /data/device /data/chromium-profile /data/downloads /data/uploads /data/logs /run/war \
