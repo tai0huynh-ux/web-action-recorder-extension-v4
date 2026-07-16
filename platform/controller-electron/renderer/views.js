@@ -139,7 +139,11 @@ function groupsView(refresh) {
     button('Create', async () => {
       const value = name.value.trim();
       if (!value) { status.textContent = 'Group name is required'; return; }
-      setStatus(status, await window.warController.groups.create({ name: value }), 'Group created');
+      const result = await window.warController.groups.create({ name: value });
+      setStatus(status, result, 'Group created');
+      if (result?.ok === false) return;
+      name.value = '';
+      status.textContent = '';
       await refreshAll();
       refresh();
     }),

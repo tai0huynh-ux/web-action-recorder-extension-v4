@@ -1,5 +1,6 @@
 export function el(tag, options = {}, children = []) {
   const node = document.createElement(tag);
+  const hasExplicitChildren = arguments.length >= 3;
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined || value === null) continue;
     if (key === 'className') node.className = value;
@@ -19,7 +20,10 @@ export function el(tag, options = {}, children = []) {
     else if (key === 'placeholder') node.placeholder = String(value);
     else if (key === 'rows') node.rows = Number(value);
   }
-  node.replaceChildren(...asNodes(children));
+  // Explicit children own the rendered contents; otherwise text-only nodes keep their label.
+  if (hasExplicitChildren) {
+    node.replaceChildren(...asNodes(children));
+  }
   return node;
 }
 
@@ -82,7 +86,9 @@ export function parseJsonInput(value) {
 }
 
 function asNodes(children) {
-  return children.flat().map((child) => child instanceof Node ? child : text(child));
+  return children.flat()
+    .filter((child) => child !== undefined && child !== null)
+    .map((child) => child instanceof Node ? child : text(child));
 }
 
 function formatCell(value) {
