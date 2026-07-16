@@ -77,9 +77,6 @@ export function createElectronControllerRuntime(dependencies = {}) {
       await state.core.load();
       await maybeStartWss(state);
       state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, config: state.config, version: state.version });
-      state.wssRuntime?.adapter?.on?.('execution', (event) => {
-        state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
-      });
       state.ipcRegistration = registerControllerIpcHandlers({
         ipcMain: state.ipcMain,
         mainWindow: () => state.mainWindow,
