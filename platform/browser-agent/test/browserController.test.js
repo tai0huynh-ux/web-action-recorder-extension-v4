@@ -101,9 +101,12 @@ test('native bridge manifest creation wakes extension polling after load', async
     });
     const status = await controller.refreshExtensionStatus();
     assert.equal(status.loaded, true);
+    assert.equal(evaluated, false);
+    assert.equal(controller.pendingNativeBridgeRestartFor, 'abc123');
+    controller.pendingNativeBridgeRestartFor = null;
+    await controller.refreshExtensionStatus();
     assert.equal(evaluated, true);
     assert.equal(controller.nativeBridgePollTriggeredFor.has('abc123'), true);
-    assert.equal(controller.pendingNativeBridgeRestartFor, 'abc123');
   } finally {
     if (previousHostPath === undefined) delete process.env.WAR_NATIVE_HOST_PATH;
     else process.env.WAR_NATIVE_HOST_PATH = previousHostPath;

@@ -211,7 +211,7 @@ export class BrowserController {
           lastError: undefined
         };
         if (this.ensureNativeMessagingManifest(extensionId)) this.pendingNativeBridgeRestartFor = extensionId;
-        await this.triggerNativeBridgePolling(extensionId);
+        else await this.triggerNativeBridgePolling(extensionId);
       } else {
         this.extensionStatus.lastError = 'No extension target or loadable extension page detected';
       }
