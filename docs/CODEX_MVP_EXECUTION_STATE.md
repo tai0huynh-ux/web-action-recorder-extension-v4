@@ -7,16 +7,16 @@ Current subphase:
 Phase 3 soak passed; managed container implementation is next
 
 Last green commit:
-1ce5a4135c2af66f1bd446d454d2d3d2b25c712c
+2080461b6a9ae471d83fa37aee73d895b1af79df
 
 HEAD:
-1ce5a4135c2af66f1bd446d454d2d3d2b25c712c
+2080461b6a9ae471d83fa37aee73d895b1af79df
 
 origin/main:
-1ce5a4135c2af66f1bd446d454d2d3d2b25c712c
+2080461b6a9ae471d83fa37aee73d895b1af79df
 
 Working tree:
-Modified for Browser Agent replay startup repair; pending checkpoint commit after tests and physical soak PASS.
+Clean after Browser Agent replay startup repair checkpoint push.
 
 Completed milestones:
 - Phase 0 recovery completed with HEAD equal to origin/main and no tracked pilot artifacts.
@@ -72,7 +72,7 @@ Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 
 Next safe action:
-Commit and push the Browser Agent replay startup repair, sync this execution-state document to the pushed hash, then start Phase 4 managed container backend.
+Start Phase 4 managed container backend.
 
 MVP remaining work:
 - Managed container backend and UI.
