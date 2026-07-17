@@ -70,6 +70,24 @@ test('controller WSS adapter replaces same-device connections and ignores stale 
   assert.equal(JSON.parse(second.sent.at(-1)).payload.jobId, 'job-new');
 });
 
+test('controller WSS adapter marks closed active connection offline', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const connection = new FakeConnection();
+  adapter.accept(connection, { credential: 'cred-a' });
+  connection.emit('message', JSON.stringify(agentHello()));
+  await tick();
+
+  const online = core.sessions.getPublicSession('dev-a');
+  assert.equal(online.status, 'online');
+  connection.emit('close');
+  const offline = core.sessions.getPublicSession('dev-a');
+
+  assert.equal(offline.status, 'offline');
+  assert.equal(core.devices.getDevice('dev-a').status, 'offline');
+  assert.equal(codeOf(() => adapter.sendDispatch('dev-a', online.generation, dispatchPayload())), 'SESSION_OFFLINE');
+});
+
 test('controller WSS adapter rejects stale, offline, closed, and failed sends', async () => {
   const core = await pairedCore();
   const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });

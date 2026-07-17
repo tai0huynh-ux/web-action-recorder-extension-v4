@@ -28,7 +28,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
       this.connections.delete(connection);
       if (state.session) {
         this.unregisterActiveConnection(state.session.deviceId, state.session.generation, connection);
-        this.sessionManager.disconnect(state.session.deviceId, state.session.generation, 'reconnecting');
+        this.sessionManager.disconnect(state.session.deviceId, state.session.generation, 'offline');
       }
     };
     connection.on?.('close', cleanup);
