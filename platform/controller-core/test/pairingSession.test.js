@@ -103,7 +103,7 @@ test('duplicate dispatch is idempotent, cancel works, and non-terminal job repla
   const first = await core.sessions.dispatch(dispatchArgs(session, { idempotencyKey: 'same-dispatch' }));
   const duplicate = await core.sessions.dispatch(dispatchArgs(session, { idempotencyKey: 'same-dispatch' }));
   assert.equal(first.dispatch.jobId, duplicate.dispatch.jobId);
-  assert.deepEqual(core.sessions.replayNonTerminal('dev-a', session.generation).map((item) => item.jobId), [first.dispatch.jobId]);
+  assert.deepEqual((await core.sessions.replayNonTerminal('dev-a', session.generation)).map((item) => item.jobId), [first.dispatch.jobId]);
   const cancel = await core.sessions.cancel({ deviceId: 'dev-a', generation: session.generation, jobId: first.dispatch.jobId, idempotencyKey: 'cancel-one' });
   assert.equal(cancel.ok, true);
 });
@@ -135,7 +135,7 @@ test('non-terminal dispatch replays after ControllerCore process restart from pe
     const restarted = new ControllerCore({ store: new JsonStore(storePath), now: clock.now, id: sequenceId() });
     await restarted.load();
     const nextSession = await restarted.sessions.authenticateHello(agentHello('dev-a', 'nonce-after-restart'), { credential: 'cred-a' });
-    const replay = restarted.sessions.replayNonTerminal('dev-a', nextSession.generation);
+    const replay = await restarted.sessions.replayNonTerminal('dev-a', nextSession.generation);
     assert.equal(replay.length, 1);
     assert.equal(replay[0].jobId, jobId);
     assert.equal(replay[0].leaseId, leaseId);
@@ -146,6 +146,31 @@ test('non-terminal dispatch replays after ControllerCore process restart from pe
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('expired undelivered dispatch lease replays with the same job id and a fresh lease', async () => {
+  const clock = fakeClock('2026-07-16T00:00:00.000Z');
+  const core = await pairedCore(clock);
+  const session = await core.sessions.authenticateHello(agentHello('dev-a'), { credential: 'cred-a' });
+  await core.sessions.reconcileWorkflows('dev-a', session.generation, [revision()]);
+  const first = await core.sessions.dispatch(dispatchArgs(session, { idempotencyKey: 'expired-dispatch' }));
+  const jobId = first.dispatch.jobId;
+  const firstLeaseId = first.dispatch.leaseId;
+  await core.store.update((state) => {
+    const command = state.commands.find((item) => item.id === jobId);
+    command.leaseUntil = '2026-07-16T00:00:01.000Z';
+    command.dispatchMetadata.deadline = '2026-07-16T00:00:01.000Z';
+  });
+  clock.advance(2000);
+
+  const replay = await core.sessions.replayNonTerminal('dev-a', session.generation);
+  const command = core.jobs.getCommand(jobId);
+  assert.equal(replay.length, 1);
+  assert.equal(replay[0].jobId, jobId);
+  assert.notEqual(replay[0].leaseId, firstLeaseId);
+  assert.equal(command.status, 'leased');
+  assert.equal(command.dispatchMetadata.leaseId, replay[0].leaseId);
+  assert.equal(command.dispatchMetadata.deadline, command.leaseUntil);
 });
 
 test('terminal result is idempotent and stale session event is rejected', async () => {

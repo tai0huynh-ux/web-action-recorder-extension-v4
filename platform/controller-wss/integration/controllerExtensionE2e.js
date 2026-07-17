@@ -143,7 +143,7 @@ export async function runControllerExtensionE2e() {
     await triggerNativeBridgePoll(serviceWorker);
     await waitFor(() => controller.core.jobs.getCommand(cancelJobId).status === 'cancelled', 10000, 'controller-side cancelled job');
 
-    const replay = controller.core.sessions.replayNonTerminal('dev-e2e', controller.core.sessions.getPublicSession('dev-e2e').generation);
+    const replay = await controller.core.sessions.replayNonTerminal('dev-e2e', controller.core.sessions.getPublicSession('dev-e2e').generation);
     const artifact = {
       startedAt: trace.steps[0]?.time,
       head: await gitHead().catch(() => 'unknown'),

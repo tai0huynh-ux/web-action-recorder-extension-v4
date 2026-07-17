@@ -63,7 +63,7 @@ test('transport failure preserves persisted dispatch for reconnect replay withou
   const commands = core.store.snapshot().commands;
   assert.equal(commands.length, 1);
   assert.equal(commands[0].status, 'leased');
-  assert.equal(core.sessions.replayNonTerminal('dev-a', 1)[0].jobId, commands[0].id);
+  assert.equal((await core.sessions.replayNonTerminal('dev-a', 1))[0].jobId, commands[0].id);
 });
 
 test('application runtime status reports the actual bound WSS port', async () => {

@@ -2,7 +2,6 @@ import { PROTOCOL_VERSION, validateAgentEnvelope, validateEnvelope } from '../..
 import { requireDevice } from './deviceRegistry.js';
 import { domainError, ERROR_CODES } from './errors.js';
 import { companionToUnifiedStatus } from './stateTransitions.js';
-import { TERMINAL_STATUSES } from './stateTransitions.js';
 
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30000;
 const DEFAULT_MAX_SESSIONS = 256;
@@ -162,18 +161,12 @@ export class SessionManager {
     return event;
   }
 
-  replayNonTerminal(deviceId, generation) {
+  async replayNonTerminal(deviceId, generation) {
     const session = this.requireSession(deviceId, generation);
-    const nowMs = Date.parse(this.now());
-    const commands = this.core.jobs.listCommandsForDevice(deviceId);
+    const commands = await this.core.jobs.prepareReplayDispatches(deviceId, { now: Date.parse(this.now()) });
     const replay = [];
-    for (const command of commands) {
-      const status = companionToUnifiedStatus(command.status);
-      if (TERMINAL_STATUSES.has(status)) continue;
-      if (!command.dispatchMetadata) continue;
-      if (command.dispatchMetadata.deadline && Date.parse(command.dispatchMetadata.deadline) <= nowMs) continue;
-      const payload = structuredClone(command.dispatchMetadata);
-      session.pendingJobs.set(command.id, { payload, generation });
+    for (const payload of commands) {
+      session.pendingJobs.set(payload.jobId, { payload, generation });
       replay.push(payload);
     }
     return replay;

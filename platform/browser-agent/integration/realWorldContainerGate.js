@@ -151,7 +151,7 @@ export async function runRealWorldContainerGate() {
     const jobEvents = controller.core.events.listRecent({ jobId, limit: 50 });
     const terminalEvent = jobEvents.find((event) => ['job_succeeded', 'job_failed', 'job_cancelled', 'job_timed_out'].includes(event.eventType));
     const startedEvent = jobEvents.find((event) => event.eventType === 'job_started');
-    const replay = controller.core.sessions.replayNonTerminal(DEVICE_ID, controller.core.sessions.getPublicSession(DEVICE_ID).generation);
+    const replay = await controller.core.sessions.replayNonTerminal(DEVICE_ID, controller.core.sessions.getPublicSession(DEVICE_ID).generation);
 
     const cancelRevision = cancelWorkflowRevision(fixture.url);
     await controller.core.workflows.putRevision(cancelRevision);

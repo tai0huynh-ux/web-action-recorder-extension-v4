@@ -50,7 +50,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
         state.session = await this.sessionManager.authenticateHello(envelope, { credential });
         this.sessionManager.attachClose(state.session.deviceId, state.session.generation, close);
         this.registerActiveConnection(state.session, state.connection || null);
-        return this.response(envelope, { ok: true, session: state.session, replay: this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });
+        return this.response(envelope, { ok: true, session: state.session, replay: await this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });
       }
       if (!state.session) throw publicError('unauthenticated', 'Agent session is not authenticated', 401);
       const withSession = { ...envelope, deviceId: envelope.deviceId || state.session.deviceId, sessionId: envelope.sessionId || state.session.sessionId, payload: { ...envelope.payload, generation: state.session.generation } };

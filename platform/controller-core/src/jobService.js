@@ -183,6 +183,26 @@ export class JobService {
     });
   }
 
+  prepareReplayDispatches(deviceId, { now = Date.now(), leaseMs = 300000 } = {}) {
+    return this.store.update((state) => {
+      requeueExpired(state, now);
+      const replay = [];
+      for (const command of state.commands) {
+        if (command.deviceId !== deviceId) continue;
+        const status = companionToUnifiedStatus(command.status);
+        if (TERMINAL_STATUSES.has(status)) continue;
+        if (!command.dispatchMetadata) continue;
+        if (status === 'queued') this.transition(command, 'dispatched', { leaseMs, now });
+        const payload = structuredClone(command.dispatchMetadata);
+        payload.leaseId = command.leaseId;
+        payload.deadline = command.leaseUntil;
+        command.dispatchMetadata = structuredClone(payload);
+        replay.push(payload);
+      }
+      return replay;
+    });
+  }
+
   createCommand(fields) {
     return {
       id: fields.id,
@@ -210,7 +230,8 @@ export class JobService {
     if (unifiedStatus === 'dispatched') {
       command.attempt = Number(command.attempt || 0) + 1;
       command.leaseId = this.id('lease');
-      command.leaseUntil = new Date(Date.now() + Number(options.leaseMs || 30000)).toISOString();
+      const nowMs = Number.isFinite(options.now) ? options.now : Date.now();
+      command.leaseUntil = new Date(nowMs + Number(options.leaseMs || 30000)).toISOString();
       command.startedAt ||= this.now();
     }
   }
