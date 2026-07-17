@@ -444,6 +444,94 @@ test('grouped input backend validation errors render and clear after correction'
   assert.ok(current.textContent.includes('Đã có xem trước nhập liệu nhóm'));
 });
 
+test('action graph loads real workflow graph and excludes sample proof before load', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setGraphFixtures();
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  assert.ok(current.textContent.includes('Tải graph'));
+  assert.equal(current.textContent.includes('sample-switch'), false);
+  await clickButton(current, 'Tải graph');
+  assert.equal(apiState.graphCalls.get, 1);
+  assert.ok(current.textContent.includes('Step A'));
+  assert.ok(current.textContent.includes('a > b'));
+});
+
+test('action graph node update previews through validated backend operations', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setGraphFixtures();
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Tải graph');
+  const inputs = all(current, (node) => node.localName === 'input');
+  const nodeName = inputs.find((input) => input.value === 'Step A');
+  nodeName.value = 'Step A updated';
+  await clickButton(current, 'Cập nhật node');
+  assert.equal(state.store.graphEditor.unsaved, true);
+  await clickButton(current, 'Xem trước graph');
+  assert.equal(apiState.graphCalls.preview, 1);
+  assert.equal(apiState.graphRequests.at(-1).operations[0].type, 'updateNode');
+  assert.equal(apiState.graphRequests.at(-1).operations[0].patch.name, 'Step A updated');
+});
+
+test('action graph invalid preview disables save and discard requires confirmation', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setGraphFixtures();
+  state.store.graphEditor = {
+    ...state.store.graphEditor,
+    graph: graphFixture({ validation: { ok: false, errors: ['Cycle detected'] } }),
+    operations: [{ type: 'addEdge', from: 'b', to: 'a' }],
+    unsaved: true,
+  };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  assert.equal(findButton(current, 'Lưu revision mới').disabled, true);
+  window.confirm = () => false;
+  await clickButton(current, 'Bỏ thay đổi');
+  assert.equal(state.store.graphEditor.unsaved, true);
+  window.confirm = () => true;
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Bỏ thay đổi');
+  assert.equal(state.store.graphEditor.unsaved, false);
+});
+
+test('action graph double save creates one revision and previous revision remains', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setGraphFixtures();
+  apiState.graphSaveDelay = true;
+  state.store.graphEditor = {
+    ...state.store.graphEditor,
+    graph: graphFixture(),
+    operations: [{ type: 'addNode', node: { type: 'log', name: 'Step C', message: 'done' } }],
+    unsaved: true,
+  };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  const save = findButton(current, 'Lưu revision mới');
+  const firstClick = save.click();
+  await save.click();
+  await firstClick;
+  assert.equal(apiState.graphCalls.save, 1);
+  assert.deepEqual(state.store.workflows.map((workflow) => workflow.revision), [1, 2]);
+  assert.equal(state.store.selectedWorkflow.revision, 2);
+});
+
+test('action graph unsafe operation is rejected before persistence', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setGraphFixtures();
+  state.store.graphEditor = {
+    ...state.store.graphEditor,
+    graph: graphFixture(),
+    operations: [{ type: 'javascript', node: { type: 'javascript' } }],
+    unsaved: true,
+  };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Lưu revision mới');
+  assert.equal(apiState.graphCalls.save || 0, 0);
+  assert.equal(state.store.graphEditor.error, 'INVALID_GRAPH_OPERATION');
+});
+
 test('input mode tabs switch renderer state', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -594,6 +682,9 @@ function resetStore() {
   apiState.groupedPreviewResult = null;
   apiState.groupedDispatchResult = null;
   apiState.groupedDispatchDelay = false;
+  apiState.graphCalls = {};
+  apiState.graphRequests = [];
+  apiState.graphSaveDelay = false;
   apiState.workflows = [];
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
@@ -643,6 +734,17 @@ function resetStore() {
     },
     groupedInputPreview: null,
     groupedInputResult: null,
+    graphEditor: {
+      workflowId: '',
+      revision: 0,
+      graph: null,
+      operations: [],
+      selectedNodeId: '',
+      pending: '',
+      notice: '',
+      error: '',
+      unsaved: false,
+    },
     lastJobNotice: '',
     lastRefresh: null,
   });
@@ -705,6 +807,9 @@ const apiState = {
   groupedPreviewResult: null,
   groupedDispatchResult: null,
   groupedDispatchDelay: false,
+  graphCalls: {},
+  graphRequests: [],
+  graphSaveDelay: false,
   workflows: [],
   groupCreateResult: null,
   settingsUpdates: [],
@@ -782,6 +887,32 @@ function installControllerApi() {
         list: async () => ({ ok: true, data: { workflows: apiState.workflows } }),
         importFile: async () => ({ ok: true, data: {} }),
         get: async () => ({ ok: true, data: {} }),
+        graphGet: async (request) => {
+          apiState.graphCalls.get = (apiState.graphCalls.get || 0) + 1;
+          apiState.graphRequests.push(request);
+          return { ok: true, data: graphFixture() };
+        },
+        graphPreview: async (request) => {
+          apiState.graphCalls.preview = (apiState.graphCalls.preview || 0) + 1;
+          apiState.graphRequests.push(request);
+          return { ok: true, data: graphFixture({ executionPlan: ['a', 'b'] }) };
+        },
+        graphSave: async (request) => {
+          apiState.graphCalls.save = (apiState.graphCalls.save || 0) + 1;
+          apiState.graphRequests.push(request);
+          if (apiState.graphSaveDelay) await Promise.resolve();
+          apiState.workflows = [
+            { workflowId: 'wf-a', revision: 1, name: 'Workflow A' },
+            { workflowId: 'wf-a', revision: 2, name: 'Workflow A' },
+          ];
+          return {
+            ok: true,
+            data: {
+              saved: { revision: { workflowId: 'wf-a', revision: 2, name: 'Workflow A' } },
+              graph: graphFixture({ workflow: { workflowId: 'wf-a', revision: 2, name: 'Workflow A' } }),
+            },
+          };
+        },
         originPreview: async () => {
           apiState.originCalls.preview = (apiState.originCalls.preview || 0) + 1;
           if (apiState.originPreviewDelay) await Promise.resolve();
@@ -902,6 +1033,32 @@ function groupedPlanFixture(request = {}) {
     mode: request.mode || state.store.groupedInput.mode || 'text',
     counts: { devices: 1, rows: 1, assignments: 1 },
     assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { value: text } }],
+  };
+}
+
+function setGraphFixtures() {
+  apiState.workflows = [{ workflowId: 'wf-a', revision: 1, name: 'Workflow A' }];
+  state.store.workflows = apiState.workflows;
+  state.store.selectedWorkflow = {
+    workflowId: 'wf-a',
+    revision: 1,
+    name: 'Workflow A',
+    requiredInputs: [],
+    profilePayload: { steps: [{ id: 'a', type: 'log', name: 'Step A', message: 'hello', next: 'b' }, { id: 'b', type: 'log', name: 'Step B', message: 'done' }] },
+  };
+}
+
+function graphFixture(overrides = {}) {
+  return {
+    workflow: { workflowId: 'wf-a', revision: 1, name: 'Workflow A' },
+    nodes: [
+      { id: 'a', type: 'log', name: 'Step A', message: 'hello', next: 'b' },
+      { id: 'b', type: 'log', name: 'Step B', message: 'done' },
+    ],
+    edges: [{ from: 'a', to: 'b' }],
+    validation: { ok: true, errors: [], roots: ['a'] },
+    executionPlan: ['a', 'b'],
+    ...overrides,
   };
 }
 

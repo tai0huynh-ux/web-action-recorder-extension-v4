@@ -4,25 +4,25 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8D grouped input UX automated checkpoint is complete and pending commit/push.
+Phase 8E action graph UX automated checkpoint is complete and pending commit/push.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
 
-Last pushed green commit before Phase 8D:
-53d40275277e62ae8415f02dc005b04a0cf78daa
+Last pushed green commit before Phase 8E:
+95bca6f393f840e0cea9864666d1e16b4f645b09
 
 Latest green checkpoint:
-Phase 8D grouped input UX. This document is part of the checkpoint commit.
+Phase 8E action graph UX. This document is part of the checkpoint commit.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
 - Phase 8B managed container renderer integration completed for add, start, stop, restart, duplicate, delete, status, resource usage, duplicate-action prevention, delete confirmation, sanitized errors, and authenticated-Agent-online distinction.
 - Phase 8C origin synchronization renderer integration completed for authenticated origin filtering, inventory/preview loading, conflict policy display, pull gating, duplicate pull prevention, safe imported/skipped/conflicted/error counts, repeated pull skipped reporting, stale-error clearing, and sensitive-data exclusion from normal UI.
 - Phase 8D grouped input renderer integration completed for stateful text/table/cell mode selection, backend-normalized preview, device mapping, broadcast policy, dispatch gating, duplicate dispatch prevention, validation error display, stale-error clearing, Vietnamese UTF-8 preservation, and sanitized dispatch result display.
+- Phase 8E action graph renderer integration completed for real workflow graph load, node update operation queueing, edge operation controls, authoritative preview, validation display, unsafe operation rejection before persistence, unsaved-change discard confirmation, save-as-new-revision, previous revision preservation, refreshed revision list, and new revision selection.
 
 Phase 8 subphases remaining:
-- Phase 8E action graph UX.
 - Phase 8F localization completion.
 - Phase 8G accessibility and interaction safety completion.
 - Phase 8H state, refresh, and error consistency completion.
@@ -34,12 +34,18 @@ Tests passed for the latest checkpoint:
 - npm.cmd run check:controller-electron
 - npm.cmd run test:controller-electron:unit
 - npm.cmd run test:platform:input-parser
+- node --test test\graph-template.test.js
+- npm.cmd run test:platform:workflow-core
+- npm.cmd run test:platform:protocol
 - git diff --check
 
 Test count:
-- Controller Electron unit: 121 passing tests.
-- Renderer DOM targeted: 37 passing tests.
+- Controller Electron unit: 126 passing tests.
+- Renderer DOM targeted: 42 passing tests.
 - Input parser: 23 passing tests.
+- Graph template: 7 passing tests.
+- Workflow core: 10 passing tests.
+- Protocol: 17 passing tests.
 
 Packaged GUI cases passed in Phase 8:
 - Not yet run. Packaged GUI QA is reserved until all Phase 8 UX subphases are implemented.
@@ -55,14 +61,15 @@ Known product bugs:
 - No known managed-container renderer bug after the Phase 8B automated checkpoint.
 - No known origin synchronization renderer bug after the Phase 8C automated checkpoint.
 - No known grouped input renderer bug after the Phase 8D automated checkpoint.
-- Action graph UX still needs Phase 8 integration work.
+- No known action graph renderer bug after the Phase 8E automated checkpoint.
+- Localization/accessibility/state consistency review and packaged GUI QA still need Phase 8 completion.
 
 Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 - Browser Agent physical Docker image can be stale after local source changes; rebuild the image before physical gates that exercise new Agent code.
 
 Next exact action:
-Commit and push Phase 8D grouped input UX, verify HEAD equals origin/main, then begin Phase 8E action graph UX.
+Commit and push Phase 8E action graph UX, verify HEAD equals origin/main, then begin Phase 8F/8G/8H localization, accessibility, and state consistency review.
 
 MVP remaining work:
 - Finish Phase 8 workspace and UX integration.

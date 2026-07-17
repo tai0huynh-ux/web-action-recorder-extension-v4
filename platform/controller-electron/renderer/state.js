@@ -51,6 +51,17 @@ export const store = {
   },
   groupedInputPreview: null,
   groupedInputResult: null,
+  graphEditor: {
+    workflowId: '',
+    revision: 0,
+    graph: null,
+    operations: [],
+    selectedNodeId: '',
+    pending: '',
+    notice: '',
+    error: '',
+    unsaved: false,
+  },
   lastJobNotice: '',
   lastRefresh: null,
 };

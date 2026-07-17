@@ -761,7 +761,7 @@ function workflowsView(refresh) {
       el('span', { text: `${workflow.workflowId} rev ${workflow.revision}` }),
       button('View revision', async () => { await refreshWorkflow(workflow.workflowId, workflow.revision); refresh(); }),
     ])),
-    store.selectedWorkflow ? workflowDetails(store.selectedWorkflow) : el('p', { text: 'Select a workflow revision to inspect safe metadata.' }),
+    store.selectedWorkflow ? workflowDetails(store.selectedWorkflow, refresh) : el('p', { text: 'Select a workflow revision to inspect safe metadata.' }),
   ]);
 }
 
@@ -895,7 +895,7 @@ function originAuditRows(result = {}) {
   return [...imported, ...skipped, ...conflicted, ...errors];
 }
 
-function workflowDetails(workflow) {
+function workflowDetails(workflow, refresh) {
   const sensitive = (workflow.requiredInputs || []).some((item) => item.sensitive);
   return el('article', { className: 'details' }, [
     el('h3', { text: workflow.name || workflow.workflowId }),
@@ -906,8 +906,163 @@ function workflowDetails(workflow) {
       { key: 'required', label: 'Required' },
       { key: 'sensitive', label: 'Sensitive' },
     ], workflow.requiredInputs || []),
-    codeBlock(workflow.profilePayload || {}),
+    graphEditorPanel(workflow, refresh),
   ]);
+}
+
+function graphEditorPanel(workflow, refresh) {
+  const editor = store.graphEditor || {};
+  const graph = editor.graph;
+  const selected = graph?.nodes?.find((node) => node.id === editor.selectedNodeId) || graph?.nodes?.[0] || null;
+  const nodeSelect = el('select', { ariaLabel: t('graphEditor.node') }, (graph?.nodes || []).map((node) => el('option', { value: node.id, text: `${node.name || node.id} (${node.type})` })));
+  nodeSelect.value = selected?.id || '';
+  nodeSelect.addEventListener('change', () => {
+    store.graphEditor.selectedNodeId = nodeSelect.value;
+    refresh();
+  });
+  const name = el('input', { type: 'text', value: selected?.name || '' });
+  const message = el('input', { type: 'text', value: selected?.message || selected?.text || selected?.selector || '' });
+  const from = el('select', { ariaLabel: t('graphEditor.from') }, (graph?.nodes || []).map((node) => el('option', { value: node.id, text: node.name || node.id })));
+  const to = el('select', { ariaLabel: t('graphEditor.to') }, (graph?.nodes || []).map((node) => el('option', { value: node.id, text: node.name || node.id })));
+  from.value = graph?.nodes?.[0]?.id || '';
+  to.value = graph?.nodes?.[1]?.id || graph?.nodes?.[0]?.id || '';
+  const status = el('p', { className: editor.error ? 'status error' : 'status', text: editor.error || editor.notice || '', ariaLive: 'polite' });
+  const pending = Boolean(editor.pending);
+  const invalid = graph?.validation?.ok === false;
+  return el('section', { className: 'details', ariaLabel: t('graphEditor.title') }, [
+    el('h3', { text: t('graphEditor.title') }),
+    el('div', { className: 'toolbar' }, [
+      button(t('graphEditor.load'), () => graphAction('load', { workflow, refresh }), { disabled: pending }),
+      button(t('graphEditor.preview'), () => graphAction('preview', { workflow, refresh }), { disabled: pending || !editor.unsaved }),
+      button(t('graphEditor.save'), () => graphAction('save', { workflow, refresh }), { disabled: pending || !editor.unsaved || invalid }),
+      button(t('graphEditor.discard'), () => graphDiscard(refresh), { disabled: pending || !editor.unsaved }),
+    ]),
+    status,
+    graph ? metricGrid([
+      [t('graphEditor.nodes'), graph.nodes?.length || 0],
+      [t('graphEditor.edges'), graph.edges?.length || 0],
+      [t('graphEditor.executionPlan'), (graph.executionPlan || []).join(' > ') || t('workspace.containers.unknown')],
+      [t('graphEditor.validation'), graph.validation?.ok ? t('graphEditor.valid') : t('graphEditor.invalid')],
+      [t('graphEditor.unsaved'), editor.unsaved ? t('graphEditor.yes') : t('graphEditor.no')],
+    ]) : el('p', { className: 'empty-state', text: t('graphEditor.loadPrompt') }),
+    graph ? table([
+      { key: 'id', label: t('graphEditor.nodeId') },
+      { key: 'type', label: t('graphEditor.type') },
+      { key: 'name', label: t('graphEditor.name') },
+    ], graph.nodes || []) : null,
+    graph ? table([
+      { key: 'from', label: t('graphEditor.from') },
+      { key: 'to', label: t('graphEditor.to') },
+    ], graph.edges || []) : null,
+    graph?.validation?.errors?.length ? el('p', { className: 'status error', text: graph.validation.errors.join('; '), ariaLive: 'polite' }) : null,
+    graph ? el('div', { className: 'form-grid' }, [
+      field(t('graphEditor.node'), nodeSelect),
+      field(t('graphEditor.nodeName'), name),
+      field(t('graphEditor.nodeValue'), message),
+      field(t('graphEditor.from'), from),
+      field(t('graphEditor.to'), to),
+    ]) : null,
+    graph ? el('div', { className: 'toolbar' }, [
+      button(t('graphEditor.updateNode'), () => graphQueueOperation({ type: 'updateNode', nodeId: nodeSelect.value, patch: graphNodePatch(selected, name.value, message.value) }, refresh), { disabled: pending || !nodeSelect.value }),
+      button(t('graphEditor.addNode'), () => graphQueueOperation({ type: 'addNode', node: { type: 'log', name: t('graphEditor.newNode'), message: '' } }, refresh), { disabled: pending }),
+      button(t('graphEditor.removeNode'), () => graphQueueOperation({ type: 'removeNode', nodeId: nodeSelect.value }, refresh), { disabled: pending || !nodeSelect.value }),
+      button(t('graphEditor.addEdge'), () => graphQueueOperation({ type: 'addEdge', from: from.value, to: to.value }, refresh), { disabled: pending || !from.value || !to.value || from.value === to.value }),
+      button(t('graphEditor.removeEdge'), () => graphQueueOperation({ type: 'removeEdge', from: from.value, to: to.value }, refresh), { disabled: pending || !from.value || !to.value }),
+    ]) : null,
+  ]);
+}
+
+async function graphAction(action, { workflow, refresh }) {
+  if (store.graphEditor?.pending) return;
+  if (action !== 'load' && !store.graphEditor.graph) {
+    store.graphEditor.error = t('graphEditor.loadRequired');
+    refresh();
+    return;
+  }
+  store.graphEditor = {
+    ...store.graphEditor,
+    workflowId: workflow.workflowId,
+    revision: workflow.revision,
+    pending: action,
+    notice: action === 'load' ? t('graphEditor.loading') : action === 'preview' ? t('graphEditor.previewing') : t('graphEditor.saving'),
+    error: '',
+  };
+  refresh();
+  try {
+    if (!graphOperationsAreSafe(store.graphEditor.operations || [])) {
+      store.graphEditor.error = 'INVALID_GRAPH_OPERATION';
+      return;
+    }
+    const payload = { workflowId: workflow.workflowId, revision: workflow.revision, operations: store.graphEditor.operations || [] };
+    const result = action === 'load'
+      ? await window.warController.workflows.graphGet({ workflowId: workflow.workflowId, revision: workflow.revision })
+      : action === 'preview'
+        ? await window.warController.workflows.graphPreview(payload)
+        : await window.warController.workflows.graphSave(payload);
+    if (result?.ok === false) {
+      store.graphEditor.error = safeError(result);
+      store.graphEditor.notice = '';
+      return;
+    }
+    const data = unwrap(result);
+    if (action === 'save') {
+      store.graphEditor.graph = data.graph;
+      store.graphEditor.operations = [];
+      store.graphEditor.unsaved = false;
+      store.graphEditor.notice = t('graphEditor.saveDone');
+      await refreshAll();
+      if (data.saved?.revision) store.selectedWorkflow = data.saved.revision;
+    } else {
+      store.graphEditor.graph = data;
+      store.graphEditor.notice = action === 'load' ? t('graphEditor.loaded') : t('graphEditor.previewDone');
+      if (action === 'load') {
+        store.graphEditor.operations = [];
+        store.graphEditor.unsaved = false;
+      }
+    }
+    store.graphEditor.selectedNodeId = store.graphEditor.selectedNodeId || store.graphEditor.graph?.nodes?.[0]?.id || '';
+    store.graphEditor.error = '';
+  } catch (error) {
+    store.graphEditor.error = safeError({ code: error.code || 'ERROR', message: error.message });
+    store.graphEditor.notice = '';
+  } finally {
+    store.graphEditor.pending = '';
+    refresh();
+  }
+}
+
+function graphQueueOperation(operation, refresh) {
+  if (!['addNode', 'updateNode', 'removeNode', 'addEdge', 'removeEdge'].includes(operation?.type)) {
+    store.graphEditor.error = 'INVALID_GRAPH_OPERATION';
+    refresh();
+    return;
+  }
+  store.graphEditor.operations = [...(store.graphEditor.operations || []), operation];
+  store.graphEditor.unsaved = true;
+  store.graphEditor.notice = t('graphEditor.unsavedNotice');
+  store.graphEditor.error = '';
+  refresh();
+}
+
+function graphOperationsAreSafe(operations) {
+  return Array.isArray(operations) && operations.every((operation) => ['addNode', 'updateNode', 'removeNode', 'addEdge', 'removeEdge'].includes(operation?.type));
+}
+
+function graphDiscard(refresh) {
+  if (!window.confirm(t('graphEditor.discardConfirm'))) return;
+  store.graphEditor.operations = [];
+  store.graphEditor.unsaved = false;
+  store.graphEditor.notice = t('graphEditor.discarded');
+  store.graphEditor.error = '';
+  refresh();
+}
+
+function graphNodePatch(node, name, value) {
+  const patch = { name: String(name || '').trim() || node?.name || node?.id };
+  if (node?.type === 'click') patch.selector = value;
+  else if (node?.type === 'input') patch.text = value;
+  else patch.message = value;
+  return patch;
 }
 
 function jobsView(refresh) {
