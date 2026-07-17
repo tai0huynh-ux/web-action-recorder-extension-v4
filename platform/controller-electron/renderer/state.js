@@ -28,6 +28,13 @@ export const store = {
   workflows: [],
   jobs: [],
   selectedWorkflow: null,
+  originSync: {
+    deviceId: '',
+    conflictPolicy: 'preserveBoth',
+    pending: '',
+    notice: '',
+    error: '',
+  },
   originSyncPreview: null,
   originSyncResult: null,
   selectedJob: null,

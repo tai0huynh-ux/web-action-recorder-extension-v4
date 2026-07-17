@@ -280,6 +280,89 @@ test('managed container resource unavailable and authenticated online states ren
   assert.ok(rendered.textContent.includes('Agent đã xác thực online'));
 });
 
+test('origin synchronization filters invalid origin devices', () => {
+  resetStore();
+  state.store.view = 'workflows';
+  state.store.sessions = [
+    { deviceId: 'dev-online', status: 'online' },
+    { deviceId: 'dev-offline', status: 'offline' },
+    { deviceId: 'dev-revoked', status: 'online' },
+  ];
+  state.store.devices = [
+    { id: 'dev-online', name: 'Agent Online', status: 'online' },
+    { id: 'dev-offline', name: 'Agent Offline', status: 'offline' },
+    { id: 'dev-revoked', name: 'Agent Revoked', status: 'revoked' },
+  ];
+  const rendered = views.renderView(() => {});
+  const options = all(first(rendered, 'select'), (node) => node.localName === 'option').map((option) => option.textContent);
+  assert.deepEqual(options, ['Chọn máy gốc', 'Agent Online']);
+});
+
+test('origin synchronization preview invokes API once and hides sensitive fields', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setValidOrigin();
+  apiState.originPreviewDelay = true;
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'select').value = 'dev-online';
+  const preview = findButton(current, 'Xem trước kéo từ máy gốc');
+  const firstClick = preview.click();
+  await preview.click();
+  await firstClick;
+  assert.equal(apiState.originCalls.preview, 1);
+  assert.ok(state.store.originSyncPreview);
+  assert.ok(current.textContent.includes('Đã tải bản xem trước'));
+  assert.equal(current.textContent.includes('top-secret-value'), false);
+});
+
+test('origin synchronization pull is disabled and guarded before preview', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setValidOrigin();
+  const rendered = views.renderView(() => {});
+  first(rendered, 'select').value = 'dev-online';
+  const pull = findButton(rendered, 'Kéo từ máy gốc');
+  assert.equal(pull.disabled, true);
+  await pull.click();
+  assert.equal(apiState.originCalls.pull || 0, 0);
+  assert.equal(state.store.originSync.error, 'Cần xem trước hợp lệ trước khi kéo');
+});
+
+test('origin synchronization pull prevents duplicates, reports skipped items, and updates workflows', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setValidOrigin();
+  state.store.originSyncPreview = originPreviewFixture();
+  apiState.originPullDelay = true;
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'select').value = 'dev-online';
+  all(current, (node) => node.localName === 'select')[1].value = 'skip';
+  const pull = findButton(current, 'Kéo từ máy gốc');
+  const firstClick = pull.click();
+  await pull.click();
+  await firstClick;
+  assert.equal(apiState.originCalls.pull, 1);
+  assert.ok(current.textContent.includes('Đã bỏ qua'));
+  assert.equal(state.store.workflows.some((workflow) => workflow.workflowId === 'wf-origin'), true);
+});
+
+test('origin synchronization failed preview leaves safe error and success clears stale error', async () => {
+  resetStore();
+  state.store.view = 'workflows';
+  setValidOrigin();
+  apiState.originPreviewResult = { ok: false, code: 'ORIGIN_UNAVAILABLE', message: 'Origin offline' };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'select').value = 'dev-online';
+  await clickButton(current, 'Xem trước kéo từ máy gốc');
+  assert.equal(state.store.originSync.error, 'ORIGIN_UNAVAILABLE: Origin offline');
+
+  apiState.originPreviewResult = null;
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'select').value = 'dev-online';
+  await clickButton(current, 'Xem trước kéo từ máy gốc');
+  assert.equal(state.store.originSync.error, '');
+});
+
 test('input mode tabs switch renderer state', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -420,6 +503,12 @@ function resetStore() {
   apiState.containerCalls = {};
   apiState.containerResults = {};
   apiState.containerAddDelay = false;
+  apiState.originCalls = {};
+  apiState.originPreviewDelay = false;
+  apiState.originPullDelay = false;
+  apiState.originPreviewResult = null;
+  apiState.originPullResult = null;
+  apiState.workflows = [];
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
   Object.assign(state.store, {
@@ -445,6 +534,13 @@ function resetStore() {
     workflows: [],
     jobs: [],
     selectedWorkflow: null,
+    originSync: {
+      deviceId: '',
+      conflictPolicy: 'preserveBoth',
+      pending: '',
+      notice: '',
+      error: '',
+    },
     originSyncPreview: null,
     originSyncResult: null,
     selectedJob: null,
@@ -498,6 +594,12 @@ const apiState = {
   containerCalls: {},
   containerResults: {},
   containerAddDelay: false,
+  originCalls: {},
+  originPreviewDelay: false,
+  originPullDelay: false,
+  originPreviewResult: null,
+  originPullResult: null,
+  workflows: [],
   groupCreateResult: null,
   settingsUpdates: [],
 };
@@ -571,11 +673,21 @@ function installControllerApi() {
         removeDevice: async () => ({ ok: true, data: {} }),
       },
       workflows: {
-        list: async () => ({ ok: true, data: { workflows: [] } }),
+        list: async () => ({ ok: true, data: { workflows: apiState.workflows } }),
         importFile: async () => ({ ok: true, data: {} }),
         get: async () => ({ ok: true, data: {} }),
-        originPreview: async () => ({ ok: true, data: { counts: { workflows: 1 }, workflows: [{ workflowId: 'wf-origin', revision: 1, name: 'Origin', action: 'importNew', conflict: false }] } }),
-        originPull: async () => ({ ok: true, data: { imported: [{ workflowId: 'wf-origin', revision: 1 }], skipped: [] } }),
+        originPreview: async () => {
+          apiState.originCalls.preview = (apiState.originCalls.preview || 0) + 1;
+          if (apiState.originPreviewDelay) await Promise.resolve();
+          return apiState.originPreviewResult || { ok: true, data: originPreviewFixture() };
+        },
+        originPull: async () => {
+          apiState.originCalls.pull = (apiState.originCalls.pull || 0) + 1;
+          if (apiState.originPullDelay) await Promise.resolve();
+          if (apiState.originPullResult) return apiState.originPullResult;
+          apiState.workflows = [{ workflowId: 'wf-origin', revision: 1, name: 'Origin' }];
+          return { ok: true, data: { imported: [], skipped: [{ workflowId: 'wf-origin', revision: 1 }] } };
+        },
       },
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),
@@ -625,6 +737,22 @@ async function containerOperation(action, containerId, status) {
     container.id === containerId ? { ...container, status, lastError: null } : container
   ));
   return { ok: true, data: {} };
+}
+
+function setValidOrigin() {
+  state.store.sessions = [{ deviceId: 'dev-online', status: 'online' }];
+  state.store.devices = [{ id: 'dev-online', name: 'Agent Online', status: 'online' }];
+  state.store.pairings = { pending: [], paired: [{ deviceId: 'dev-online', revokedAt: null }] };
+}
+
+function originPreviewFixture() {
+  return {
+    counts: { workflows: 2 },
+    workflows: [
+      { workflowId: 'wf-origin', revision: 1, name: 'Origin', action: 'skip', conflict: false, secretValue: 'top-secret-value' },
+      { workflowId: 'wf-conflict', revision: 2, name: 'Conflict', action: 'preserveBoth', conflict: true },
+    ],
+  };
 }
 
 function installFakeDom() {

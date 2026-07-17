@@ -696,38 +696,43 @@ function groupEditor(group, refresh) {
 
 function workflowsView(refresh) {
   const imported = el('textarea', { rows: 10, placeholder: '{...WorkflowRevision JSON...}' });
-  const originDevice = el('select', {}, [
-    el('option', { value: '', text: 'Select origin device' }),
-    ...store.sessions.filter((session) => session.status === 'online').map((session) => el('option', { value: session.deviceId, text: session.deviceId })),
+  const originState = store.originSync || {};
+  const originDevice = el('select', { ariaLabel: t('originSync.device') }, [
+    el('option', { value: '', text: t('originSync.selectDevice') }),
+    ...validOriginSessions().map((session) => el('option', { value: session.deviceId, text: originDeviceLabel(session.deviceId) })),
   ]);
-  const conflictPolicy = el('select', {}, [
-    el('option', { value: 'preserveBoth', text: 'Preserve both' }),
-    el('option', { value: 'skip', text: 'Skip conflicts' }),
+  originDevice.value = originState.deviceId || '';
+  originDevice.addEventListener('change', () => {
+    store.originSync.deviceId = originDevice.value;
+    store.originSyncPreview = null;
+    store.originSyncResult = null;
+    refresh();
+  });
+  const conflictPolicy = el('select', { ariaLabel: t('originSync.conflictPolicy') }, [
+    el('option', { value: 'preserveBoth', text: t('originSync.preserveBoth') }),
+    el('option', { value: 'skip', text: t('originSync.skipConflicts') }),
   ]);
-  const status = el('p', { className: 'status' });
+  conflictPolicy.value = originState.conflictPolicy || 'preserveBoth';
+  conflictPolicy.addEventListener('change', () => {
+    store.originSync.conflictPolicy = conflictPolicy.value;
+    store.originSyncResult = null;
+    refresh();
+  });
+  const status = el('p', { className: originState.error ? 'status error' : 'status', text: originState.error || originState.notice || '', ariaLive: 'polite' });
+  const previewPending = originState.pending === 'preview';
+  const pullPending = originState.pending === 'pull';
+  const canPreview = Boolean(originDevice.value) && !previewPending && !pullPending;
+  const canPull = Boolean(originDevice.value) && Boolean(store.originSyncPreview) && !previewPending && !pullPending;
   return section('Workflows', [
-    el('h3', { text: 'Origin synchronization' }),
-    field('Origin device', originDevice),
-    field('Conflict policy', conflictPolicy),
+    el('h3', { text: t('originSync.title') }),
+    field(t('originSync.device'), originDevice),
+    field(t('originSync.conflictPolicy'), conflictPolicy),
     el('div', { className: 'toolbar' }, [
-      button('Preview origin pull', async () => {
-        if (!originDevice.value) { status.textContent = 'Select one connected origin device'; return; }
-        const result = await window.warController.workflows.originPreview({ deviceId: originDevice.value });
-        store.originSyncPreview = unwrap(result);
-        setStatus(status, result, 'Origin preview loaded');
-        refresh();
-      }),
-      button('Pull from origin', async () => {
-        if (!originDevice.value) { status.textContent = 'Select one connected origin device'; return; }
-        const result = await window.warController.workflows.originPull({ deviceId: originDevice.value, conflictPolicy: conflictPolicy.value });
-        store.originSyncResult = unwrap(result);
-        setStatus(status, result, 'Origin pull completed');
-        await refreshAll();
-        refresh();
-      }),
+      button(t('originSync.preview'), () => originSyncAction('preview', { originDevice, conflictPolicy, refresh }), { disabled: !canPreview }),
+      button(t('originSync.pull'), () => originSyncAction('pull', { originDevice, conflictPolicy, refresh }), { disabled: !canPull }),
     ]),
     store.originSyncPreview ? originPreviewPanel() : null,
-    store.originSyncResult ? codeBlock(store.originSyncResult) : null,
+    store.originSyncResult ? originResultPanel() : null,
     field('WorkflowRevision JSON', imported),
     el('div', { className: 'toolbar' }, [
       button('Import file', async () => {
@@ -761,18 +766,133 @@ function workflowsView(refresh) {
 }
 
 function originPreviewPanel() {
+  const preview = store.originSyncPreview || {};
+  const counts = originCounts(preview);
   return el('article', { className: 'item-row' }, [
     el('div', {}, [
-      el('strong', { text: `Origin workflows: ${store.originSyncPreview.counts?.workflows || 0}` }),
+      el('strong', { text: t('originSync.previewLoaded') }),
+      metricGrid([
+        [t('originSync.workflows'), counts.workflows],
+        [t('originSync.imported'), counts.imported],
+        [t('originSync.skipped'), counts.skipped],
+        [t('originSync.conflicted'), counts.conflicted],
+        [t('originSync.errors'), counts.errors],
+      ]),
       table([
-        { key: 'workflowId', label: 'Workflow' },
-        { key: 'revision', label: 'Revision' },
-        { key: 'name', label: 'Name' },
-        { key: 'action', label: 'Action' },
-        { key: 'conflict', label: 'Conflict' },
-      ], store.originSyncPreview.workflows || []),
+        { key: 'workflowId', label: t('originSync.workflow') },
+        { key: 'revision', label: t('originSync.revision') },
+        { key: 'name', label: t('originSync.name') },
+        { key: 'action', label: t('originSync.action') },
+        { key: 'conflict', label: t('originSync.conflict') },
+      ], preview.workflows || []),
     ]),
   ]);
+}
+
+function originResultPanel() {
+  const result = store.originSyncResult || {};
+  const counts = originCounts(result);
+  return el('article', { className: 'details' }, [
+    el('h3', { text: t('originSync.result') }),
+    metricGrid([
+      [t('originSync.imported'), counts.imported],
+      [t('originSync.skipped'), counts.skipped],
+      [t('originSync.conflicted'), counts.conflicted],
+      [t('originSync.errors'), counts.errors],
+    ]),
+    table([
+      { key: 'workflowId', label: t('originSync.workflow') },
+      { key: 'revision', label: t('originSync.revision') },
+      { key: 'decision', label: t('originSync.decision') },
+    ], originAuditRows(result)),
+  ]);
+}
+
+async function originSyncAction(action, { originDevice, conflictPolicy, refresh }) {
+  if (store.originSync?.pending) return;
+  const deviceId = originDevice.value;
+  if (!deviceId) {
+    store.originSync.error = t('originSync.selectOne');
+    refresh();
+    return;
+  }
+  if (action === 'pull' && !store.originSyncPreview) {
+    store.originSync.error = t('originSync.previewRequired');
+    refresh();
+    return;
+  }
+  store.originSync = {
+    ...store.originSync,
+    deviceId,
+    conflictPolicy: conflictPolicy.value,
+    pending: action,
+    notice: action === 'preview' ? t('originSync.previewLoading') : t('originSync.pullLoading'),
+    error: '',
+  };
+  refresh();
+  try {
+    const result = action === 'preview'
+      ? await window.warController.workflows.originPreview({ deviceId })
+      : await window.warController.workflows.originPull({ deviceId, conflictPolicy: conflictPolicy.value });
+    if (result?.ok === false) {
+      store.originSync.error = safeError(result);
+      store.originSync.notice = '';
+      return;
+    }
+    const data = unwrap(result);
+    if (action === 'preview') {
+      store.originSyncPreview = data;
+      store.originSyncResult = null;
+      store.originSync.notice = t('originSync.previewLoaded');
+    } else {
+      store.originSyncResult = data;
+      store.originSync.notice = t('originSync.pullDone');
+      await refreshAll();
+      store.originSync = { ...store.originSync, deviceId, conflictPolicy: conflictPolicy.value };
+    }
+    store.originSync.error = '';
+  } catch (error) {
+    store.originSync.error = safeError({ code: 'ERROR', message: error.message });
+    store.originSync.notice = '';
+  } finally {
+    store.originSync.pending = '';
+    refresh();
+  }
+}
+
+function validOriginSessions() {
+  const paired = new Map((store.pairings?.paired || []).map((item) => [item.deviceId, item]));
+  return store.sessions.filter((session) => {
+    const deviceId = session.deviceId;
+    const device = store.devices.find((item) => (item.id || item.deviceId) === deviceId);
+    const pairing = paired.get(deviceId);
+    if (session.status !== 'online' || session.revoked) return false;
+    if (device?.revoked || device?.status === 'revoked' || device?.status === 'offline') return false;
+    if (pairing?.revokedAt) return false;
+    return true;
+  });
+}
+
+function originDeviceLabel(deviceId) {
+  const device = store.devices.find((item) => (item.id || item.deviceId) === deviceId);
+  return device?.displayName || device?.name || deviceId;
+}
+
+function originCounts(value = {}) {
+  const workflows = value.counts?.workflows ?? value.workflows?.length ?? 0;
+  const imported = value.counts?.imported ?? value.imported?.length ?? value.workflows?.filter((item) => item.action === 'importNew').length ?? 0;
+  const skipped = value.counts?.skipped ?? value.skipped?.length ?? value.workflows?.filter((item) => item.action === 'skip').length ?? 0;
+  const conflicted = value.counts?.conflicted ?? value.conflicted?.length ?? value.conflicts?.length ?? value.workflows?.filter((item) => item.conflict).length ?? 0;
+  const errors = value.counts?.errors ?? value.errors?.length ?? 0;
+  return { workflows, imported, skipped, conflicted, errors };
+}
+
+function originAuditRows(result = {}) {
+  const imported = (result.imported || []).map((item) => ({ ...item, decision: t('originSync.imported') }));
+  const skipped = (result.skipped || []).map((item) => ({ ...item, decision: t('originSync.skipped') }));
+  const conflicted = (result.conflicted || result.conflicts || []).map((item) => ({ ...item, decision: t('originSync.conflicted') }));
+  const errors = (result.errors || []).map((item) => ({ ...item, decision: t('originSync.errors') }));
+  return [...imported, ...skipped, ...conflicted, ...errors];
 }
 
 function workflowDetails(workflow) {
