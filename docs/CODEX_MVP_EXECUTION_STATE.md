@@ -1,28 +1,29 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 2 - Complete Physical LAN Reliability
+Phase 3 - Physical LAN Soak and Personal-LAN Acceptance
 
 Current subphase:
-Stage G - Revocation physical verification passed; Phase 3 soak is next
+Ready to start soak matrix
 
 Last green commit:
-4e44ed0c289a78eb8f8f97ad82a1efb8493ab9b4
+a634a063a671cb00639e5c442d104eddb9e910b1
 
 HEAD:
-4e44ed0c289a78eb8f8f97ad82a1efb8493ab9b4
+a634a063a671cb00639e5c442d104eddb9e910b1
 
 origin/main:
-4e44ed0c289a78eb8f8f97ad82a1efb8493ab9b4
+a634a063a671cb00639e5c442d104eddb9e910b1
 
 Working tree:
-Revocation repair passed tests and physical verification; pending checkpoint commit.
+Clean after revocation checkpoint push.
 
 Completed milestones:
 - Phase 0 recovery completed with HEAD equal to origin/main and no tracked pilot artifacts.
 - Phase 1 running cancellation and duplicate cancellation repair completed and pushed.
 - Phase 2 disconnect during execution repair completed and pushed.
 - Phase 2 runtime-only Controller restart, Agent restart, wrong credential, unpaired Agent, and wrong TLS endpoint cases passed.
+- Phase 2 revocation repair completed, physically verified from packaged Controller UI, and pushed.
 
 Completed reliability cases:
 - Offline session marking.
@@ -64,7 +65,7 @@ Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 
 Next safe action:
-Create a fresh paired identity only if required for soak, then run the Phase 3 physical LAN soak matrix.
+Create a fresh paired identity if required after revocation, then run the Phase 3 physical LAN soak matrix.
 
 MVP remaining work:
 - Phase 3 physical LAN soak matrix.
