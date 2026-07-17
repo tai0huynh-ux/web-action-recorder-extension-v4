@@ -43,6 +43,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 COPY platform/browser-agent/src ./platform/browser-agent/src
+COPY platform/diagnostics/src ./platform/diagnostics/src
 COPY platform/protocol/src ./platform/protocol/src
 COPY platform/protocol/schemas ./platform/protocol/schemas
 COPY native-host ./native-host

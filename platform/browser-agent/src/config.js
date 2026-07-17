@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { AgentError, redact } from './errors.js';
+import { redactDiagnostic } from '../../diagnostics/src/redaction.js';
+import { AgentError } from './errors.js';
 
 const DEFAULTS = {
   host: '127.0.0.1',
@@ -76,10 +77,10 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
 }
 
 export function serializeConfig(config) {
-  return redact({
+  return redactDiagnostic({
     ...config,
-    token: config.token ? '[REDACTED]' : undefined,
-    controllerSessionCredential: config.controllerSessionCredential ? '[REDACTED]' : undefined
+    token: config.token ? '<redacted>' : undefined,
+    controllerSessionCredential: config.controllerSessionCredential ? '<redacted>' : undefined
   });
 }
 

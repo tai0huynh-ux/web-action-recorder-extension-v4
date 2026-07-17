@@ -1,3 +1,7 @@
+import { redactDiagnostic, redactUrl } from '../../diagnostics/src/redaction.js';
+
+export { redactUrl };
+
 export class AgentError extends Error {
   constructor(code, message, status = 400, details = undefined) {
     super(message);
@@ -42,28 +46,5 @@ export function createLogger({ deviceId } = {}) {
 }
 
 export function redact(value) {
-  if (Array.isArray(value)) return value.map((item) => redact(item));
-  if (!value || typeof value !== 'object') return value;
-  const output = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (/authorization|token|cookie|localstorage|password|secret/i.test(key)) {
-      output[key] = '[REDACTED]';
-    } else if (key === 'url' && typeof child === 'string') {
-      output[key] = redactUrl(child);
-    } else {
-      output[key] = redact(child);
-    }
-  }
-  return output;
-}
-
-export function redactUrl(raw) {
-  try {
-    const parsed = new URL(raw);
-    parsed.username = '';
-    parsed.password = '';
-    return parsed.toString();
-  } catch {
-    return raw;
-  }
+  return redactDiagnostic(value);
 }

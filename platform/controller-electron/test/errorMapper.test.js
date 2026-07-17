@@ -21,21 +21,37 @@ test('error mapper converts unknown and malformed errors to internal errors', ()
 test('error mapper removes stack, secrets, hashes, bearer tokens, and absolute paths', () => {
   const error = new Error('Denied');
   error.code = 'AUTH_DENIED';
+  const secret = 'synthetic-controller-credential';
   error.details = {
     stack: 'secret stack',
-    Authorization: 'Bearer abc123',
-    credential: 'secret',
+    Authorization: `Bearer ${secret}`,
+    credential: secret,
     tokenHash: 'hash',
     credentialHash: 'hash',
     path: 'C:\\Users\\a\\secret\\key.pem',
-    nested: { inputs: { password: 'secret' } },
+    nested: { inputs: { password: secret } },
   };
   const result = mapErrorToIpcResult(error);
   const encoded = JSON.stringify(result);
-  assert.equal(encoded.includes('abc123'), false);
+  assert.equal(encoded.includes(secret), false);
   assert.equal(encoded.includes('secret stack'), false);
   assert.equal(encoded.includes('credentialHash":"hash'), false);
   assert.equal(encoded.includes('C:\\\\Users'), false);
+  assert.match(encoded, /<redacted>/);
+});
+
+test('error mapper redacts URL query credentials in safe details', () => {
+  const secret = 'synthetic-websocket-credential';
+  const result = mapErrorToIpcResult({
+    code: 'ERR_SESSION_FAILED',
+    message: 'Session failed',
+    details: {
+      url: `wss://controller.example/session?credential=${secret}&device=controller`
+    }
+  });
+  const encoded = JSON.stringify(result);
+  assert.equal(encoded.includes(secret), false);
+  assert.match(encoded, /device=controller/);
 });
 
 test('error detail sanitizer handles circular and oversized details', () => {

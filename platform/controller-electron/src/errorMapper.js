@@ -1,3 +1,5 @@
+import { redactDiagnostic, redactUrl } from '../../diagnostics/src/redaction.js';
+
 const SECRET_KEYS = new Set([
   'authorization',
   'pairingCode',
@@ -36,8 +38,7 @@ export function mapError(error) {
 }
 
 export function sanitizeErrorDetails(details) {
-  const seen = new WeakSet();
-  const sanitized = sanitize(details, 0, seen);
+  const sanitized = redactDiagnostic(sanitize(details, 0, new WeakSet()));
   const encoded = JSON.stringify(sanitized);
   if (encoded && Buffer.byteLength(encoded, 'utf8') > MAX_DETAILS_BYTES) {
     return { truncated: true };
@@ -68,7 +69,9 @@ function sanitize(value, depth, seen) {
   const output = {};
   for (const [key, child] of Object.entries(value)) {
     if (isSecretKey(key)) {
-      output[key] = '[Redacted]';
+      output[key] = '<redacted>';
+    } else if (key.toLowerCase() === 'url' && typeof child === 'string') {
+      output[key] = redactUrl(child);
     } else {
       output[key] = sanitize(child, depth + 1, seen);
     }
@@ -85,5 +88,5 @@ function redactString(value) {
   return value
     .replace(/[A-Za-z]:\\[^\s"'<>]+/g, '[Path]')
     .replace(/\/(?:[^\s"'<>/]+\/)+[^\s"'<>]+/g, '[Path]')
-    .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [Redacted]');
+    .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer <redacted>');
 }

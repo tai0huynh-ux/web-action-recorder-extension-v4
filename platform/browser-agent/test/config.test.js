@@ -38,3 +38,14 @@ test('serialized config does not expose secret', () => {
   const config = loadConfig({ WAR_AGENT_TOKEN: '123456789012345678901234' }, process.cwd());
   assert.doesNotMatch(JSON.stringify(serializeConfig(config)), /123456789012345678901234/);
 });
+
+test('serialized controller session config redacts credential and URL query credentials', () => {
+  const credential = 'synthetic-controller-credential-12345';
+  const config = loadConfig({
+    WAR_CONTROLLER_WSS_URL: `wss://controller.example/agent?credential=${credential}&device=agent-a`,
+    WAR_CONTROLLER_SESSION_CREDENTIAL: credential
+  }, process.cwd());
+  const encoded = JSON.stringify(serializeConfig(config));
+  assert.equal(encoded.includes(credential), false);
+  assert.match(encoded, /device=agent-a/);
+});
