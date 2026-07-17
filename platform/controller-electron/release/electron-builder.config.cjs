@@ -30,6 +30,7 @@ module.exports = {
     'platform/controller-electron/release/packagedSmoke.js',
     'platform/controller-core/src/**/*',
     'platform/controller-wss/src/**/*',
+    'platform/diagnostics/src/**/*',
     'platform/protocol/src/**/*',
     'platform/workflow-core/src/**/*',
     '!**/*.test.js',
