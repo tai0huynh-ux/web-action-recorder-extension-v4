@@ -25,7 +25,7 @@ test('preload exposes only the warController global with the exact API shape', (
     sessions: ['list'],
     containers: ['add', 'delete', 'duplicate', 'list', 'refresh', 'restart', 'start', 'stop'],
     groups: ['addDevice', 'create', 'list', 'remove', 'removeDevice', 'update'],
-    workflows: ['get', 'importFile', 'list', 'originPreview', 'originPull'],
+    workflows: ['get', 'graphGet', 'graphPreview', 'graphSave', 'importFile', 'list', 'originPreview', 'originPull'],
     jobs: ['cancel', 'dispatch', 'events', 'get', 'groupedDispatch', 'groupedPreview', 'list'],
     dialogs: ['importDeviceDescriptor', 'importWorkflow'],
   });
@@ -80,6 +80,9 @@ test('preload methods invoke the fixed IPC contract channels with intact payload
     [api.workflows.importFile, IPC_CHANNELS.workflows.import],
     [api.workflows.originPreview, IPC_CHANNELS.workflows.originPreview],
     [api.workflows.originPull, IPC_CHANNELS.workflows.originPull],
+    [api.workflows.graphGet, IPC_CHANNELS.workflows.graphGet],
+    [api.workflows.graphPreview, IPC_CHANNELS.workflows.graphPreview],
+    [api.workflows.graphSave, IPC_CHANNELS.workflows.graphSave],
     [api.jobs.list, IPC_CHANNELS.jobs.list],
     [api.jobs.get, IPC_CHANNELS.jobs.get],
     [api.jobs.events, IPC_CHANNELS.jobs.events],

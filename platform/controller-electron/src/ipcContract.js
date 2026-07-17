@@ -51,6 +51,9 @@ export const IPC_CHANNELS = deepFreeze({
     import: `${CHANNEL_PREFIX}workflows:import`,
     originPreview: `${CHANNEL_PREFIX}workflows:origin-preview`,
     originPull: `${CHANNEL_PREFIX}workflows:origin-pull`,
+    graphGet: `${CHANNEL_PREFIX}workflows:graph-get`,
+    graphPreview: `${CHANNEL_PREFIX}workflows:graph-preview`,
+    graphSave: `${CHANNEL_PREFIX}workflows:graph-save`,
   },
   jobs: {
     list: `${CHANNEL_PREFIX}jobs:list`,
@@ -102,6 +105,9 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.workflows.import,
   IPC_CHANNELS.workflows.originPreview,
   IPC_CHANNELS.workflows.originPull,
+  IPC_CHANNELS.workflows.graphGet,
+  IPC_CHANNELS.workflows.graphPreview,
+  IPC_CHANNELS.workflows.graphSave,
   IPC_CHANNELS.jobs.list,
   IPC_CHANNELS.jobs.get,
   IPC_CHANNELS.jobs.events,
@@ -157,6 +163,9 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.workflows.import, objectSchema({ workflow: 'object', deadline: 'deadline' })],
   [IPC_CHANNELS.workflows.originPreview, objectSchema({ deviceId: 'id' })],
   [IPC_CHANNELS.workflows.originPull, objectSchema({ deviceId: 'id', conflictPolicy: 'optionalString' })],
+  [IPC_CHANNELS.workflows.graphGet, objectSchema({ workflowId: 'id', revision: 'positiveInteger' })],
+  [IPC_CHANNELS.workflows.graphPreview, objectSchema({ workflowId: 'id', revision: 'positiveInteger', operations: 'optionalArray' })],
+  [IPC_CHANNELS.workflows.graphSave, objectSchema({ workflowId: 'id', revision: 'positiveInteger', operations: 'optionalArray' })],
   [IPC_CHANNELS.jobs.list, LIST_PAYLOAD],
   [IPC_CHANNELS.jobs.get, objectSchema({ jobId: 'id' })],
   [IPC_CHANNELS.jobs.events, objectSchema({ jobId: 'id', limit: 'limit' })],
@@ -222,6 +231,7 @@ function sanitizeValue(key, value, rule) {
   if (rule === 'optionalPositiveInteger') return sanitizePositiveInteger(key, value, { optional: true });
   if (rule === 'object') return sanitizeRequiredObject(key, value);
   if (rule === 'optionalObject') return sanitizeOptionalObject(key, value);
+  if (rule === 'optionalArray') return sanitizeOptionalArray(key, value);
   if (rule === 'optionalString') return sanitizeOptionalString(key, value);
   if (rule === 'optionalBoolean') return sanitizeOptionalBoolean(key, value);
   if (rule === 'optionalIdArray') return sanitizeOptionalIdArray(key, value);
@@ -266,6 +276,14 @@ function sanitizeRequiredObject(key, value) {
 function sanitizeOptionalObject(key, value) {
   if (value === undefined) return undefined;
   return sanitizeRequiredObject(key, value);
+}
+
+function sanitizeOptionalArray(key, value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
+  }
+  return deepCloneJson(value);
 }
 
 function sanitizeOptionalString(key, value) {

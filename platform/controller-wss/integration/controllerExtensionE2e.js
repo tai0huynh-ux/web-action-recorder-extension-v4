@@ -148,6 +148,20 @@ export async function runControllerExtensionE2e() {
     await triggerNativeBridgePoll(serviceWorker);
     await waitFor(() => controller.core.jobs.getCommand(groupedJobId).status === 'succeeded', 20000, 'grouped input job succeeded');
 
+    const graphSave = await app.saveWorkflowGraph({
+      workflowId: 'wf-controller-grouped',
+      revision: 1,
+      operations: [
+        { type: 'addNode', node: { id: 'graph-log', name: 'Graph log', type: 'log', message: 'saved revision' } },
+        { type: 'addEdge', from: 'click-result', to: 'graph-log', fromPort: 'out' }
+      ]
+    });
+    agentRegistry.putRevision(graphSave.data.saved.revision);
+    const graphDispatch = await app.dispatchWorkflow({ deviceId: 'dev-e2e', workflowId: 'wf-controller-grouped', revision: graphSave.data.saved.revision.revision, inputs: { note: 'graph-note' }, deadlineSeconds: 60 });
+    const graphJobId = graphDispatch.data.job.id;
+    await triggerNativeBridgePoll(serviceWorker);
+    await waitFor(() => controller.core.jobs.getCommand(graphJobId).status === 'succeeded', 20000, 'graph saved revision job succeeded');
+
     const cancelWorkflow = cancelWorkflowRevision();
     await controller.core.workflows.putRevision(cancelWorkflow);
     agentRegistry.putRevision(cancelWorkflow);
@@ -173,6 +187,11 @@ export async function runControllerExtensionE2e() {
         mappedInput: groupedDispatch.data.assignments[0].inputs.note,
         status: controller.core.jobs.getCommand(groupedJobId).status
       },
+      graphEdit: {
+        savedRevision: graphSave.data.saved.revision.revision,
+        executionPlan: graphSave.data.graph.executionPlan,
+        status: controller.core.jobs.getCommand(graphJobId).status
+      },
       eventTypes: events.map((event) => event.eventType),
       cancelCase: controller.core.jobs.getCommand(cancelJobId).status === 'cancelled',
       replayAfterTerminalCount: replay.filter((item) => item.jobId === jobId).length,
@@ -188,6 +207,9 @@ export async function runControllerExtensionE2e() {
       && artifact.groupedInput.previewAssignments === 1
       && artifact.groupedInput.mappedInput === 'grouped-note'
       && artifact.groupedInput.status === 'succeeded'
+      && artifact.graphEdit.savedRevision === 2
+      && artifact.graphEdit.executionPlan.includes('graph-log')
+      && artifact.graphEdit.status === 'succeeded'
       && artifact.eventTypes.includes('job_succeeded')
       && artifact.cancelCase
       && artifact.replayAfterTerminalCount === 0;

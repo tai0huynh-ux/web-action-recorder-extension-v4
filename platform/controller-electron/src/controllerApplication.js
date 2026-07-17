@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
 import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
+import { createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
+import { applyLinksToSteps, collectOutgoingIds, validateGraph } from '../../../src/graph.js';
+import { normalizeProfile, validateProfile } from '../../../src/shared.js';
 import { toPublicRuntimeConfig } from './runtimeConfig.js';
 
 export const DISPATCH_DEADLINE_SECONDS = Object.freeze({ min: 10, default: 300, max: 86400 });
@@ -111,6 +114,38 @@ export class ControllerApplicationService extends EventEmitter {
   listWorkflows() { return this.result({ workflows: this.core.workflows.listMetadata() }); }
   getWorkflowRevision({ workflowId, revision }) { return this.result(this.core.workflows.getRevision(workflowId, revision)); }
   async importWorkflowRevision({ workflow }) { const data = await this.core.workflows.putRevision(workflow); this.invalidate('workflows'); return this.result(data); }
+  getWorkflowGraph(payload) { return this.result(this.buildWorkflowGraph(payload)); }
+  previewWorkflowGraph(payload) { return this.result(this.buildWorkflowGraph(payload)); }
+  async saveWorkflowGraph(payload) {
+    const request = validateGraphRequest(payload);
+    const current = this.core.workflows.getRevision(request.workflowId, request.revision);
+    const profile = applyGraphOperations(extensionProfileFromWorkflowRevision(current), request.operations, this.id);
+    validateProfile(profile);
+    const validation = validateGraph(profile);
+    if (!validation.ok) throw codedError('WORKFLOW_GRAPH_INVALID', 'Workflow graph is invalid', validation.errors);
+    const nextRevision = createWorkflowRevisionFromExtensionProfile(profile, {
+      sourceDeviceId: 'controller-graph',
+      revision: current.revision + 1,
+      now: this.now(),
+    });
+    const saved = await this.core.workflows.putRevision(nextRevision);
+    this.invalidate('workflows');
+    return this.result({ saved, graph: graphView(saved.revision) });
+  }
+  buildWorkflowGraph(payload) {
+    const request = validateGraphRequest(payload);
+    const workflow = this.core.workflows.getRevision(request.workflowId, request.revision);
+    const profile = request.operations.length
+      ? applyGraphOperations(extensionProfileFromWorkflowRevision(workflow), request.operations, this.id)
+      : extensionProfileFromWorkflowRevision(workflow);
+    return {
+      workflow: { workflowId: workflow.workflowId, revision: workflow.revision, name: workflow.name, contentHash: workflow.contentHash },
+      nodes: profile.steps,
+      edges: graphEdges(profile.steps),
+      validation: validateGraph(profile),
+      executionPlan: executionPlan(profile),
+    };
+  }
   async previewOriginSync({ deviceId }) {
     const session = this.requireOnlineSession(deviceId);
     const response = await this.wssTransport.requestOriginInventory(deviceId, session.generation, { entityTypes: ['workflows'] });
@@ -371,6 +406,113 @@ function validateGroupedInputRequest(payload) {
     broadcastSingleRow: payload.broadcastSingleRow !== false,
     deadlineSeconds: payload.deadlineSeconds,
   };
+}
+
+function validateGraphRequest(payload) {
+  if (!isPlainObject(payload)) throw codedError('INVALID_GRAPH_PAYLOAD', 'Graph payload must be an object');
+  for (const key of Reflect.ownKeys(payload)) {
+    if (typeof key !== 'string' || !['workflowId', 'revision', 'operations'].includes(key)) throw codedError('INVALID_GRAPH_PAYLOAD', 'Graph payload contains an unknown property');
+  }
+  if (typeof payload.workflowId !== 'string' || payload.workflowId.trim() === '') throw codedError('INVALID_GRAPH_PAYLOAD', 'Invalid workflowId');
+  if (!Number.isInteger(payload.revision) || payload.revision < 1) throw codedError('INVALID_GRAPH_PAYLOAD', 'Invalid revision');
+  if (payload.operations !== undefined && (!Array.isArray(payload.operations) || payload.operations.length > 100)) throw codedError('INVALID_GRAPH_PAYLOAD', 'Invalid graph operations');
+  return { workflowId: payload.workflowId, revision: payload.revision, operations: structuredClone(payload.operations || []) };
+}
+
+function graphView(revision) {
+  const profile = extensionProfileFromWorkflowRevision(revision);
+  const validation = validateGraph(profile);
+  return {
+    workflowId: revision.workflowId,
+    revision: revision.revision,
+    contentHash: revision.contentHash,
+    nodes: profile.steps,
+    edges: graphEdges(profile.steps),
+    validation,
+    executionPlan: executionPlan(profile),
+  };
+}
+
+function graphEdges(steps) {
+  return steps.flatMap((step) => collectOutgoingIds(step).map((to) => ({ from: step.id, to })));
+}
+
+function executionPlan(profile) {
+  const roots = validateGraph(profile).roots || [];
+  const byId = new Map((profile.steps || []).map((step) => [step.id, step]));
+  const seen = new Set();
+  const ordered = [];
+  const visit = (id) => {
+    if (seen.has(id) || !byId.has(id)) return;
+    seen.add(id);
+    ordered.push(id);
+    for (const next of collectOutgoingIds(byId.get(id))) visit(next);
+  };
+  roots.forEach(visit);
+  return ordered;
+}
+
+function applyGraphOperations(profile, operations, idFactory) {
+  const next = normalizeProfile(profile);
+  for (const operation of operations) applyGraphOperation(next, operation, idFactory);
+  return next;
+}
+
+function applyGraphOperation(profile, operation, idFactory) {
+  if (!isPlainObject(operation) || typeof operation.type !== 'string') throw codedError('INVALID_GRAPH_OPERATION', 'Invalid graph operation');
+  if (operation.type === 'addNode') {
+    profile.steps.push(sanitizeGraphNode({ id: idFactory('step'), ...(operation.node || {}) }));
+  } else if (operation.type === 'updateNode') {
+    const index = profile.steps.findIndex((step) => step.id === operation.nodeId);
+    if (index < 0) throw codedError('WORKFLOW_GRAPH_NODE_NOT_FOUND', 'Graph node not found');
+    profile.steps[index] = sanitizeGraphNode({ ...profile.steps[index], ...(operation.patch || {}), id: profile.steps[index].id });
+  } else if (operation.type === 'removeNode') {
+    profile.steps = profile.steps.filter((step) => step.id !== operation.nodeId).map((step) => removeOutgoing(step, operation.nodeId));
+  } else if (operation.type === 'addEdge') {
+    setEdge(profile.steps, operation.from, operation.to, operation.fromPort || 'out');
+  } else if (operation.type === 'removeEdge') {
+    profile.steps = profile.steps.map((step) => step.id === operation.from ? removeOutgoing(step, operation.to) : step);
+  } else {
+    throw codedError('INVALID_GRAPH_OPERATION', 'Unsupported graph operation');
+  }
+}
+
+function sanitizeGraphNode(node) {
+  const allowed = new Set(['id', 'name', 'type', 'selector', 'text', 'message', 'url', 'keys', 'shortcut', 'delayAfterMs', 'condition', 'conditions', 'ifSteps', 'elseSteps', 'next', 'ui', 'timeoutMs']);
+  const clean = {};
+  for (const [key, value] of Object.entries(node)) if (allowed.has(key)) clean[key] = structuredClone(value);
+  clean.id = typeof clean.id === 'string' && clean.id.trim() ? clean.id : `step-${crypto.randomUUID()}`;
+  clean.name = typeof clean.name === 'string' && clean.name.trim() ? clean.name.slice(0, 120) : clean.id;
+  clean.type = typeof clean.type === 'string' ? clean.type : 'log';
+  return clean;
+}
+
+function setEdge(steps, from, to, fromPort) {
+  if (!steps.some((step) => step.id === from) || !steps.some((step) => step.id === to)) throw codedError('WORKFLOW_GRAPH_NODE_NOT_FOUND', 'Graph edge references missing node');
+  const links = graphLinks(steps).filter((link) => !(link.from === from && link.fromPort === fromPort));
+  links.push({ from, fromPort, to, toPort: 'in' });
+  const next = applyLinksToSteps(steps, links);
+  steps.splice(0, steps.length, ...next);
+}
+
+function graphLinks(steps) {
+  const links = [];
+  for (const step of steps) {
+    if (step.next) links.push({ from: step.id, fromPort: 'out', to: step.next, toPort: 'in' });
+    (step.ifSteps || []).forEach((to) => links.push({ from: step.id, fromPort: 'if-out', to, toPort: 'in' }));
+    (step.elseSteps || []).forEach((to) => links.push({ from: step.id, fromPort: 'else-out', to, toPort: 'in' }));
+    (step.conditions || []).forEach((condition, index) => condition.next && links.push({ from: step.id, fromPort: `cond-${index}-out`, to: condition.next, toPort: 'in' }));
+  }
+  return links;
+}
+
+function removeOutgoing(step, targetId) {
+  const next = { ...step };
+  if (next.next === targetId) delete next.next;
+  if (Array.isArray(next.ifSteps)) next.ifSteps = next.ifSteps.filter((id) => id !== targetId);
+  if (Array.isArray(next.elseSteps)) next.elseSteps = next.elseSteps.filter((id) => id !== targetId);
+  if (Array.isArray(next.conditions)) next.conditions = next.conditions.map((condition) => condition.next === targetId ? { ...condition, next: null } : condition);
+  return next;
 }
 
 function expectedFieldCountFor(definitions) {

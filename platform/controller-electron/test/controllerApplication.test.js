@@ -249,6 +249,58 @@ test('application grouped input broadcasts one row to multiple devices', async (
   assert.deepEqual(preview.data.assignments.map((item) => item.inputs.url), ['https://example.test', 'https://example.test']);
 });
 
+test('application graph backend loads, previews, saves a new revision, and preserves previous revision', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision({
+    profilePayload: {
+      id: 'wf-1',
+      name: 'Workflow',
+      enabled: true,
+      steps: [{ id: 'a', name: 'A', type: 'log', message: 'start' }]
+    }
+  }));
+  const app = application(core, fakeTransport());
+  const loaded = app.getWorkflowGraph({ workflowId: 'wf-1', revision: 1 });
+  const preview = app.previewWorkflowGraph({
+    workflowId: 'wf-1',
+    revision: 1,
+    operations: [
+      { type: 'addNode', node: { id: 'b', name: 'B', type: 'log', message: 'done' } },
+      { type: 'addEdge', from: 'a', to: 'b', fromPort: 'out' }
+    ]
+  });
+  const saved = await app.saveWorkflowGraph({
+    workflowId: 'wf-1',
+    revision: 1,
+    operations: [
+      { type: 'addNode', node: { id: 'b', name: 'B', type: 'log', message: 'done' } },
+      { type: 'addEdge', from: 'a', to: 'b', fromPort: 'out' }
+    ]
+  });
+
+  assert.equal(loaded.data.validation.ok, true);
+  assert.deepEqual(preview.data.executionPlan, ['a', 'b']);
+  assert.equal(saved.data.saved.revision.revision, 2);
+  assert.deepEqual(core.workflows.getRevision('wf-1', 1).profilePayload.steps.map((step) => step.id), ['a']);
+  assert.deepEqual(core.workflows.getRevision('wf-1', 2).profilePayload.steps.map((step) => step.id), ['a', 'b']);
+});
+
+test('application graph backend rejects unsafe node types and dangling edges', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision());
+  const app = application(core, fakeTransport());
+  await assert.rejects(() => app.saveWorkflowGraph({
+    workflowId: 'wf-1',
+    revision: 1,
+    operations: [{ type: 'addNode', node: { id: 'bad', type: 'javascript', name: 'Bad' } }]
+  }), /Loại bước không được hỗ trợ|Unsupported step type/);
+  assert.throws(() => app.previewWorkflowGraph({
+    workflowId: 'wf-1',
+    revision: 1,
+    operations: [{ type: 'addEdge', from: 'missing', to: 'also-missing' }]
+  }), code('WORKFLOW_GRAPH_NODE_NOT_FOUND'));
+});
+
 test('offline cancel keeps controller-side cancellation and returns an offline transport warning', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());
