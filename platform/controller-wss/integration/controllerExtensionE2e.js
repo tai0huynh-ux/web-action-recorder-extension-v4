@@ -133,6 +133,21 @@ export async function runControllerExtensionE2e() {
     const events = controller.core.events.listRecent({ jobId });
     const terminal = controller.core.jobs.getCommand(jobId);
 
+    const groupedWorkflow = groupedWorkflowRevision();
+    await controller.core.workflows.putRevision(groupedWorkflow);
+    agentRegistry.putRevision(groupedWorkflow);
+    const groupedDispatch = await app.dispatchGroupedInput({
+      deviceIds: ['dev-e2e'],
+      workflowId: 'wf-controller-grouped',
+      revision: 1,
+      text: 'grouped-note',
+      mode: 'table',
+      deadlineSeconds: 60
+    });
+    const groupedJobId = groupedDispatch.data.dispatched[0].job.id;
+    await triggerNativeBridgePoll(serviceWorker);
+    await waitFor(() => controller.core.jobs.getCommand(groupedJobId).status === 'succeeded', 20000, 'grouped input job succeeded');
+
     const cancelWorkflow = cancelWorkflowRevision();
     await controller.core.workflows.putRevision(cancelWorkflow);
     agentRegistry.putRevision(cancelWorkflow);
@@ -153,6 +168,11 @@ export async function runControllerExtensionE2e() {
       realMv3Extension: true,
       workflowExecuted: await evaluate(page, 'window.__warClicked === true'),
       resultPersisted: terminal.status === 'succeeded',
+      groupedInput: {
+        previewAssignments: groupedDispatch.data.assignments.length,
+        mappedInput: groupedDispatch.data.assignments[0].inputs.note,
+        status: controller.core.jobs.getCommand(groupedJobId).status
+      },
       eventTypes: events.map((event) => event.eventType),
       cancelCase: controller.core.jobs.getCommand(cancelJobId).status === 'cancelled',
       replayAfterTerminalCount: replay.filter((item) => item.jobId === jobId).length,
@@ -165,6 +185,9 @@ export async function runControllerExtensionE2e() {
     console.log(JSON.stringify(artifact, null, 2));
     const ok = artifact.workflowExecuted
       && artifact.resultPersisted
+      && artifact.groupedInput.previewAssignments === 1
+      && artifact.groupedInput.mappedInput === 'grouped-note'
+      && artifact.groupedInput.status === 'succeeded'
       && artifact.eventTypes.includes('job_succeeded')
       && artifact.cancelCase
       && artifact.replayAfterTerminalCount === 0;
@@ -233,6 +256,21 @@ function cancelWorkflowRevision() {
     enabled: true,
     steps: [
       { id: 'wait-missing', name: 'Wait missing', type: 'click', selector: '#never-appears', timeoutMs: 10000 }
+    ]
+  }, {
+    sourceDeviceId: 'dev-e2e',
+    now: '2026-07-16T00:00:00.000Z'
+  });
+}
+
+function groupedWorkflowRevision() {
+  return createWorkflowRevisionFromExtensionProfile({
+    id: 'wf-controller-grouped',
+    name: 'Controller Extension Grouped Input',
+    enabled: true,
+    requiredInputs: [{ name: 'note', label: 'Note', required: true, sensitive: false }],
+    steps: [
+      { id: 'click-result', name: 'Click result', type: 'click', selector: '#war-button' }
     ]
   }, {
     sourceDeviceId: 'dev-e2e',

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
+import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
 import { toPublicRuntimeConfig } from './runtimeConfig.js';
 
 export const DISPATCH_DEADLINE_SECONDS = Object.freeze({ min: 10, default: 300, max: 86400 });
@@ -8,6 +9,9 @@ export const DISPATCH_DEADLINE_SECONDS = Object.freeze({ min: 10, default: 300, 
 export const MAX_DISPATCH_INPUT_BYTES = 64 * 1024;
 const MAX_INPUT_DEPTH = 8;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_GROUPED_INPUT_BYTES = 64 * 1024;
+const MAX_GROUPED_INPUT_ROWS = 200;
+const GROUPED_INPUT_MODES = new Set(['text', 'table', 'cell']);
 
 export class ControllerApplicationService extends EventEmitter {
   constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
@@ -139,6 +143,22 @@ export class ControllerApplicationService extends EventEmitter {
   listJobs(payload) { return this.result({ jobs: this.core.jobs.listCommands(payload) }); }
   getJob({ jobId }) { return this.result(this.core.jobs.getCommand(jobId)); }
   listJobEvents(payload) { return this.result({ events: this.core.events.listRecent(payload) }); }
+  previewGroupedInput(payload) { return this.result(this.buildGroupedInputPlan(payload)); }
+  async dispatchGroupedInput(payload) {
+    const plan = this.buildGroupedInputPlan(payload);
+    const dispatched = [];
+    for (const assignment of plan.assignments) {
+      const result = await this.dispatchWorkflow({
+        deviceId: assignment.deviceId,
+        workflowId: plan.workflow.workflowId,
+        revision: plan.workflow.revision,
+        inputs: assignment.inputs,
+        deadlineSeconds: plan.deadlineSeconds,
+      });
+      dispatched.push({ deviceId: assignment.deviceId, job: result.data.job, transport: result.data.transport });
+    }
+    return this.result({ ...plan, dispatched });
+  }
   async dispatchWorkflow(payload) {
     const request = validateDispatchRequest(payload);
     const device = this.core.devices.getDevice(request.deviceId);
@@ -250,6 +270,42 @@ export class ControllerApplicationService extends EventEmitter {
     }
   }
 
+  buildGroupedInputPlan(payload) {
+    const request = validateGroupedInputRequest(payload);
+    const workflow = this.core.workflows.getRevision(request.workflowId, request.revision);
+    const definitions = Array.isArray(workflow.requiredInputs) ? workflow.requiredInputs : [];
+    const devices = request.deviceIds.map((deviceId) => {
+      const device = this.core.devices.getDevice(deviceId);
+      if (device.revoked) throw codedError(ERROR_CODES.DEVICE_REVOKED, 'Device is revoked');
+      return { id: device.id || device.deviceId, name: device.name || device.displayName || deviceId };
+    });
+    const parsed = parseInputText(request.text);
+    if (parsed.rows.length > MAX_GROUPED_INPUT_ROWS) throw codedError('GROUPED_INPUT_TOO_MANY_ROWS', 'Grouped input has too many rows');
+    const mappedRows = mapRowsToDevices({
+      rows: parsed.rows,
+      devices,
+      expectedFieldCount: expectedFieldCountFor(definitions),
+      broadcastSingleRow: request.broadcastSingleRow,
+    });
+    const assignments = mappedRows.map((row) => {
+      const inputs = coerceGroupedInputs(mapFieldsToNamedInputs(row.fields, definitions), definitions);
+      validateWorkflowInputs(workflow, inputs);
+      return {
+        deviceId: row.deviceId,
+        sourceRowIndex: row.sourceRowIndex,
+        inputs,
+        preview: redactGroupedPreview(inputs, definitions),
+      };
+    });
+    return {
+      mode: request.mode,
+      workflow: { workflowId: workflow.workflowId, revision: workflow.revision, name: workflow.name, requiredInputs: definitions },
+      counts: { devices: devices.length, rows: parsed.rows.length, assignments: assignments.length },
+      deadlineSeconds: request.deadlineSeconds,
+      assignments,
+    };
+  }
+
   async containerLifecycle(containerId, action, status, desiredState) {
     const progressStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
     const container = await this.core.containers.updateStatus(containerId, progressStatus, { desiredState });
@@ -288,6 +344,64 @@ function validateDispatchRequest(payload) {
     inputs: payload.inputs === undefined ? {} : structuredClone(payload.inputs),
     deadlineSeconds: payload.deadlineSeconds
   };
+}
+
+function validateGroupedInputRequest(payload) {
+  if (!isPlainObject(payload)) throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Grouped input payload must be an object');
+  for (const key of Reflect.ownKeys(payload)) {
+    if (typeof key !== 'string' || !['workflowId', 'revision', 'deviceIds', 'text', 'mode', 'broadcastSingleRow', 'deadlineSeconds'].includes(key)) {
+      throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Grouped input payload contains an unknown property');
+    }
+  }
+  if (typeof payload.workflowId !== 'string' || payload.workflowId.trim() === '') throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Invalid workflowId');
+  if (!Number.isInteger(payload.revision) || payload.revision < 1) throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Invalid revision');
+  if (!Array.isArray(payload.deviceIds) || payload.deviceIds.length === 0 || payload.deviceIds.length > 200 || payload.deviceIds.some((id) => typeof id !== 'string' || !id.trim())) {
+    throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'At least one bounded deviceId is required');
+  }
+  if (typeof payload.text !== 'string') throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Grouped input text is required');
+  if (Buffer.byteLength(payload.text, 'utf8') > MAX_GROUPED_INPUT_BYTES) throw codedError('GROUPED_INPUT_TOO_LARGE', 'Grouped input exceeds maximum size');
+  const mode = payload.mode || 'text';
+  if (!GROUPED_INPUT_MODES.has(mode)) throw codedError('INVALID_GROUPED_INPUT_MODE', 'Unsupported grouped input mode');
+  return {
+    workflowId: payload.workflowId,
+    revision: payload.revision,
+    deviceIds: [...payload.deviceIds],
+    text: payload.text,
+    mode,
+    broadcastSingleRow: payload.broadcastSingleRow !== false,
+    deadlineSeconds: payload.deadlineSeconds,
+  };
+}
+
+function expectedFieldCountFor(definitions) {
+  if (!definitions.length) return 0;
+  return definitions.reduce((max, definition) => Math.max(max, definition.index), -1) + 1;
+}
+
+function redactGroupedPreview(inputs, definitions) {
+  const sensitive = new Set(definitions.filter((definition) => definition.sensitive).map((definition) => definition.name));
+  return Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, sensitive.has(key) ? '[REDACTED]' : value]));
+}
+
+function coerceGroupedInputs(inputs, definitions) {
+  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+  const coerced = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    const definition = byName.get(key);
+    const type = definition?.type || definition?.schema?.type;
+    if (value === '' || type === undefined || typeof value !== 'string') {
+      coerced[key] = value;
+    } else if (type === 'integer' && /^-?\d+$/.test(value)) {
+      coerced[key] = Number(value);
+    } else if (type === 'number' && value.trim() !== '' && Number.isFinite(Number(value))) {
+      coerced[key] = Number(value);
+    } else if (type === 'boolean' && ['true', 'false'].includes(value.toLowerCase())) {
+      coerced[key] = value.toLowerCase() === 'true';
+    } else {
+      coerced[key] = value;
+    }
+  }
+  return coerced;
 }
 
 function validateWorkflowInputs(workflow, inputs) {

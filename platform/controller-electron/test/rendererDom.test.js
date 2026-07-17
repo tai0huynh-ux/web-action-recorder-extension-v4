@@ -358,6 +358,8 @@ function resetStore() {
     selectedJob: null,
     jobEvents: [],
     jobTransports: {},
+    groupedInputPreview: null,
+    groupedInputResult: null,
     lastJobNotice: '',
     lastRefresh: null,
   });
@@ -470,6 +472,8 @@ function installControllerApi() {
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),
         dispatch: async () => ({ ok: true, data: { job: { id: 'job-offline' }, transport: { delivered: false, warningCode: 'SESSION_OFFLINE' } } }),
+        groupedPreview: async () => ({ ok: true, data: { counts: { devices: 1, rows: 1, assignments: 1 }, assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { url: 'https://example.test' } }] } }),
+        groupedDispatch: async () => ({ ok: true, data: { counts: { devices: 1, rows: 1, assignments: 1 }, assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { url: 'https://example.test' } }], dispatched: [{ deviceId: 'dev-a', job: { id: 'job-a' } }] } }),
         get: async () => ({ ok: true, data: {} }),
         events: async () => ({ ok: true, data: { events: [] } }),
         cancel: async () => ({ ok: true, data: {} }),

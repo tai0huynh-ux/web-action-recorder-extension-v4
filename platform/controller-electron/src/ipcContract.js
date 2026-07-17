@@ -57,6 +57,8 @@ export const IPC_CHANNELS = deepFreeze({
     get: `${CHANNEL_PREFIX}jobs:get`,
     events: `${CHANNEL_PREFIX}jobs:events`,
     dispatch: `${CHANNEL_PREFIX}jobs:dispatch`,
+    groupedPreview: `${CHANNEL_PREFIX}jobs:grouped-preview`,
+    groupedDispatch: `${CHANNEL_PREFIX}jobs:grouped-dispatch`,
     cancel: `${CHANNEL_PREFIX}jobs:cancel`,
   },
   dialog: {
@@ -104,6 +106,8 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.jobs.get,
   IPC_CHANNELS.jobs.events,
   IPC_CHANNELS.jobs.dispatch,
+  IPC_CHANNELS.jobs.groupedPreview,
+  IPC_CHANNELS.jobs.groupedDispatch,
   IPC_CHANNELS.jobs.cancel,
   IPC_CHANNELS.dialog.importDevice,
   IPC_CHANNELS.dialog.importWorkflow,
@@ -157,6 +161,8 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.jobs.get, objectSchema({ jobId: 'id' })],
   [IPC_CHANNELS.jobs.events, objectSchema({ jobId: 'id', limit: 'limit' })],
   [IPC_CHANNELS.jobs.dispatch, objectSchema({ deviceId: 'id', workflowId: 'id', revision: 'positiveInteger', inputs: 'optionalObject', deadlineSeconds: 'optionalPositiveInteger' })],
+  [IPC_CHANNELS.jobs.groupedPreview, objectSchema({ workflowId: 'id', revision: 'positiveInteger', deviceIds: 'optionalIdArray', text: 'optionalString', mode: 'optionalString', broadcastSingleRow: 'optionalBoolean', deadlineSeconds: 'optionalPositiveInteger' })],
+  [IPC_CHANNELS.jobs.groupedDispatch, objectSchema({ workflowId: 'id', revision: 'positiveInteger', deviceIds: 'optionalIdArray', text: 'optionalString', mode: 'optionalString', broadcastSingleRow: 'optionalBoolean', deadlineSeconds: 'optionalPositiveInteger' })],
   [IPC_CHANNELS.jobs.cancel, objectSchema({ jobId: 'id' })],
   [IPC_CHANNELS.dialog.importDevice, NO_PAYLOAD],
   [IPC_CHANNELS.dialog.importWorkflow, NO_PAYLOAD],
@@ -217,6 +223,7 @@ function sanitizeValue(key, value, rule) {
   if (rule === 'object') return sanitizeRequiredObject(key, value);
   if (rule === 'optionalObject') return sanitizeOptionalObject(key, value);
   if (rule === 'optionalString') return sanitizeOptionalString(key, value);
+  if (rule === 'optionalBoolean') return sanitizeOptionalBoolean(key, value);
   if (rule === 'optionalIdArray') return sanitizeOptionalIdArray(key, value);
   throw createIpcContractError('ERR_IPC_SCHEMA', 'Unsupported IPC payload schema rule');
 }
@@ -264,6 +271,14 @@ function sanitizeOptionalObject(key, value) {
 function sanitizeOptionalString(key, value) {
   if (value === undefined) return undefined;
   if (typeof value !== 'string') {
+    throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
+  }
+  return value;
+}
+
+function sanitizeOptionalBoolean(key, value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') {
     throw createIpcContractError('ERR_IPC_INVALID_PAYLOAD', `Invalid ${key}`);
   }
   return value;

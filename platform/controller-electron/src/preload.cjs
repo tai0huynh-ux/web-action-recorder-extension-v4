@@ -53,6 +53,8 @@ const IPC_CHANNELS = Object.freeze({
     get: 'war-controller:v1:jobs:get',
     events: 'war-controller:v1:jobs:events',
     dispatch: 'war-controller:v1:jobs:dispatch',
+    groupedPreview: 'war-controller:v1:jobs:grouped-preview',
+    groupedDispatch: 'war-controller:v1:jobs:grouped-dispatch',
     cancel: 'war-controller:v1:jobs:cancel',
   }),
   dialog: Object.freeze({
@@ -146,6 +148,8 @@ const api = deepFreeze({
     get: call(IPC_CHANNELS.jobs.get),
     events: call(IPC_CHANNELS.jobs.events),
     dispatch: call(IPC_CHANNELS.jobs.dispatch),
+    groupedPreview: call(IPC_CHANNELS.jobs.groupedPreview),
+    groupedDispatch: call(IPC_CHANNELS.jobs.groupedDispatch),
     cancel: call(IPC_CHANNELS.jobs.cancel),
   },
   dialogs: {

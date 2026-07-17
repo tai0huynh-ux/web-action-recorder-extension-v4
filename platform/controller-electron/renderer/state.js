@@ -30,6 +30,8 @@ export const store = {
   selectedJob: null,
   jobEvents: [],
   jobTransports: {},
+  groupedInputPreview: null,
+  groupedInputResult: null,
   lastJobNotice: '',
   lastRefresh: null,
 };

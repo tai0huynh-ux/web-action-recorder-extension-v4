@@ -189,6 +189,66 @@ test('application pulls origin workflows through WSS, strips secret-like fields,
   assert.equal(snapshot.auditEvents.at(-1).type, 'origin.sync.completed');
 });
 
+test('application previews and dispatches grouped input through the same deterministic mapping', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision({
+    requiredInputs: [
+      { name: 'url', index: 0, required: true, sensitive: false, type: 'string' },
+      { name: 'count', index: 1, required: false, sensitive: false, type: 'integer' },
+    ]
+  }));
+  const transport = fakeTransport();
+  const app = application(core, transport);
+
+  const preview = await app.previewGroupedInput({
+    workflowId: 'wf-1',
+    revision: 1,
+    deviceIds: ['dev-a'],
+    text: 'https://example.test|3',
+    mode: 'table',
+    deadlineSeconds: 60,
+  });
+  const dispatched = await app.dispatchGroupedInput({
+    workflowId: 'wf-1',
+    revision: 1,
+    deviceIds: ['dev-a'],
+    text: 'https://example.test|3',
+    mode: 'cell',
+    deadlineSeconds: 60,
+  });
+
+  assert.deepEqual(preview.data.assignments[0].inputs, { url: 'https://example.test', count: 3 });
+  assert.equal(dispatched.data.dispatched.length, 1);
+  assert.equal(transport.dispatches.length, 1);
+  assert.equal(core.store.snapshot().commands.length, 1);
+});
+
+test('application grouped input reports parser, row, mode, and size errors before dispatch', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision({ requiredInputs: [{ name: 'url', index: 0, required: true, sensitive: false, type: 'string' }] }));
+  const app = application(core, fakeTransport());
+  assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: '"unterminated', mode: 'text' }), code('UNCLOSED_QUOTE'));
+  assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x', mode: 'unknown' }), code('INVALID_GROUPED_INPUT_MODE'));
+  assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x'.repeat(70 * 1024), mode: 'text' }), code('GROUPED_INPUT_TOO_LARGE'));
+  assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x|extra', mode: 'text' }), code('EXTRA_FIELD'));
+  assert.equal(core.store.snapshot().commands.length, 0);
+});
+
+test('application grouped input broadcasts one row to multiple devices', async () => {
+  const core = await connectedCore();
+  await pairSecondDevice(core);
+  await core.workflows.putRevision(revision({ requiredInputs: [{ name: 'url', index: 0, required: true, sensitive: false, type: 'string' }] }));
+  const preview = await application(core, fakeTransport()).previewGroupedInput({
+    workflowId: 'wf-1',
+    revision: 1,
+    deviceIds: ['dev-a', 'dev-b'],
+    text: 'https://example.test',
+    mode: 'text',
+  });
+  assert.deepEqual(preview.data.assignments.map((item) => item.deviceId), ['dev-a', 'dev-b']);
+  assert.deepEqual(preview.data.assignments.map((item) => item.inputs.url), ['https://example.test', 'https://example.test']);
+});
+
 test('offline cancel keeps controller-side cancellation and returns an offline transport warning', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());
@@ -300,7 +360,32 @@ function agentHello() {
   };
 }
 
-function device() {
+async function pairSecondDevice(core) {
+  await core.pairing.requestPairing({ device: device({ deviceId: 'dev-b', displayName: 'Agent B' }), requestId: 'pair-b' });
+  await core.store.update((state) => {
+    state.pendingPairings.find((item) => item.requestId === 'pair-b').tokenHash = hashSecret('code-b');
+  });
+  await core.pairing.confirmPairing('pair-b', 'code-b');
+  await core.store.update((state) => {
+    state.pairedAgents.find((item) => item.deviceId === 'dev-b').credentialHash = hashSecret('cred-b');
+  });
+  await core.sessions.authenticateHello(agentHelloFor('dev-b'), { credential: 'cred-b' });
+}
+
+function agentHelloFor(deviceId) {
+  return {
+    ...agentHello(),
+    messageId: `hello-${deviceId}`,
+    deviceId,
+    payload: {
+      ...agentHello().payload,
+      device: device({ deviceId, displayName: deviceId === 'dev-b' ? 'Agent B' : 'Agent A' }),
+      sessionNonce: `nonce-${deviceId}`,
+    }
+  };
+}
+
+function device(overrides = {}) {
   return {
     deviceId: 'dev-a',
     displayName: 'Agent A',
@@ -325,7 +410,8 @@ function device() {
     labels: [],
     groupIds: [],
     status: 'online',
-    lastSeenAt: '2026-07-16T00:00:00.000Z'
+    lastSeenAt: '2026-07-16T00:00:00.000Z',
+    ...overrides
   };
 }
 

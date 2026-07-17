@@ -717,6 +717,13 @@ function jobsView(refresh) {
   const workflow = select('Workflow', store.workflows.map((item) => [`${item.workflowId}:${item.revision}`, `${item.workflowId} rev ${item.revision}`]));
   const deadline = el('input', { type: 'number', min: 10, max: 86400, step: 1, value: '300' });
   const payload = el('textarea', { rows: 8, placeholder: '{"inputName":"value"}' });
+  const groupedDevices = el('select', { multiple: true, size: Math.max(2, Math.min(6, store.devices.length || 2)), ariaLabel: 'Grouped devices' }, store.devices.map((item) => el('option', { value: item.id, text: item.name || item.id })));
+  const groupedMode = el('select', { ariaLabel: 'Grouped mode' }, [
+    el('option', { value: 'text', text: 'Text' }),
+    el('option', { value: 'table', text: 'Table' }),
+    el('option', { value: 'cell', text: 'Cell' }),
+  ]);
+  const groupedInput = el('textarea', { rows: 6, placeholder: 'value-a|value-b\nvalue-c|value-d' });
   const status = el('p', { className: 'status' });
   status.textContent = store.lastJobNotice || '';
   return section('Jobs', [
@@ -749,6 +756,18 @@ function jobsView(refresh) {
       }),
       button('Manual refresh', async () => { await refreshAll(); refresh(); }),
     ]),
+    el('h3', { text: 'Grouped input' }),
+    el('div', { className: 'form-grid' }, [
+      field('Grouped devices', groupedDevices),
+      field('Grouped mode', groupedMode),
+      field('Grouped input rows', groupedInput),
+    ]),
+    el('div', { className: 'toolbar' }, [
+      button('Preview grouped input', async () => groupedInputAction('preview', { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh })),
+      button('Dispatch grouped input', async () => groupedInputAction('dispatch', { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh })),
+    ]),
+    store.groupedInputPreview ? groupedInputPanel(store.groupedInputPreview) : null,
+    store.groupedInputResult ? codeBlock(store.groupedInputResult.dispatched || []) : null,
     status,
     table([
       { key: 'id', label: 'Job' },
@@ -763,6 +782,48 @@ function jobsView(refresh) {
       button('Cancel', async () => { await window.warController.jobs.cancel({ jobId: job.id }); await refreshAll(); refresh(); }),
     ])),
     store.selectedJob ? jobDetails() : el('p', { text: 'Select a job to inspect persisted and execution state.' }),
+  ]);
+}
+
+async function groupedInputAction(action, { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh }) {
+  try {
+    const [workflowId, revisionText] = workflow.control.value.split(':');
+    const deviceIds = [...groupedDevices.options].filter((option) => option.selected).map((option) => option.value);
+    const request = {
+      workflowId,
+      revision: Number(revisionText),
+      deviceIds,
+      text: groupedInput.value,
+      mode: groupedMode.value,
+      deadlineSeconds: Number(deadline.value),
+    };
+    const result = action === 'preview'
+      ? await window.warController.jobs.groupedPreview(request)
+      : await window.warController.jobs.groupedDispatch(request);
+    const data = unwrap(result);
+    store.groupedInputPreview = data;
+    if (action === 'dispatch') store.groupedInputResult = data;
+    setStatus(status, result, action === 'preview' ? 'Grouped input preview ready' : 'Grouped input dispatched');
+    if (action === 'dispatch') await refreshAll();
+    refresh();
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
+function groupedInputPanel(plan) {
+  return el('article', { className: 'details' }, [
+    el('h3', { text: 'Grouped input preview' }),
+    metricGrid([
+      ['Devices', plan.counts?.devices ?? 0],
+      ['Rows', plan.counts?.rows ?? 0],
+      ['Assignments', plan.counts?.assignments ?? 0],
+    ]),
+    table([
+      { key: 'deviceId', label: 'Device' },
+      { key: 'sourceRowIndex', label: 'Row' },
+      { key: 'preview', label: 'Inputs' },
+    ], (plan.assignments || []).map((item) => ({ ...item, preview: JSON.stringify(item.preview) }))),
   ]);
 }
 
