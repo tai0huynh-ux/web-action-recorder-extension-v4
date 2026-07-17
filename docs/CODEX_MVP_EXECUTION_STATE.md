@@ -4,16 +4,16 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8 packaged GUI/release gate repair is complete and pending commit/push.
+Phase 8 complete. All Workspace and UX Integration checkpoints, packaged GUI gate, and full regression passed.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
 
-Last pushed green commit before packaged repair:
-f123523630e9eaf35a832fee1b149ac7f4184736
+Last pushed green commit before final state update:
+034457d9a8182d2dffab92655fca0ad871eaebf9
 
 Latest green checkpoint:
-Phase 8 packaged Controller release gate. This document is part of the checkpoint commit.
+Phase 8 Workspace and UX Integration full regression. This document is part of the final Phase 8 state checkpoint.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
@@ -25,7 +25,7 @@ Completed Phase 8 subphases:
 - Packaged Controller release gate repaired by including controller runtime dependencies in the staged app and electron-builder package.
 
 Phase 8 subphases remaining:
-- Full Phase 8 regression.
+- None.
 
 Tests passed for the latest checkpoint:
 - node --test platform\controller-electron\test\rendererDom.test.js
@@ -39,6 +39,14 @@ Tests passed for the latest checkpoint:
 - npm.cmd run test:release:integrity
 - npm.cmd run test:controller-electron:packaged
 - npm.cmd run test:release:gate
+- npm.cmd run check
+- npm.cmd run test:all
+- npm.cmd run test:controller-session:wss-gate
+- npm.cmd run test:controller-extension:e2e
+- npm.cmd run test:controller-electron:smoke
+- npm.cmd run test:container-real-world
+- npm.cmd audit
+- npm.cmd ls --depth=0
 - git diff --check
 
 Test count:
@@ -58,6 +66,11 @@ Packaged GUI cases passed in Phase 8:
 - Packaged WSS status.
 - Release gate packaged controller check.
 
+Full Phase 8 regression:
+- PASS.
+- npm audit reported 0 vulnerabilities.
+- npm ls --depth=0 completed successfully.
+
 Artifact hygiene:
 - Physical LAN pilot runtime artifacts remain ignored and must stay untracked.
 - Generated packages, screenshots, logs, and QA runtime state must not be committed.
@@ -71,16 +84,15 @@ Known product bugs:
 - No known grouped input renderer bug after the Phase 8D automated checkpoint.
 - No known action graph renderer bug after the Phase 8E automated checkpoint.
 - No known localization/accessibility/state consistency bug after the Phase 8F/8G/8H automated checkpoint.
-- Full Phase 8 regression still needs completion.
+- None known after full Phase 8 regression.
 
 Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 - Browser Agent physical Docker image can be stale after local source changes; rebuild the image before physical gates that exercise new Agent code.
 
 Next exact action:
-Commit and push Phase 8 packaged release gate repair, verify HEAD equals origin/main, then run full Phase 8 regression.
+Begin Phase 9 - Security, release, repository hygiene, and documentation. Keep node_modules/** repository hygiene deferred to Phase 9.
 
 MVP remaining work:
-- Finish Phase 8 workspace and UX integration.
 - Phase 9 security, release, repository hygiene, and documentation.
 - Phase 10 final MVP acceptance.
