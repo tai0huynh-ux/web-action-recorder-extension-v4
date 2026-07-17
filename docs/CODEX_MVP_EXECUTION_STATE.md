@@ -4,7 +4,7 @@ Current phase:
 Phase 3 - Physical LAN Soak and Personal-LAN Acceptance
 
 Current subphase:
-Ready to start soak matrix
+Fresh Agent identity active; ready to start soak matrix
 
 Last green commit:
 a634a063a671cb00639e5c442d104eddb9e910b1
@@ -24,6 +24,7 @@ Completed milestones:
 - Phase 2 disconnect during execution repair completed and pushed.
 - Phase 2 runtime-only Controller restart, Agent restart, wrong credential, unpaired Agent, and wrong TLS endpoint cases passed.
 - Phase 2 revocation repair completed, physically verified from packaged Controller UI, and pushed.
+- Post-revocation fresh Agent credential created through Controller pairing and verified online for soak.
 
 Completed reliability cases:
 - Offline session marking.
@@ -57,6 +58,7 @@ Physical acceptance last passed:
 - Agent/container restart runtime case with fixed clipboard acceptance string: hôm nay thật vui
 - Wrong credential, unpaired Agent, and wrong TLS endpoint negative cases.
 - Revocation from packaged Controller UI: active Agent session closed, revoked reconnect did not become online, dispatch to revoked device was rejected with DEVICE_REVOKED, and no new job or execution event was created.
+- Post-revocation re-pair: same physical Agent came online with a fresh active paired record and revoked state cleared.
 
 Known product bugs:
 - None known in completed Phase 2 reliability cases.
@@ -65,7 +67,7 @@ Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 
 Next safe action:
-Create a fresh paired identity if required after revocation, then run the Phase 3 physical LAN soak matrix.
+Run the Phase 3 physical LAN soak matrix.
 
 MVP remaining work:
 - Phase 3 physical LAN soak matrix.
