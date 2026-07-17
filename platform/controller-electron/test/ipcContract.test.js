@@ -137,6 +137,26 @@ test('dispatch payload rejects main-owned fields', () => {
   }
 });
 
+test('container payload accepts only bounded renderer-owned fields', () => {
+  const payload = {
+    name: 'Agent One',
+    image: 'war-browser-agent:phase1',
+    host: '192.0.2.10',
+    deviceId: 'dev-a',
+    runtime: { dockerName: 'agent-one', privileged: true },
+  };
+  const validated = validateIpcPayload(IPC_CHANNELS.containers.add, payload);
+  assert.deepEqual(validated, payload);
+  assert.notEqual(validated.runtime, payload.runtime);
+
+  for (const key of ['command', 'shell', 'dockerSocket', 'credential', 'token', 'password']) {
+    assertErrorCode(
+      () => validateIpcPayload(IPC_CHANNELS.containers.add, { name: 'Agent One', [key]: 'main-owned' }),
+      'ERR_IPC_UNKNOWN_PROPERTY',
+    );
+  }
+});
+
 test('validator does not mutate input', () => {
   const payload = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { count: 1 } };
   const before = JSON.stringify(payload);

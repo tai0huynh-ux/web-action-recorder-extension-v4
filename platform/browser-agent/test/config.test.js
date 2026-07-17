@@ -49,3 +49,15 @@ test('serialized controller session config redacts credential and URL query cred
   assert.equal(encoded.includes(credential), false);
   assert.match(encoded, /device=agent-a/);
 });
+
+test('managed device id is accepted and serialized without controller credential leakage', () => {
+  const credential = 'synthetic-controller-credential-12345';
+  const config = loadConfig({
+    WAR_MANAGED_DEVICE_ID: 'managed-device-1',
+    WAR_CONTROLLER_WSS_URL: 'wss://controller.example/v1/agent-session',
+    WAR_CONTROLLER_SESSION_CREDENTIAL: credential
+  }, process.cwd());
+  const encoded = JSON.stringify(serializeConfig(config));
+  assert.equal(config.managedDeviceId, 'managed-device-1');
+  assert.equal(encoded.includes(credential), false);
+});

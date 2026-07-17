@@ -11,6 +11,7 @@ import { registerControllerIpcHandlers } from './ipcHandlers.js';
 import { resolveElectronRuntimeConfig } from './runtimeConfig.js';
 import { createControllerSettingsStore } from './settingsStore.js';
 import { secureWindowOptions } from './secureWindow.js';
+import { createDockerContainerAdapter } from './containerAdapter.js';
 
 export function createElectronControllerRuntime(dependencies = {}) {
   const state = {
@@ -29,6 +30,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     createControllerSettingsStore: dependencies.createControllerSettingsStore || createControllerSettingsStore,
     ControllerWssServerAdapter: dependencies.ControllerWssServerAdapter || ControllerWssServerAdapter,
     ControllerWssRuntimeServer: dependencies.ControllerWssRuntimeServer || ControllerWssRuntimeServer,
+    createDockerContainerAdapter: dependencies.createDockerContainerAdapter || createDockerContainerAdapter,
     rendererRoot: dependencies.rendererRoot || path.join(import.meta.dirname, '..', 'renderer'),
     preloadPath: dependencies.preloadPath || path.join(import.meta.dirname, 'preload.cjs'),
     version: dependencies.version || dependencies.app?.getVersion?.() || '0.1.0',
@@ -80,7 +82,14 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.core = new state.ControllerCore({ store: state.store });
       await state.core.load();
       await maybeStartWss(state);
-      state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, config: state.config, version: state.version, settingsStore: state.settingsStore });
+      state.application = new state.ControllerApplicationService({
+        core: state.core,
+        wssRuntime: state.wssRuntime,
+        containerAdapter: state.createDockerContainerAdapter({ config: state.config }),
+        config: state.config,
+        version: state.version,
+        settingsStore: state.settingsStore
+      });
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
       });

@@ -52,6 +52,7 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     nativeBridgeMaxConnections: readInt(env.WAR_AGENT_SOCKET_MAX_CONNECTIONS, 8, 1, 128, 'WAR_AGENT_SOCKET_MAX_CONNECTIONS'),
     controllerWssUrl: readOptionalString(env.WAR_CONTROLLER_WSS_URL),
     controllerSessionCredential: readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL),
+    managedDeviceId: readOptionalString(env.WAR_MANAGED_DEVICE_ID),
     controllerReconnectMinMs: readInt(env.WAR_CONTROLLER_RECONNECT_MIN_MS, 500, 100, 60000, 'WAR_CONTROLLER_RECONNECT_MIN_MS'),
     controllerReconnectMaxMs: readInt(env.WAR_CONTROLLER_RECONNECT_MAX_MS, 30000, 500, 300000, 'WAR_CONTROLLER_RECONNECT_MAX_MS'),
     controllerMaxPendingRequests: readInt(env.WAR_CONTROLLER_MAX_PENDING_REQUESTS, 128, 1, 5000, 'WAR_CONTROLLER_MAX_PENDING_REQUESTS'),

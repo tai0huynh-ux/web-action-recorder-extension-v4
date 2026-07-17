@@ -10,7 +10,7 @@ const MAX_INPUT_DEPTH = 8;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -44,6 +44,60 @@ export class ControllerApplicationService extends EventEmitter {
   async getSettings() { return this.result(await this.settingsStore.get()); }
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
+  listContainers() { return this.result(this.core.containers.listContainers()); }
+  async addContainer(payload) {
+    const deviceId = payload.deviceId || `managed-${crypto.randomUUID()}`;
+    const provisioning = await this.core.pairing.provisionManagedAgent({
+      device: managedDeviceDescriptor({ deviceId, displayName: payload.name }),
+      displayName: payload.name,
+    });
+    const container = await this.core.containers.createContainer({ ...payload, deviceId });
+    const operation = await this.safeContainerOperation('create', { ...container, provisioning });
+    const next = operation.ok ? await this.core.containers.updateStatus(container.id, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime }) : await this.core.containers.updateStatus(container.id, 'failed', { lastError: operation.error });
+    if (!operation.ok) await this.core.pairing.revoke(deviceId).catch(() => {});
+    this.invalidate('containers', { containerId: container.id });
+    this.invalidate('pairings', { deviceId });
+    this.invalidate('devices', { deviceId });
+    return this.result({ container: next, operation });
+  }
+  async startContainer({ containerId }) { return this.containerLifecycle(containerId, 'start', 'running', 'running'); }
+  async stopContainer({ containerId }) { return this.containerLifecycle(containerId, 'stop', 'stopped', 'stopped'); }
+  async restartContainer({ containerId }) { return this.containerLifecycle(containerId, 'restart', 'running', 'running'); }
+  async refreshContainer({ containerId }) {
+    const container = this.core.containers.getContainer(containerId);
+    const operation = await this.safeContainerOperation('status', container);
+    const next = operation.ok ? await this.core.containers.updateStatus(containerId, operation.status || container.status, { resourceUsage: operation.resourceUsage, runtime: operation.runtime }) : await this.core.containers.updateStatus(containerId, 'failed', { lastError: operation.error });
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
+  async duplicateContainer({ containerId, name }) {
+    const source = this.core.containers.getContainer(containerId);
+    const deviceId = `managed-${crypto.randomUUID()}`;
+    const provisioning = await this.core.pairing.provisionManagedAgent({
+      device: managedDeviceDescriptor({ deviceId, displayName: name || `${source.name} copy` }),
+      displayName: name || `${source.name} copy`,
+    });
+    const dockerName = `${source.runtime?.dockerName || source.id}-copy-${crypto.randomUUID().slice(0, 8)}`;
+    const container = await this.core.containers.duplicateContainer(containerId, {
+      name,
+      deviceId,
+      runtime: { ...source.runtime, dockerName },
+    });
+    const operation = await this.safeContainerOperation('create', { ...container, provisioning });
+    const next = operation.ok ? await this.core.containers.updateStatus(container.id, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime }) : await this.core.containers.updateStatus(container.id, 'failed', { lastError: operation.error });
+    if (!operation.ok) await this.core.pairing.revoke(deviceId).catch(() => {});
+    this.invalidate('containers', { containerId: container.id });
+    this.invalidate('pairings', { deviceId });
+    this.invalidate('devices', { deviceId });
+    return this.result({ container: next, operation });
+  }
+  async deleteContainer({ containerId }) {
+    const container = this.core.containers.getContainer(containerId);
+    const operation = await this.safeContainerOperation('delete', container);
+    const next = await this.core.containers.deleteContainer(containerId);
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
   listGroups() { return this.result(this.core.groups.listGroups()); }
   async createGroup(payload) { const data = await this.core.groups.createGroup(payload); this.invalidate('groups'); return this.result(data); }
   async updateGroup({ groupId, ...payload }) { const data = await this.core.groups.updateGroup(groupId, payload); this.invalidate('groups'); return this.result(data); }
@@ -119,6 +173,25 @@ export class ControllerApplicationService extends EventEmitter {
       return { delivered: true, acknowledged: false };
     } catch (error) {
       return { delivered: false, acknowledged: false, warningCode: typeof error?.code === 'string' ? error.code : 'WSS_SEND_FAILED' };
+    }
+  }
+
+  async containerLifecycle(containerId, action, status, desiredState) {
+    const progressStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
+    const container = await this.core.containers.updateStatus(containerId, progressStatus, { desiredState });
+    const operation = await this.safeContainerOperation(action, container);
+    const next = operation.ok ? await this.core.containers.updateStatus(containerId, status, { desiredState, resourceUsage: operation.resourceUsage, runtime: operation.runtime }) : await this.core.containers.updateStatus(containerId, 'failed', { desiredState, lastError: operation.error });
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
+
+  async safeContainerOperation(action, container) {
+    if (!this.containerAdapter?.[action]) return { ok: false, error: 'CONTAINER_ADAPTER_UNAVAILABLE' };
+    try {
+      const result = await this.containerAdapter[action](structuredClone(container));
+      return { ok: true, ...(result || {}) };
+    } catch (error) {
+      return { ok: false, error: sanitizeContainerError(error) };
     }
   }
 }
@@ -201,6 +274,32 @@ function sanitizeJob(job) {
   return structuredClone(safe);
 }
 
+function managedDeviceDescriptor({ deviceId, displayName }) {
+  return {
+    deviceId,
+    displayName,
+    hostName: 'managed-container',
+    platform: 'linux',
+    architecture: 'x64',
+    agentVersion: 'managed',
+    extensionVersion: '',
+    browserVersion: '',
+    protocolVersion: 'v1',
+    capabilities: {
+      workflowExecution: true,
+      semanticControl: true,
+      rawViewportInput: true,
+      rawBrowserInput: true,
+      nativeX11Input: true,
+      screenshot: true,
+      clipboardText: true,
+      synchronizedInput: false
+    },
+    labels: ['managed-container'],
+    groupIds: []
+  };
+}
+
 function codedError(code, message, details) {
   const error = new Error(message);
   error.code = code;
@@ -210,4 +309,11 @@ function codedError(code, message, details) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sanitizeContainerError(error) {
+  return String(error?.message || error || 'Container operation failed')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/(credential|token|password)=\S+/gi, '$1=[REDACTED]')
+    .slice(0, 500);
 }

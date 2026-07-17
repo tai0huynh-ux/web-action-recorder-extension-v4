@@ -23,6 +23,16 @@ const IPC_CHANNELS = Object.freeze({
   sessions: Object.freeze({
     list: 'war-controller:v1:sessions:list',
   }),
+  containers: Object.freeze({
+    list: 'war-controller:v1:containers:list',
+    add: 'war-controller:v1:containers:add',
+    start: 'war-controller:v1:containers:start',
+    stop: 'war-controller:v1:containers:stop',
+    restart: 'war-controller:v1:containers:restart',
+    refresh: 'war-controller:v1:containers:refresh',
+    duplicate: 'war-controller:v1:containers:duplicate',
+    delete: 'war-controller:v1:containers:delete',
+  }),
   groups: Object.freeze({
     list: 'war-controller:v1:groups:list',
     create: 'war-controller:v1:groups:create',
@@ -103,6 +113,16 @@ const api = deepFreeze({
   },
   sessions: {
     list: call(IPC_CHANNELS.sessions.list),
+  },
+  containers: {
+    list: call(IPC_CHANNELS.containers.list),
+    add: call(IPC_CHANNELS.containers.add),
+    start: call(IPC_CHANNELS.containers.start),
+    stop: call(IPC_CHANNELS.containers.stop),
+    restart: call(IPC_CHANNELS.containers.restart),
+    refresh: call(IPC_CHANNELS.containers.refresh),
+    duplicate: call(IPC_CHANNELS.containers.duplicate),
+    delete: call(IPC_CHANNELS.containers.delete),
   },
   groups: {
     list: call(IPC_CHANNELS.groups.list),

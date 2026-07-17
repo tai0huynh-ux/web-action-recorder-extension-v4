@@ -84,6 +84,29 @@ test('application runtime status reports the actual bound WSS port', async () =>
   assert.equal(status.port, 49152);
 });
 
+test('application manages container lifecycle through a bounded adapter', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  const added = await app.addContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'agent-one' } });
+  const containerId = added.data.container.id;
+  await app.startContainer({ containerId });
+  await app.refreshContainer({ containerId });
+  await app.restartContainer({ containerId });
+  await app.stopContainer({ containerId });
+  const duplicate = await app.duplicateContainer({ containerId, name: 'Agent Two' });
+  const deleted = await app.deleteContainer({ containerId });
+
+  assert.equal(added.data.operation.ok, true);
+  assert.equal(core.containers.getContainer(containerId).status, 'deleted');
+  assert.equal(duplicate.data.container.name, 'Agent Two');
+  assert.equal(duplicate.data.operation.ok, true);
+  assert.notEqual(duplicate.data.container.runtime.dockerName, added.data.container.runtime.dockerName);
+  assert.equal(deleted.data.operation.ok, true);
+  assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'create', 'delete']);
+});
+
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());
@@ -151,6 +174,18 @@ function fakeTransport({ failDispatch = false, failCancel = false } = {}) {
       this.cancels.push({ deviceId, generation, cancel });
       return { delivered: true, deviceId, generation };
     }
+  };
+}
+
+function fakeContainerAdapter() {
+  return {
+    calls: [],
+    async create(container) { this.calls.push({ action: 'create', id: container.id }); return { runtime: { dockerName: container.runtime.dockerName || container.id, privileged: false } }; },
+    async start(container) { this.calls.push({ action: 'start', id: container.id }); return {}; },
+    async stop(container) { this.calls.push({ action: 'stop', id: container.id }); return {}; },
+    async restart(container) { this.calls.push({ action: 'restart', id: container.id }); return {}; },
+    async status(container) { this.calls.push({ action: 'status', id: container.id }); return { status: 'running', resourceUsage: { cpuPercent: 2, memoryBytes: 1024 } }; },
+    async delete(container) { this.calls.push({ action: 'delete', id: container.id }); return {}; },
   };
 }
 

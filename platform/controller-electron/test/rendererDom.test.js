@@ -180,6 +180,20 @@ test('workspace selected machine count updates', async () => {
   assert.ok(current.textContent.includes('Đã chọn 1 máy'));
 });
 
+test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, '+ Thêm container');
+  const inputs = all(current, (node) => node.localName === 'input');
+  inputs[1].value = 'Agent One';
+  inputs[3].value = 'war-agent-one';
+  await clickButton(current, 'Tạo');
+  assert.equal(apiState.containers[0].runtime.dockerName, 'war-agent-one');
+  assert.ok(state.store.containers.some((container) => container.name === 'Agent One'));
+  assert.equal(state.store.containers[0].status, 'running');
+});
+
 test('input mode tabs switch renderer state', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -316,6 +330,7 @@ test('jobs dispatch transport warning remains visible after refresh', async () =
 function resetStore() {
   views.clearPairingSecret();
   apiState.groups = [];
+  apiState.containers = [];
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
   Object.assign(state.store, {
@@ -326,12 +341,14 @@ function resetStore() {
       activeInputMode: 'text',
       search: '',
       addContainerOpen: false,
+      containerNotice: '',
     },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },
     pairings: { pending: [], paired: [] },
     devices: [],
     sessions: [],
+    containers: [],
     groups: [],
     workflows: [],
     jobs: [],
@@ -377,6 +394,7 @@ function all(root, predicate) {
 
 const apiState = {
   groups: [],
+  containers: [],
   groupCreateResult: null,
   settingsUpdates: [],
 };
@@ -405,6 +423,27 @@ function installControllerApi() {
         },
       },
       sessions: { list: async () => ({ ok: true, data: { sessions: [] } }) },
+      containers: {
+        list: async () => ({ ok: true, data: { containers: apiState.containers } }),
+        add: async ({ name, image, runtime }) => {
+          const container = {
+            id: `container-${apiState.containers.length + 1}`,
+            name,
+            image,
+            status: 'running',
+            runtime: { dockerName: runtime?.dockerName || `war-${apiState.containers.length + 1}`, privileged: false },
+            resourceUsage: { cpuPercent: 1, memoryBytes: 1024 * 1024 },
+          };
+          apiState.containers = [...apiState.containers, container];
+          return { ok: true, data: { container, operation: { ok: true } } };
+        },
+        start: async () => ({ ok: true, data: {} }),
+        stop: async () => ({ ok: true, data: {} }),
+        restart: async () => ({ ok: true, data: {} }),
+        refresh: async () => ({ ok: true, data: {} }),
+        duplicate: async () => ({ ok: true, data: {} }),
+        delete: async () => ({ ok: true, data: {} }),
+      },
       groups: {
         list: async () => ({ ok: true, data: { groups: apiState.groups } }),
         create: async ({ name }) => {

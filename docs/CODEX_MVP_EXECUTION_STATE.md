@@ -1,22 +1,22 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 4 - Managed Container Backend
+Phase 5 - Origin Synchronization
 
 Current subphase:
-Phase 3 soak passed; managed container implementation is next
+Phase 4 managed container backend and UI passed; origin synchronization is next
 
 Last green commit:
-2080461b6a9ae471d83fa37aee73d895b1af79df
+d6074034c04847493d17dfcf6fa546798fca4c56
 
 HEAD:
-2080461b6a9ae471d83fa37aee73d895b1af79df
+d6074034c04847493d17dfcf6fa546798fca4c56
 
 origin/main:
-2080461b6a9ae471d83fa37aee73d895b1af79df
+d6074034c04847493d17dfcf6fa546798fca4c56
 
 Working tree:
-Clean after Browser Agent replay startup repair checkpoint push.
+Dirty with completed Phase 4 managed container implementation pending checkpoint commit.
 
 Completed milestones:
 - Phase 0 recovery completed with HEAD equal to origin/main and no tracked pilot artifacts.
@@ -26,6 +26,7 @@ Completed milestones:
 - Phase 2 revocation repair completed, physically verified from packaged Controller UI, and pushed.
 - Post-revocation fresh Agent credential created through Controller pairing and verified online for soak.
 - Phase 3 physical LAN soak matrix passed after Browser Agent replay startup repair.
+- Phase 4 managed container backend and Controller UI completed with SSH Docker adapter, managed Agent credential provisioning, lifecycle controls, bounded status/resource reporting, and physical LAN acceptance.
 
 Completed reliability cases:
 - Offline session marking.
@@ -41,6 +42,7 @@ Completed reliability cases:
 - Wrong TLS hostname/IP rejection.
 - Revocation enforcement from packaged Controller UI.
 - Phase 3 soak: 20 successful workflow dispatches, 5 Agent/container restarts, 3 Controller restarts, 5 offline dispatch/replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases.
+- Managed container add, Agent connect, status refresh, bounded resource usage, stop, start, restart, duplicate with distinct Docker name, and delete.
 
 Current interrupted work:
 None.
@@ -50,8 +52,6 @@ Tests last passed:
 - npm.cmd run test:controller-core
 - npm.cmd run check:controller-electron
 - npm.cmd run test:controller-electron:unit
-- npm.cmd run check:controller-wss
-- npm.cmd run test:controller-wss
 - npm.cmd run check:browser-agent
 - npm.cmd run test:browser-agent:unit
 
@@ -64,6 +64,7 @@ Physical acceptance last passed:
 - Revocation from packaged Controller UI: active Agent session closed, revoked reconnect did not become online, dispatch to revoked device was rejected with DEVICE_REVOKED, and no new job or execution event was created.
 - Post-revocation re-pair: same physical Agent came online with a fresh active paired record and revoked state cleared.
 - Phase 3 soak matrix PASS with evidence under ignored physical LAN runtime artifacts.
+- Phase 4 managed container physical gate PASS with evidence under ignored physical LAN runtime artifacts: `managed-container-phase4-1784321109823.json`.
 
 Known product bugs:
 - None known in completed Phase 2 and Phase 3 reliability cases.
@@ -72,10 +73,9 @@ Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 
 Next safe action:
-Start Phase 4 managed container backend.
+Commit and push Phase 4 managed container checkpoint, then start Phase 5 origin synchronization.
 
 MVP remaining work:
-- Managed container backend and UI.
 - Origin synchronization.
 - Grouped input MVP.
 - Action graph MVP.

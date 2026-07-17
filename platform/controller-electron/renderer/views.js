@@ -85,17 +85,84 @@ function containersPane(refresh) {
         refresh();
       }, { className: 'button chip' }),
     ]),
-    store.workspace.addContainerOpen ? addContainerPrototype() : null,
+    store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
+    store.containers.length ? managedContainerActions(refresh) : null,
   ]);
 }
 
-function addContainerPrototype() {
-  return el('article', { className: 'prototype-note', role: 'status' }, [
-    el('strong', { text: t('workspace.containers.addPrototypeTitle') }),
-    el('p', { text: t('workspace.containers.addPrototype') }),
-    el('code', { text: 'NOT_IMPLEMENTED_PHASE_1' }),
+function addContainerForm(refresh) {
+  const name = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.namePlaceholder') });
+  const image = el('input', { type: 'text', value: 'war-browser-agent:phase1', placeholder: t('workspace.containers.imagePlaceholder') });
+  const dockerName = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.dockerNamePlaceholder') });
+  const status = el('p', { className: 'status', text: store.workspace.containerNotice || '' });
+  return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
+    el('strong', { text: t('workspace.containers.add') }),
+    field(t('workspace.containers.name'), name),
+    field(t('workspace.containers.image'), image),
+    field(t('workspace.containers.dockerName'), dockerName),
+    el('div', { className: 'toolbar tight' }, [
+      button(t('workspace.containers.create'), async () => {
+        const payload = {
+          name: name.value.trim(),
+          image: image.value.trim() || undefined,
+          runtime: dockerName.value.trim() ? { dockerName: dockerName.value.trim() } : undefined,
+        };
+        if (!payload.name) {
+          store.workspace.containerNotice = t('workspace.containers.nameRequired');
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
+        const result = await window.warController.containers.add(payload);
+        if (result?.ok === false) {
+          store.workspace.containerNotice = `${result.code || 'ERROR'}: ${result.message || 'Request failed'}`;
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
+        store.workspace.containerNotice = t('workspace.containers.createRequested');
+        await refreshAll();
+        refresh();
+      }, { className: 'button primary' }),
+    ]),
+    status,
   ]);
+}
+
+function managedContainerActions(refresh) {
+  return el('div', { className: 'device-list', ariaLabel: t('workspace.containers.managed') },
+    store.containers.map((container) => {
+      const disabled = container.status === 'deleted' || container.status === 'deleting';
+      const status = normalizeDeviceStatus(container);
+      return el('article', { className: 'device-card managed-container' }, [
+        el('span', { className: 'device-name', text: container.name || container.id }),
+        el('span', { className: `status-pill ${status}`, text: t(`status.${status}`) }),
+        el('span', { className: 'device-meta', text: container.runtime?.dockerName || shortId(container.id) }),
+        el('span', { className: 'device-meta', text: usageSummary(container.resourceUsage) }),
+        container.lastError ? el('span', { className: 'device-meta error', text: container.lastError }) : null,
+        el('div', { className: 'toolbar tight' }, [
+          button(t('workspace.containers.start'), () => containerAction('start', container.id, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.stop'), () => containerAction('stop', container.id, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.restart'), () => containerAction('restart', container.id, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container.id, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.duplicate'), () => duplicateContainer(container, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.delete'), () => containerAction('delete', container.id, refresh), { className: 'button chip', disabled }),
+        ]),
+      ]);
+    }));
+}
+
+async function containerAction(action, containerId, refresh) {
+  const result = await window.warController.containers[action]({ containerId });
+  store.workspace.containerNotice = result?.ok === false ? `${result.code || 'ERROR'}: ${result.message || 'Request failed'}` : t('workspace.containers.actionDone');
+  await refreshAll();
+  refresh();
+}
+
+async function duplicateContainer(container, refresh) {
+  const result = await window.warController.containers.duplicate({ containerId: container.id, name: `${container.name || container.id} copy` });
+  store.workspace.containerNotice = result?.ok === false ? `${result.code || 'ERROR'}: ${result.message || 'Request failed'}` : t('workspace.containers.actionDone');
+  await refreshAll();
+  refresh();
 }
 
 function deviceList(devices, refresh) {
@@ -184,8 +251,18 @@ function inputTabs(refresh) {
 
 function visibleWorkspaceDevices() {
   const query = store.workspace.search.trim().toLowerCase();
-  if (!query) return store.devices;
-  return store.devices.filter((device) => {
+  const devices = [
+    ...store.devices,
+    ...store.containers.map((container) => ({
+      ...container,
+      displayName: container.name,
+      agentVersion: container.image,
+      groupIds: [],
+      lastSeenAt: container.updatedAt,
+    })),
+  ];
+  if (!query) return devices;
+  return devices.filter((device) => {
     const text = [device.id, device.deviceId, device.displayName, device.name, device.status].filter(Boolean).join(' ').toLowerCase();
     return text.includes(query);
   });
@@ -221,6 +298,13 @@ function groupNames(groupIds) {
   if (!groupIds.length) return '';
   const names = groupIds.map((id) => store.groups.find((group) => group.id === id)?.name || id);
   return names.join(', ');
+}
+
+function usageSummary(resourceUsage) {
+  if (!resourceUsage) return t('workspace.containers.usageUnavailable');
+  const cpu = resourceUsage.cpuPercent === null || resourceUsage.cpuPercent === undefined ? '?' : `${resourceUsage.cpuPercent}%`;
+  const mem = resourceUsage.memoryBytes ? `${Math.round(resourceUsage.memoryBytes / 1024 / 1024)} MiB` : '?';
+  return `${cpu} / ${mem}`;
 }
 
 function inputModeContent(selected) {

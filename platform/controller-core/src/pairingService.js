@@ -79,6 +79,28 @@ export class PairingService {
     });
   }
 
+  provisionManagedAgent({ device, displayName }) {
+    const decidedAt = this.now();
+    const credential = base64url(this.randomBytes(CREDENTIAL_BYTES));
+    const credentialHash = hashSecret(credential);
+    const safeDevice = sanitizeDevice({ ...device, displayName: displayName || device?.displayName });
+    return this.store.update((state) => {
+      state.pairedAgents ||= [];
+      state.pairedAgents = state.pairedAgents.filter((item) => item.deviceId !== safeDevice.deviceId);
+      state.pairedAgents.push({
+        deviceId: safeDevice.deviceId,
+        credentialHash,
+        pairedAt: decidedAt,
+        revokedAt: null
+      });
+      upsertDeviceFromPairing(state, safeDevice, decidedAt);
+      const item = state.devices.find((entry) => entry.id === safeDevice.deviceId);
+      if (item) item.status = 'offline';
+      this.audit.append(state, 'pairing.managed_provisioned', { deviceId: safeDevice.deviceId });
+      return { deviceId: safeDevice.deviceId, credential, pairedAt: decidedAt };
+    });
+  }
+
   rejectPairing(requestId, reason = 'rejected') {
     const decidedAt = this.now();
     return this.store.update((state) => {

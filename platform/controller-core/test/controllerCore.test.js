@@ -71,6 +71,28 @@ test('group registry creates, updates, deletes, mutates membership idempotently,
   assert.deepEqual(await core.groups.deleteGroup(group.id), { ok: true });
 });
 
+test('container registry creates, updates status, duplicates, and soft deletes managed containers', async () => {
+  const store = createMemoryStore();
+  const core = new ControllerCore({ store, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  await core.load();
+  const created = await core.containers.createContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'war-agent-one', privileged: true } });
+  assert.equal(created.id, 'container-1');
+  assert.equal(created.status, 'created');
+  assert.equal(created.runtime.privileged, false);
+  const running = await core.containers.updateStatus(created.id, 'running', {
+    desiredState: 'running',
+    resourceUsage: { cpuPercent: 1.5, memoryBytes: 1024, memoryLimitBytes: 2048 }
+  });
+  assert.equal(running.desiredState, 'running');
+  assert.equal(running.resourceUsage.memoryBytes, 1024);
+  const duplicate = await core.containers.duplicateContainer(created.id, { name: 'Agent Two' });
+  assert.equal(duplicate.name, 'Agent Two');
+  assert.notEqual(duplicate.id, created.id);
+  const deleted = await core.containers.deleteContainer(created.id);
+  assert.equal(deleted.status, 'deleted');
+  assert.equal(core.containers.listContainers().containers.length, 2);
+});
+
 test('job service creates dispatch plan, per-device jobs, idempotency, transitions, cancel, timeout, and target snapshot', async () => {
   const core = await fixtureCore();
   await core.devices.enrollDevice({ deviceId: 'dev-a', name: 'A' }, { rawToken: 'tok', tokenHash: 'hash' });
@@ -175,6 +197,11 @@ async function fixtureCore() {
   const core = new ControllerCore({ store, now: () => new Date().toISOString(), id: (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}` });
   await core.load();
   return core;
+}
+
+function sequenceId() {
+  let i = 0;
+  return (prefix) => `${prefix}-${++i}`;
 }
 
 function revision(overrides = {}) {

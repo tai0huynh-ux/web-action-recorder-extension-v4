@@ -9,6 +9,7 @@ import { PersistenceAdapter } from './persistenceAdapter.js';
 import { PairingService } from './pairingService.js';
 import { SessionManager } from './sessionManager.js';
 import { WorkflowRegistry } from './workflowRegistry.js';
+import { ContainerRegistry } from './containerRegistry.js';
 
 export class ControllerCore {
   constructor({ store, now = () => new Date().toISOString(), id = defaultId, authPolicy } = {}) {
@@ -19,6 +20,7 @@ export class ControllerCore {
     this.devices = new DeviceRegistry({ store: this.store, audit: this.audit, now, id });
     this.workflows = new WorkflowRegistry({ store: this.store, audit: this.audit, now });
     this.groups = new GroupRegistry({ store: this.store, audit: this.audit, now, id });
+    this.containers = new ContainerRegistry({ store: this.store, audit: this.audit, now, id });
     this.jobs = new JobService({ store: this.store, audit: this.audit, now, id });
     this.events = new ExecutionEventStore({ store: this.store, now });
     this.auth = authPolicy || new AuthPolicy({ verifyCredential: () => false, ipAllowed: () => true });
@@ -40,4 +42,5 @@ export { ControllerCoreError, ERROR_CODES } from './errors.js';
 export { PersistenceAdapter } from './persistenceAdapter.js';
 export { PairingService, hashSecret } from './pairingService.js';
 export { SessionManager } from './sessionManager.js';
+export { ContainerRegistry } from './containerRegistry.js';
 export { assertTransition, companionToUnifiedStatus, TERMINAL_STATUSES, UNIFIED_JOB_STATUSES } from './stateTransitions.js';

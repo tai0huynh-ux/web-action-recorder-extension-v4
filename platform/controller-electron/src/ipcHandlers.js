@@ -66,6 +66,14 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.settings.get, () => application.getSettings()],
     [IPC_CHANNELS.settings.update, (payload) => application.updateSettings(payload)],
     [IPC_CHANNELS.sessions.list, () => application.listSessions()],
+    [IPC_CHANNELS.containers.list, () => application.listContainers()],
+    [IPC_CHANNELS.containers.add, (payload) => application.addContainer(payload)],
+    [IPC_CHANNELS.containers.start, (payload) => application.startContainer(payload)],
+    [IPC_CHANNELS.containers.stop, (payload) => application.stopContainer(payload)],
+    [IPC_CHANNELS.containers.restart, (payload) => application.restartContainer(payload)],
+    [IPC_CHANNELS.containers.refresh, (payload) => application.refreshContainer(payload)],
+    [IPC_CHANNELS.containers.duplicate, (payload) => application.duplicateContainer(payload)],
+    [IPC_CHANNELS.containers.delete, (payload) => application.deleteContainer(payload)],
     [IPC_CHANNELS.groups.list, () => application.listGroups()],
     [IPC_CHANNELS.groups.create, (payload) => application.createGroup(payload)],
     [IPC_CHANNELS.groups.update, (payload) => application.updateGroup(payload)],
@@ -109,6 +117,7 @@ function sanitizeInvalidation(event = {}) {
   if (typeof event.domain === 'string') payload.domain = event.domain;
   if (typeof event.deviceId === 'string') payload.deviceId = event.deviceId;
   if (typeof event.jobId === 'string') payload.jobId = event.jobId;
+  if (typeof event.containerId === 'string') payload.containerId = event.containerId;
   return payload;
 }
 

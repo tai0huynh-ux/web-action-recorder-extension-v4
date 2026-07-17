@@ -17,6 +17,10 @@ export function resolveElectronRuntimeConfig({
   const port = parsePort(env.WAR_CONTROLLER_WSS_PORT);
   const certPath = env.WAR_CONTROLLER_TLS_CERT_PATH;
   const keyPath = env.WAR_CONTROLLER_TLS_KEY_PATH;
+  const containerRuntime = env.WAR_CONTAINER_RUNTIME || 'disabled';
+  const containerSshTarget = env.WAR_CONTAINER_SSH_TARGET || '';
+  const containerControllerHost = env.WAR_CONTAINER_CONTROLLER_HOST || '';
+  const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
   const wssRequested = env.WAR_CONTROLLER_WSS_ENABLED === '1' || Boolean(certPath || keyPath);
   const errors = [];
 
@@ -30,8 +34,13 @@ export function resolveElectronRuntimeConfig({
     if (certPath && !isReadable(fs, certPath)) errors.push('WSS TLS certificate is not readable');
     if (keyPath && !isReadable(fs, keyPath)) errors.push('WSS TLS private key is not readable');
   }
+  if (!['disabled', 'local-docker', 'ssh-docker'].includes(containerRuntime)) errors.push('Container runtime must be disabled, local-docker, or ssh-docker');
+  if (containerRuntime === 'ssh-docker' && !containerSshTarget) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_TARGET');
+  if (containerRuntime !== 'disabled' && !wssRequested) errors.push('Managed containers require WSS Controller configuration');
+  if (containerRuntime === 'local-docker' && containerControllerCaPath && !isReadable(fs, containerControllerCaPath)) errors.push('Container Controller CA file is not readable');
 
   const wssEnabled = wssRequested && errors.length === 0;
+  const containersEnabled = containerRuntime !== 'disabled' && errors.length === 0;
   return deepFreeze({
     dataPath,
     storePath: path.join(dataPath, 'controller-state.json'),
@@ -49,6 +58,15 @@ export function resolveElectronRuntimeConfig({
         certPath: certPath || null,
         keyPath: keyPath || null,
       },
+    },
+    containers: {
+      enabled: containersEnabled,
+      runtime: containerRuntime,
+      sshTarget: containerSshTarget || null,
+      controllerHost: containerControllerHost || null,
+      controllerCaPath: containerControllerCaPath || null,
+      timeoutMs: 120000,
+      hostLabel: containerRuntime === 'ssh-docker' ? 'ssh-docker' : 'local-docker',
     },
   });
 }
@@ -68,6 +86,13 @@ export function toPublicRuntimeConfig(config) {
       port: config.wss?.port ?? DEFAULT_PORT,
       tlsConfigured: Boolean(config.wss?.tls?.certPath && config.wss?.tls?.keyPath),
       certificate: config.wss?.tls?.certPath ? nodePath.basename(config.wss.tls.certPath) : null,
+    },
+    containers: {
+      enabled: Boolean(config.containers?.enabled),
+      runtime: config.containers?.runtime || 'disabled',
+      host: config.containers?.hostLabel || null,
+      sshConfigured: Boolean(config.containers?.sshTarget),
+      controllerCa: config.containers?.controllerCaPath ? nodePath.basename(config.containers.controllerCaPath) : null,
     },
   });
 }

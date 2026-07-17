@@ -20,6 +20,14 @@ test('reads back same deviceId', () => {
   assert.equal(second.deviceId, first.deviceId);
 });
 
+test('managed device id is used only for first-run identity provisioning', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-device-'));
+  const first = loadOrCreateDeviceIdentity(dir, () => new Date('2026-07-14T00:00:00.000Z'), 'managed-device-1');
+  const second = loadOrCreateDeviceIdentity(dir, () => new Date('2026-07-15T00:00:00.000Z'), 'managed-device-2');
+  assert.equal(first.deviceId, 'managed-device-1');
+  assert.equal(second.deviceId, 'managed-device-1');
+});
+
 test('corrupt identity file is controlled error', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-device-'));
   fs.mkdirSync(dir, { recursive: true });

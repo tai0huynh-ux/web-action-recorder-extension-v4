@@ -13,12 +13,14 @@ export const store = {
     activeInputMode: 'text',
     search: '',
     addContainerOpen: false,
+    containerNotice: '',
   },
   bootstrap: null,
   runtime: null,
   pairings: { pending: [], paired: [] },
   devices: [],
   sessions: [],
+  containers: [],
   groups: [],
   workflows: [],
   jobs: [],
@@ -36,13 +38,14 @@ export function unwrap(result) {
 }
 
 export async function refreshAll() {
-  const [bootstrap, runtime, settings, pairings, devices, sessions, groups, workflows, jobs] = await Promise.all([
+  const [bootstrap, runtime, settings, pairings, devices, sessions, containers, groups, workflows, jobs] = await Promise.all([
     api.system.getBootstrapState(),
     api.system.getRuntimeStatus(),
     api.settings.get(),
     api.pairings.list({ limit: 200 }),
     api.devices.list({ limit: 200 }),
     api.sessions.list({ limit: 200 }),
+    api.containers.list({ limit: 200 }),
     api.groups.list({ limit: 200 }),
     api.workflows.list({ limit: 200 }),
     api.jobs.list({ limit: 200 }),
@@ -54,6 +57,7 @@ export async function refreshAll() {
   store.pairings = unwrap(pairings) || { pending: [], paired: [] };
   store.devices = unwrap(devices)?.devices || [];
   store.sessions = unwrap(sessions)?.sessions || [];
+  store.containers = unwrap(containers)?.containers || [];
   store.groups = unwrap(groups)?.groups || [];
   store.workflows = unwrap(workflows)?.workflows || [];
   store.jobs = unwrap(jobs)?.jobs || [];

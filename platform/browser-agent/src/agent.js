@@ -15,7 +15,7 @@ export async function main() {
   const packageJson = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
   const config = loadConfig();
   ensureDataDirs(config);
-  const identity = loadOrCreateDeviceIdentity(config.paths.deviceDir);
+  const identity = loadOrCreateDeviceIdentity(config.paths.deviceDir, () => new Date(), config.managedDeviceId);
   const log = createLogger({ deviceId: identity.deviceId });
   log('info', 'agent', 'config_loaded', { config: serializeConfig(config) });
   if (config.noSandbox) {
