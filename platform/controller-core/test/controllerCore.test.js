@@ -108,6 +108,19 @@ test('execution event store sequences, redacts sensitive input, lists by job/dev
   await assert.rejects(() => core.events.appendEvent({ jobId: command.id, deviceId: 'dev-a', eventType: 'late' }), /terminal/i);
 });
 
+test('execution event store accepts matching terminal acknowledgement after controller-side cancel', async () => {
+  const core = await fixtureCore();
+  await core.devices.enrollDevice({ deviceId: 'dev-a' }, { rawToken: 'tok', tokenHash: 'hash' });
+  const command = await core.jobs.enqueueLegacyCommand({ type: 'get_state', deviceId: 'dev-a' });
+  await core.jobs.cancelCommand(command.id);
+  const cancelled = await core.events.appendEvent({ jobId: command.id, deviceId: 'dev-a', eventType: 'job_cancelled' });
+  assert.equal(cancelled.eventType, 'job_cancelled');
+  const duplicate = await core.events.appendEvent({ jobId: command.id, deviceId: 'dev-a', eventType: 'job_cancelled' });
+  assert.equal(duplicate.sequence, cancelled.sequence);
+  assert.equal(core.events.listByJob(command.id).length, 1);
+  await assert.rejects(() => core.events.appendEvent({ jobId: command.id, deviceId: 'dev-a', eventType: 'job_succeeded' }), /terminal/i);
+});
+
 test('dataset assignment modes preserve behavior and deterministic random injection', () => {
   const devices = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }];
   assert.deepEqual(buildDatasetAssignments({ devices, inputs: { q: 1 } }).map((item) => item.inputs), [{ q: 1 }, { q: 1 }]);

@@ -13,7 +13,11 @@ export class ExecutionEventStore {
     return this.store.update((state) => {
       const job = state.commands.find((item) => item.id === event.jobId);
       if (job && TERMINAL_STATUSES.has(normalizeStatus(job.status)) && !auditOnly) {
-        throw domainError(ERROR_CODES.JOB_TERMINAL, 'Cannot append execution event after terminal state', 409);
+        if (!isTerminalAcknowledgement(job.status, event.eventType)) {
+          throw domainError(ERROR_CODES.JOB_TERMINAL, 'Cannot append execution event after terminal state', 409);
+        }
+        const existing = state.executionEvents.find((item) => item.jobId === event.jobId && item.eventType === event.eventType);
+        if (existing) return structuredClone(existing);
       }
       const next = {
         sequence: state.executionEvents.length + 1,
@@ -43,6 +47,14 @@ export class ExecutionEventStore {
 function normalizeStatus(status) {
   if (status === 'leased') return 'dispatched';
   return status;
+}
+
+function isTerminalAcknowledgement(status, eventType) {
+  const normalized = normalizeStatus(status);
+  return (normalized === 'cancelled' && eventType === 'job_cancelled')
+    || (normalized === 'failed' && eventType === 'job_failed')
+    || (normalized === 'succeeded' && eventType === 'job_succeeded')
+    || (normalized === 'timed_out' && eventType === 'job_timed_out');
 }
 
 function redactEvent(value) {

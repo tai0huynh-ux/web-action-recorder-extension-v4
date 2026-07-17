@@ -331,6 +331,7 @@ async function runProfile(runId, profile, startIds = null, inputs = {}, options 
   const roots = startIds.map(id => stepById.get(id)).filter(Boolean);
   const executed = new Set();
   
+  const executeRun = async () => {
   // Start execution from roots
   for (const root of roots) {
       if (!activeRuns.has(runId)) break;
@@ -350,6 +351,19 @@ async function runProfile(runId, profile, startIds = null, inputs = {}, options 
   log('info', `Hoàn thành chạy: ${profile?.name || 'profile'}`, runId);
   chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: true, runId } }).catch(() => {});
   return { ok: true, runId };
+  };
+
+  if (executionOptions.authorizedControllerJob) {
+    handedOffRuns.add(runId);
+    executeRun().catch((error) => {
+      activeRuns.delete(runId);
+      handedOffRuns.delete(runId);
+      chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result: { ok: false, error: error.message } }).catch(() => {});
+    });
+    return { ok: true, runId, handedOff: true };
+  }
+
+  return executeRun();
 }
 
 async function executeGraphNode(step, stepById, runId, profile, path, inputs, executed, options = {}) {
