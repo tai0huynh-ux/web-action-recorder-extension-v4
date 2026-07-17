@@ -553,6 +553,50 @@ test('interactive renderer controls expose visible labels or explicit accessible
   }
 });
 
+test('textareas are associated with visible labels across renderer views', () => {
+  resetStore();
+  for (const view of state.views) {
+    state.store.view = view;
+    if (view === 'workflows') setGraphFixtures();
+    if (view === 'jobs') setGroupedFixtures();
+    const rendered = views.renderView(() => {});
+    const labels = all(rendered, (node) => node.localName === 'label');
+    for (const textarea of all(rendered, (node) => node.localName === 'textarea')) {
+      assert.ok(labels.some((label) => label.htmlFor === textarea.id && label.textContent.trim()), `${view} textarea is missing a label`);
+    }
+  }
+});
+
+test('new Phase 8 controls localize in Vietnamese and English without resetting state', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  state.store.groupedInput.text = 'hôm nay thật vui';
+  setGroupedFixtures();
+  await i18n.setLocale('vi');
+  let rendered = views.renderView(() => {});
+  assert.ok(rendered.textContent.includes('Nhập liệu theo nhóm'));
+
+  await i18n.setLocale('en');
+  rendered = views.renderView(() => {});
+  assert.ok(rendered.textContent.includes('Grouped input'));
+  assert.equal(state.store.groupedInput.text, 'hôm nay thật vui');
+  assert.equal(i18n.localeKeysMatch(), true);
+  await i18n.setLocale('vi');
+});
+
+test('workspace persistence updates only safe locale and layout preferences', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.groupedInput.text = 'secret runtime value';
+  state.store.graphEditor.operations = [{ type: 'addNode', node: { name: 'Transient' } }];
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Thu gọn luồng hành động');
+  const update = apiState.settingsUpdates.at(-1);
+  assert.deepEqual(Object.keys(update), ['workspace']);
+  assert.equal(JSON.stringify(update).includes('secret runtime value'), false);
+  assert.equal(JSON.stringify(update).includes('Transient'), false);
+});
+
 test('section headings and table headers are non-empty across renderer views', () => {
   resetStore();
   for (const view of state.views) {

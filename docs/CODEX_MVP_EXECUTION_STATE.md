@@ -4,16 +4,16 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8E action graph UX automated checkpoint is complete and pending commit/push.
+Phase 8F/8G/8H localization, accessibility, and state consistency automated checkpoint is complete and pending commit/push.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
 
-Last pushed green commit before Phase 8E:
-95bca6f393f840e0cea9864666d1e16b4f645b09
+Last pushed green commit before Phase 8F/8G/8H:
+f482ce1164714b95fe7bf8aa88dca0f19321bfec
 
 Latest green checkpoint:
-Phase 8E action graph UX. This document is part of the checkpoint commit.
+Phase 8F/8G/8H localization, accessibility, and state consistency. This document is part of the checkpoint commit.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
@@ -21,11 +21,9 @@ Completed Phase 8 subphases:
 - Phase 8C origin synchronization renderer integration completed for authenticated origin filtering, inventory/preview loading, conflict policy display, pull gating, duplicate pull prevention, safe imported/skipped/conflicted/error counts, repeated pull skipped reporting, stale-error clearing, and sensitive-data exclusion from normal UI.
 - Phase 8D grouped input renderer integration completed for stateful text/table/cell mode selection, backend-normalized preview, device mapping, broadcast policy, dispatch gating, duplicate dispatch prevention, validation error display, stale-error clearing, Vietnamese UTF-8 preservation, and sanitized dispatch result display.
 - Phase 8E action graph renderer integration completed for real workflow graph load, node update operation queueing, edge operation controls, authoritative preview, validation display, unsafe operation rejection before persistence, unsaved-change discard confirmation, save-as-new-revision, previous revision preservation, refreshed revision list, and new revision selection.
+- Phase 8F/8G/8H automated review completed for locale key parity, representative Vietnamese/English labels, textarea label association, safe workspace preference persistence, locale switching without state reset, and renderer interaction safety regressions.
 
 Phase 8 subphases remaining:
-- Phase 8F localization completion.
-- Phase 8G accessibility and interaction safety completion.
-- Phase 8H state, refresh, and error consistency completion.
 - Packaged GUI QA.
 - Full Phase 8 regression.
 
@@ -40,8 +38,8 @@ Tests passed for the latest checkpoint:
 - git diff --check
 
 Test count:
-- Controller Electron unit: 126 passing tests.
-- Renderer DOM targeted: 42 passing tests.
+- Controller Electron unit: 129 passing tests.
+- Renderer DOM targeted: 45 passing tests.
 - Input parser: 23 passing tests.
 - Graph template: 7 passing tests.
 - Workflow core: 10 passing tests.
@@ -62,14 +60,15 @@ Known product bugs:
 - No known origin synchronization renderer bug after the Phase 8C automated checkpoint.
 - No known grouped input renderer bug after the Phase 8D automated checkpoint.
 - No known action graph renderer bug after the Phase 8E automated checkpoint.
-- Localization/accessibility/state consistency review and packaged GUI QA still need Phase 8 completion.
+- No known localization/accessibility/state consistency bug after the Phase 8F/8G/8H automated checkpoint.
+- Packaged GUI QA and full Phase 8 regression still need completion.
 
 Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 - Browser Agent physical Docker image can be stale after local source changes; rebuild the image before physical gates that exercise new Agent code.
 
 Next exact action:
-Commit and push Phase 8E action graph UX, verify HEAD equals origin/main, then begin Phase 8F/8G/8H localization, accessibility, and state consistency review.
+Commit and push Phase 8F/8G/8H localization, accessibility, and state consistency checkpoint, verify HEAD equals origin/main, then run packaged GUI QA and full Phase 8 regression.
 
 MVP remaining work:
 - Finish Phase 8 workspace and UX integration.
