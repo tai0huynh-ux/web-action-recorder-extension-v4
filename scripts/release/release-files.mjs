@@ -2,6 +2,7 @@ export const controllerFiles = [
   'package.json',
   'companion/store.js',
   'platform/controller-electron/src/appProtocol.js',
+  'platform/controller-electron/src/containerAdapter.js',
   'platform/controller-electron/src/controllerApplication.js',
   'platform/controller-electron/src/electronRuntime.js',
   'platform/controller-electron/src/errorMapper.js',
@@ -27,6 +28,7 @@ export const controllerFiles = [
   'platform/controller-electron/renderer/workspaceState.js',
   'platform/controller-core/src/auditService.js',
   'platform/controller-core/src/authPolicy.js',
+  'platform/controller-core/src/containerRegistry.js',
   'platform/controller-core/src/controllerCore.js',
   'platform/controller-core/src/datasetAssignment.js',
   'platform/controller-core/src/deviceRegistry.js',
@@ -41,8 +43,11 @@ export const controllerFiles = [
   'platform/controller-core/src/workflowRegistry.js',
   'platform/controller-wss/src/serverAdapter.js',
   'platform/controller-wss/src/wssServer.js',
+  'platform/input-parser/src/inputParser.js',
   'platform/protocol/src/protocolV2.js',
-  'platform/workflow-core/src/workflowMetadata.js'
+  'platform/workflow-core/src/workflowMetadata.js',
+  'src/graph.js',
+  'src/shared.js'
 ];
 
 export const extensionFiles = [

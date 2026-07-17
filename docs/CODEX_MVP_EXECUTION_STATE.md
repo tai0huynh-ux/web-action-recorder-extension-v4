@@ -4,16 +4,16 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8F/8G/8H localization, accessibility, and state consistency automated checkpoint is complete and pending commit/push.
+Phase 8 packaged GUI/release gate repair is complete and pending commit/push.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
 
-Last pushed green commit before Phase 8F/8G/8H:
-f482ce1164714b95fe7bf8aa88dca0f19321bfec
+Last pushed green commit before packaged repair:
+f123523630e9eaf35a832fee1b149ac7f4184736
 
 Latest green checkpoint:
-Phase 8F/8G/8H localization, accessibility, and state consistency. This document is part of the checkpoint commit.
+Phase 8 packaged Controller release gate. This document is part of the checkpoint commit.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
@@ -22,9 +22,9 @@ Completed Phase 8 subphases:
 - Phase 8D grouped input renderer integration completed for stateful text/table/cell mode selection, backend-normalized preview, device mapping, broadcast policy, dispatch gating, duplicate dispatch prevention, validation error display, stale-error clearing, Vietnamese UTF-8 preservation, and sanitized dispatch result display.
 - Phase 8E action graph renderer integration completed for real workflow graph load, node update operation queueing, edge operation controls, authoritative preview, validation display, unsafe operation rejection before persistence, unsaved-change discard confirmation, save-as-new-revision, previous revision preservation, refreshed revision list, and new revision selection.
 - Phase 8F/8G/8H automated review completed for locale key parity, representative Vietnamese/English labels, textarea label association, safe workspace preference persistence, locale switching without state reset, and renderer interaction safety regressions.
+- Packaged Controller release gate repaired by including controller runtime dependencies in the staged app and electron-builder package.
 
 Phase 8 subphases remaining:
-- Packaged GUI QA.
 - Full Phase 8 regression.
 
 Tests passed for the latest checkpoint:
@@ -35,6 +35,10 @@ Tests passed for the latest checkpoint:
 - node --test test\graph-template.test.js
 - npm.cmd run test:platform:workflow-core
 - npm.cmd run test:platform:protocol
+- npm.cmd run release:bundle
+- npm.cmd run test:release:integrity
+- npm.cmd run test:controller-electron:packaged
+- npm.cmd run test:release:gate
 - git diff --check
 
 Test count:
@@ -46,7 +50,13 @@ Test count:
 - Protocol: 17 passing tests.
 
 Packaged GUI cases passed in Phase 8:
-- Not yet run. Packaged GUI QA is reserved until all Phase 8 UX subphases are implemented.
+- Packaged process and war-controller://app/ protocol.
+- Packaged window security.
+- Packaged preload and Vietnamese renderer navigation labels.
+- Packaged seven-view navigation.
+- Packaged state persistence restart-safe location.
+- Packaged WSS status.
+- Release gate packaged controller check.
 
 Artifact hygiene:
 - Physical LAN pilot runtime artifacts remain ignored and must stay untracked.
@@ -61,14 +71,14 @@ Known product bugs:
 - No known grouped input renderer bug after the Phase 8D automated checkpoint.
 - No known action graph renderer bug after the Phase 8E automated checkpoint.
 - No known localization/accessibility/state consistency bug after the Phase 8F/8G/8H automated checkpoint.
-- Packaged GUI QA and full Phase 8 regression still need completion.
+- Full Phase 8 regression still needs completion.
 
 Known infrastructure blockers:
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 - Browser Agent physical Docker image can be stale after local source changes; rebuild the image before physical gates that exercise new Agent code.
 
 Next exact action:
-Commit and push Phase 8F/8G/8H localization, accessibility, and state consistency checkpoint, verify HEAD equals origin/main, then run packaged GUI QA and full Phase 8 regression.
+Commit and push Phase 8 packaged release gate repair, verify HEAD equals origin/main, then run full Phase 8 regression.
 
 MVP remaining work:
 - Finish Phase 8 workspace and UX integration.

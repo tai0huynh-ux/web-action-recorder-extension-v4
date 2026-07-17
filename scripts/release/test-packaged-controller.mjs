@@ -55,7 +55,7 @@ async function runControllerSmoke(exe, label) {
     WAR_CONTROLLER_TLS_CERT_PATH: certs.cert,
     WAR_CONTROLLER_TLS_KEY_PATH: certs.key
   };
-  await runProcess(exe, [], 30000, env);
+  await runProcess(exe, [], packagedSmokeTimeoutMs(), env);
   const smoke = JSON.parse(await fsp.readFile(smokeOutput, 'utf8'));
   const failed = smoke.results.filter((item) => !item.pass);
   if (failed.length) throw new Error(`${label} packaged smoke failed: ${failed.map((item) => item.name).join(', ')}`);
@@ -74,7 +74,13 @@ function findInstaller() {
 }
 
 function runExe(file, env) {
-  return runProcess(file, [], 30000, env);
+  return runProcess(file, [], packagedSmokeTimeoutMs(), env);
+}
+
+function packagedSmokeTimeoutMs() {
+  const value = Number(process.env.WAR_CONTROLLER_PACKAGED_SMOKE_TIMEOUT_MS);
+  if (Number.isFinite(value) && value >= 30000 && value <= 300000) return value;
+  return 120000;
 }
 
 function runProcess(file, args = [], timeoutMs = 30000, env = process.env) {
