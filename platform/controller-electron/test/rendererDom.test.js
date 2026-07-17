@@ -281,7 +281,24 @@ test('navigation away and back does not resurrect stale validation error', async
   assert.ok(all(current, (node) => node.localName === 'input').some((input) => input.value === 'QA Group Fixed'));
 });
 
+test('pairing request and confirm notices survive renderer refresh', async () => {
+  resetStore();
+  state.store.view = 'pairing';
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'textarea').value = JSON.stringify({ deviceId: 'dev-a', displayName: 'Agent A' });
+  await clickButton(current, 'Request pairing');
+  assert.ok(current.textContent.includes('Pairing requested. Code: 123456'));
+
+  state.store.pairings.pending = [{ requestId: 'pair-a', displayName: 'Agent A', expiresAt: '2026-07-17T00:00:00.000Z' }];
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  first(current, 'input').value = '123456';
+  await clickButton(current, 'Confirm');
+  assert.ok(current.textContent.includes('Pairing confirmed'));
+  assert.ok(current.textContent.includes('test-credential'));
+});
+
 function resetStore() {
+  views.clearPairingSecret();
   apiState.groups = [];
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];

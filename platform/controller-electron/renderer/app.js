@@ -31,9 +31,14 @@ function render() {
     if (active) item.setAttribute('aria-current', 'page');
     return item;
   }));
-  main.replaceChildren(renderView(render));
+  main.replaceChildren(renderView(refresh));
   title.textContent = t('app.title');
   banner.textContent = `${t('app.banner')} - ${store.runtime?.status || 'loading'}`;
+}
+
+async function refresh() {
+  await refreshAll();
+  render();
 }
 
 function renderLanguageControl() {

@@ -10,9 +10,11 @@ import {
 } from './workspaceState.js';
 
 let oneTimeSecret = null;
+let pairingNotice = '';
 
 export function clearPairingSecret() {
   oneTimeSecret = null;
+  pairingNotice = '';
 }
 
 export function renderView(refresh) {
@@ -400,6 +402,7 @@ function pairingView(refresh) {
   const display = el('input', { type: 'text', placeholder: 'Optional display name' });
   const code = el('input', { type: 'text', placeholder: 'Pairing code' });
   const status = el('p', { className: 'status' });
+  status.textContent = pairingNotice;
   const secretBox = el('pre', { className: 'secret-box' });
   secretBox.textContent = oneTimeSecret || 'No one-time credential displayed';
   return section('Pairing', [
@@ -417,10 +420,12 @@ function pairingView(refresh) {
         try {
           const device = parseJsonInput(descriptor.value);
           const result = await window.warController.pairings.request({ device, displayName: display.value || undefined });
-          setStatus(status, result, `Pairing requested. Code: ${unwrap(result)?.code || ''}`);
+          pairingNotice = `Pairing requested. Code: ${unwrap(result)?.code || ''}`;
+          setStatus(status, result, pairingNotice);
           await refreshAll();
           refresh();
         } catch (error) {
+          pairingNotice = error.message;
           status.textContent = error.message;
         }
       }),
@@ -458,12 +463,13 @@ function pairingRow(item, codeInput, refresh, secretBox, status) {
         const result = await window.warController.pairings.confirm({ requestId: item.requestId, code: codeInput.value });
         const data = unwrap(result);
         oneTimeSecret = data?.credential || null;
+        pairingNotice = 'Pairing confirmed';
         secretBox.textContent = oneTimeSecret || 'No one-time credential returned';
-        setStatus(status, result, 'Pairing confirmed');
+        setStatus(status, result, pairingNotice);
         await refreshAll();
         refresh();
       }),
-      button('Reject', async () => { await window.warController.pairings.reject({ pairingId: item.requestId, reason: 'renderer rejection' }); await refreshAll(); refresh(); }),
+      button('Reject', async () => { await window.warController.pairings.reject({ pairingId: item.requestId, reason: 'renderer rejection' }); pairingNotice = 'Pairing rejected'; await refreshAll(); refresh(); }),
     ]),
   ]);
 }
