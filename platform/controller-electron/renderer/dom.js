@@ -14,6 +14,8 @@ export function el(tag, options = {}, children = []) {
     else if (key === 'ariaLabel') node.setAttribute('aria-label', String(value));
     else if (key === 'ariaCurrent') node.setAttribute('aria-current', String(value));
     else if (key === 'ariaSelected') node.setAttribute('aria-selected', String(value));
+    else if (key === 'ariaLive') node.setAttribute('aria-live', String(value));
+    else if (key === 'ariaDescribedBy') node.setAttribute('aria-describedby', String(value));
     else if (key === 'ariaExpanded') node.setAttribute('aria-expanded', String(value));
     else if (key === 'ariaOrientation') node.setAttribute('aria-orientation', String(value));
     else if (key === 'ariaValueMin') node.setAttribute('aria-valuemin', String(value));

@@ -67,7 +67,7 @@ export function normalizeDeviceStatus(device = {}) {
   if (device.status === 'online' || device.online === true) return 'online';
   if (device.status === 'offline' || device.online === false) return 'offline';
   if (device.status === 'connecting') return 'connecting';
-  if (['created', 'starting', 'running', 'stopping', 'stopped', 'restarting', 'deleting', 'deleted', 'failed'].includes(device.status)) return device.status;
+  if (['creating', 'pairing', 'created', 'starting', 'running', 'stopping', 'stopped', 'restarting', 'deleting', 'deleted', 'failed', 'unauthorized', 'unavailable'].includes(device.status)) return device.status;
   return 'unknown';
 }
 

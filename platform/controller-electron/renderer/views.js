@@ -95,7 +95,8 @@ function addContainerForm(refresh) {
   const name = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.namePlaceholder') });
   const image = el('input', { type: 'text', value: 'war-browser-agent:phase1', placeholder: t('workspace.containers.imagePlaceholder') });
   const dockerName = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.dockerNamePlaceholder') });
-  const status = el('p', { className: 'status', text: store.workspace.containerNotice || '' });
+  const status = el('p', { className: 'status', text: store.workspace.containerNotice || '', ariaLive: 'polite' });
+  const createDisabled = store.workspace.addContainerPending === true;
   return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
     el('strong', { text: t('workspace.containers.add') }),
     field(t('workspace.containers.name'), name),
@@ -103,6 +104,7 @@ function addContainerForm(refresh) {
     field(t('workspace.containers.dockerName'), dockerName),
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.create'), async () => {
+        if (store.workspace.addContainerPending) return;
         const payload = {
           name: name.value.trim(),
           image: image.value.trim() || undefined,
@@ -113,16 +115,25 @@ function addContainerForm(refresh) {
           status.textContent = store.workspace.containerNotice;
           return;
         }
-        const result = await window.warController.containers.add(payload);
-        if (result?.ok === false) {
-          store.workspace.containerNotice = `${result.code || 'ERROR'}: ${result.message || 'Request failed'}`;
-          status.textContent = store.workspace.containerNotice;
-          return;
-        }
-        store.workspace.containerNotice = t('workspace.containers.createRequested');
-        await refreshAll();
+        store.workspace.addContainerPending = true;
+        store.workspace.containerNotice = t('workspace.containers.creating');
         refresh();
-      }, { className: 'button primary' }),
+        try {
+          const result = await window.warController.containers.add(payload);
+          if (result?.ok === false) {
+            store.workspace.containerNotice = safeError(result);
+            status.textContent = store.workspace.containerNotice;
+            return;
+          }
+          store.workspace.containerNotice = t('workspace.containers.createRequested');
+          await refreshAll();
+        } catch (error) {
+          store.workspace.containerNotice = safeError({ code: 'ERROR', message: error.message });
+        } finally {
+          store.workspace.addContainerPending = false;
+          refresh();
+        }
+      }, { className: 'button primary', disabled: createDisabled }),
     ]),
     status,
   ]);
@@ -131,38 +142,87 @@ function addContainerForm(refresh) {
 function managedContainerActions(refresh) {
   return el('div', { className: 'device-list', ariaLabel: t('workspace.containers.managed') },
     store.containers.map((container) => {
-      const disabled = container.status === 'deleted' || container.status === 'deleting';
-      const status = normalizeDeviceStatus(container);
+      const pendingAction = store.workspace.containerPending?.[container.id] || '';
+      const displayStatus = pendingAction ? pendingStatus(pendingAction) : normalizeDeviceStatus(container);
+      const terminalDisabled = container.status === 'deleted' || container.status === 'deleting';
+      const busy = Boolean(pendingAction) || ['creating', 'pairing', 'starting', 'stopping', 'restarting', 'deleting'].includes(container.status);
+      const error = store.workspace.containerErrors?.[container.id] || container.lastError;
+      const agentOnline = isContainerAgentOnline(container);
       return el('article', { className: 'device-card managed-container' }, [
         el('span', { className: 'device-name', text: container.name || container.id }),
-        el('span', { className: `status-pill ${status}`, text: t(`status.${status}`) }),
+        el('span', { className: `status-pill ${displayStatus}`, text: t(`status.${displayStatus}`) }),
+        el('span', { className: agentOnline ? 'status-pill online' : 'status-pill offline', text: agentOnline ? t('workspace.containers.agentOnline') : t('workspace.containers.agentOffline') }),
         el('span', { className: 'device-meta', text: container.runtime?.dockerName || shortId(container.id) }),
         el('span', { className: 'device-meta', text: usageSummary(container.resourceUsage) }),
-        container.lastError ? el('span', { className: 'device-meta error', text: container.lastError }) : null,
+        error ? el('span', { className: 'device-meta error', text: error, ariaLive: 'polite' }) : null,
         el('div', { className: 'toolbar tight' }, [
-          button(t('workspace.containers.start'), () => containerAction('start', container.id, refresh), { className: 'button chip', disabled }),
-          button(t('workspace.containers.stop'), () => containerAction('stop', container.id, refresh), { className: 'button chip', disabled }),
-          button(t('workspace.containers.restart'), () => containerAction('restart', container.id, refresh), { className: 'button chip', disabled }),
-          button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container.id, refresh), { className: 'button chip', disabled }),
-          button(t('workspace.containers.duplicate'), () => duplicateContainer(container, refresh), { className: 'button chip', disabled }),
-          button(t('workspace.containers.delete'), () => containerAction('delete', container.id, refresh), { className: 'button chip', disabled }),
+          button(t('workspace.containers.start'), () => containerAction('start', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'running' }),
+          button(t('workspace.containers.stop'), () => containerAction('stop', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'stopped' }),
+          button(t('workspace.containers.restart'), () => containerAction('restart', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
+          button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container, refresh), { className: 'button chip', disabled: terminalDisabled || Boolean(pendingAction) }),
+          button(t('workspace.containers.duplicate'), () => duplicateContainer(container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
+          button(t('workspace.containers.delete'), () => containerAction('delete', container, refresh), { className: 'button chip danger', disabled: terminalDisabled || busy }),
         ]),
       ]);
     }));
 }
 
-async function containerAction(action, containerId, refresh) {
-  const result = await window.warController.containers[action]({ containerId });
-  store.workspace.containerNotice = result?.ok === false ? `${result.code || 'ERROR'}: ${result.message || 'Request failed'}` : t('workspace.containers.actionDone');
-  await refreshAll();
+async function containerAction(action, container, refresh) {
+  const containerId = container.id;
+  if (store.workspace.containerPending?.[containerId]) return;
+  if (action === 'delete') {
+    const label = container.name || container.id;
+    if (!window.confirm(t('workspace.containers.deleteConfirm', { name: label, id: container.id }))) return;
+  }
+  store.workspace.containerPending = { ...store.workspace.containerPending, [containerId]: action };
+  store.workspace.containerNotice = t('workspace.containers.actionPending', { action: t(`workspace.containers.${action}`), name: container.name || container.id });
   refresh();
+  try {
+    const result = await window.warController.containers[action]({ containerId });
+    if (result?.ok === false) {
+      store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(result) };
+      store.workspace.containerNotice = store.workspace.containerErrors[containerId];
+    } else {
+      const { [containerId]: _clearedError, ...remainingErrors } = store.workspace.containerErrors || {};
+      store.workspace.containerErrors = remainingErrors;
+      store.workspace.containerNotice = t('workspace.containers.actionDone');
+      await refreshAll();
+    }
+  } catch (error) {
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+    store.workspace.containerNotice = store.workspace.containerErrors[containerId];
+  } finally {
+    const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
+    store.workspace.containerPending = remainingPending;
+    refresh();
+  }
 }
 
 async function duplicateContainer(container, refresh) {
-  const result = await window.warController.containers.duplicate({ containerId: container.id, name: `${container.name || container.id} copy` });
-  store.workspace.containerNotice = result?.ok === false ? `${result.code || 'ERROR'}: ${result.message || 'Request failed'}` : t('workspace.containers.actionDone');
-  await refreshAll();
+  const containerId = container.id;
+  if (store.workspace.containerPending?.[containerId]) return;
+  store.workspace.containerPending = { ...store.workspace.containerPending, [containerId]: 'duplicate' };
+  store.workspace.containerNotice = t('workspace.containers.actionPending', { action: t('workspace.containers.duplicate'), name: container.name || container.id });
   refresh();
+  try {
+    const result = await window.warController.containers.duplicate({ containerId: container.id, name: `${container.name || container.id} copy` });
+    if (result?.ok === false) {
+      store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(result) };
+      store.workspace.containerNotice = store.workspace.containerErrors[containerId];
+    } else {
+      const { [containerId]: _clearedError, ...remainingErrors } = store.workspace.containerErrors || {};
+      store.workspace.containerErrors = remainingErrors;
+      store.workspace.containerNotice = t('workspace.containers.actionDone');
+      await refreshAll();
+    }
+  } catch (error) {
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+    store.workspace.containerNotice = store.workspace.containerErrors[containerId];
+  } finally {
+    const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
+    store.workspace.containerPending = remainingPending;
+    refresh();
+  }
 }
 
 function deviceList(devices, refresh) {
@@ -305,6 +365,24 @@ function usageSummary(resourceUsage) {
   const cpu = resourceUsage.cpuPercent === null || resourceUsage.cpuPercent === undefined ? '?' : `${resourceUsage.cpuPercent}%`;
   const mem = resourceUsage.memoryBytes ? `${Math.round(resourceUsage.memoryBytes / 1024 / 1024)} MiB` : '?';
   return `${cpu} / ${mem}`;
+}
+
+function isContainerAgentOnline(container) {
+  if (!container?.deviceId) return false;
+  return store.sessions.some((session) => session.deviceId === container.deviceId && session.status === 'online' && !session.revoked);
+}
+
+function pendingStatus(action) {
+  if (action === 'start') return 'starting';
+  if (action === 'stop') return 'stopping';
+  if (action === 'restart') return 'restarting';
+  if (action === 'delete') return 'deleting';
+  if (action === 'duplicate') return 'creating';
+  return 'creating';
+}
+
+function safeError(result) {
+  return `${result?.code || 'ERROR'}: ${result?.message || 'Request failed'}`.slice(0, 300);
 }
 
 function inputModeContent(selected) {

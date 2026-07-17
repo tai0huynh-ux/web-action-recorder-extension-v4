@@ -194,6 +194,92 @@ test('workspace add container uses the Controller containers API and refreshes m
   assert.equal(state.store.containers[0].status, 'running');
 });
 
+test('workspace add container prevents duplicate create requests', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containerAddDelay = true;
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, '+ Thêm container');
+  const inputs = all(current, (node) => node.localName === 'input');
+  inputs[1].value = 'Agent One';
+  const create = findButton(current, 'Tạo');
+  const firstClick = create.click();
+  await create.click();
+  await firstClick;
+  assert.equal(apiState.containerCalls.add, 1);
+  assert.equal(apiState.containers.filter((container) => container.name === 'Agent One').length, 1);
+});
+
+test('managed container pending lifecycle disables conflicting actions', () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.containers = [containerFixture({ id: 'container-1', name: 'Agent One', status: 'stopped' })];
+  state.store.workspace.containerPending = { 'container-1': 'start' };
+  let rendered = views.renderView(() => {});
+  assert.equal(findButton(rendered, 'Start').disabled, true);
+
+  state.store.workspace.containerPending = { 'container-1': 'stop' };
+  rendered = views.renderView(() => {});
+  assert.equal(findButton(rendered, 'Stop').disabled, true);
+
+  state.store.workspace.containerPending = { 'container-1': 'restart' };
+  rendered = views.renderView(() => {});
+  assert.equal(findButton(rendered, 'Restart').disabled, true);
+});
+
+test('managed container delete requires exact confirmation', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.containers = [containerFixture({ id: 'container-1', name: 'Agent One' })];
+  let confirmText = '';
+  window.confirm = (message) => { confirmText = message; return false; };
+  const rendered = views.renderView(() => {});
+  await clickButton(rendered, 'Xóa');
+  assert.equal(apiState.containerCalls.delete || 0, 0);
+  assert.ok(confirmText.includes('Agent One'));
+  assert.ok(confirmText.includes('container-1'));
+});
+
+test('managed container failed action preserves safe error and success clears it', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One', status: 'stopped' })];
+  state.store.containers = apiState.containers;
+  apiState.containerResults.start = { ok: false, code: 'CONTAINER_ADAPTER_UNAVAILABLE', message: 'Adapter unavailable' };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Start');
+  assert.equal(state.store.workspace.containerErrors['container-1'], 'CONTAINER_ADAPTER_UNAVAILABLE: Adapter unavailable');
+  assert.ok(current.textContent.includes('CONTAINER_ADAPTER_UNAVAILABLE'));
+
+  apiState.containerResults.start = null;
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One', status: 'stopped' })];
+  state.store.containers = apiState.containers;
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Start');
+  assert.equal(state.store.workspace.containerErrors['container-1'], undefined);
+});
+
+test('managed container resource unavailable and authenticated online states render safely', () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.containers = [containerFixture({
+    id: 'container-1',
+    name: 'Agent One',
+    deviceId: 'managed-device-1',
+    status: 'running',
+    resourceUsage: null,
+    runtime: { dockerName: 'war-agent-one', credentialPath: 'C:\\secret\\credential.json' },
+  })];
+  let rendered = views.renderView(() => {});
+  assert.ok(rendered.textContent.includes('Chưa có số liệu tài nguyên'));
+  assert.ok(rendered.textContent.includes('Agent chưa xác thực online'));
+  assert.equal(rendered.textContent.includes('credential.json'), false);
+
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  rendered = views.renderView(() => {});
+  assert.ok(rendered.textContent.includes('Agent đã xác thực online'));
+});
+
 test('input mode tabs switch renderer state', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -331,6 +417,9 @@ function resetStore() {
   views.clearPairingSecret();
   apiState.groups = [];
   apiState.containers = [];
+  apiState.containerCalls = {};
+  apiState.containerResults = {};
+  apiState.containerAddDelay = false;
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
   Object.assign(state.store, {
@@ -342,6 +431,9 @@ function resetStore() {
       search: '',
       addContainerOpen: false,
       containerNotice: '',
+      addContainerPending: false,
+      containerPending: {},
+      containerErrors: {},
     },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },
@@ -366,9 +458,13 @@ function resetStore() {
 }
 
 async function clickButton(root, label) {
-  const button = all(root, (node) => node.localName === 'button' && node.textContent === label)[0];
+  const button = findButton(root, label);
   assert.ok(button, `Missing button ${label}`);
   await button.click();
+}
+
+function findButton(root, label) {
+  return all(root, (node) => node.localName === 'button' && node.textContent === label)[0];
 }
 
 function accessibleName(node) {
@@ -399,6 +495,9 @@ function all(root, predicate) {
 const apiState = {
   groups: [],
   containers: [],
+  containerCalls: {},
+  containerResults: {},
+  containerAddDelay: false,
   groupCreateResult: null,
   settingsUpdates: [],
 };
@@ -430,23 +529,32 @@ function installControllerApi() {
       containers: {
         list: async () => ({ ok: true, data: { containers: apiState.containers } }),
         add: async ({ name, image, runtime }) => {
+          apiState.containerCalls.add = (apiState.containerCalls.add || 0) + 1;
+          if (apiState.containerAddDelay) await Promise.resolve();
           const container = {
             id: `container-${apiState.containers.length + 1}`,
             name,
             image,
             status: 'running',
+            deviceId: `managed-device-${apiState.containers.length + 1}`,
             runtime: { dockerName: runtime?.dockerName || `war-${apiState.containers.length + 1}`, privileged: false },
             resourceUsage: { cpuPercent: 1, memoryBytes: 1024 * 1024 },
           };
           apiState.containers = [...apiState.containers, container];
           return { ok: true, data: { container, operation: { ok: true } } };
         },
-        start: async () => ({ ok: true, data: {} }),
-        stop: async () => ({ ok: true, data: {} }),
-        restart: async () => ({ ok: true, data: {} }),
-        refresh: async () => ({ ok: true, data: {} }),
-        duplicate: async () => ({ ok: true, data: {} }),
-        delete: async () => ({ ok: true, data: {} }),
+        start: async ({ containerId }) => containerOperation('start', containerId, 'running'),
+        stop: async ({ containerId }) => containerOperation('stop', containerId, 'stopped'),
+        restart: async ({ containerId }) => containerOperation('restart', containerId, 'running'),
+        refresh: async ({ containerId }) => containerOperation('refresh', containerId, 'running'),
+        duplicate: async ({ containerId }) => {
+          apiState.containerCalls.duplicate = (apiState.containerCalls.duplicate || 0) + 1;
+          if (apiState.containerResults.duplicate) return apiState.containerResults.duplicate;
+          const source = apiState.containers.find((container) => container.id === containerId);
+          apiState.containers = [...apiState.containers, containerFixture({ id: `container-${apiState.containers.length + 1}`, name: `${source?.name || containerId} copy` })];
+          return { ok: true, data: {} };
+        },
+        delete: async ({ containerId }) => containerOperation('delete', containerId, 'deleted'),
       },
       groups: {
         list: async () => ({ ok: true, data: { groups: apiState.groups } }),
@@ -495,6 +603,28 @@ function deviceFixture(deviceId, displayName) {
     extensionVersion: '0.1',
     groupIds: [],
   };
+}
+
+function containerFixture(overrides = {}) {
+  return {
+    id: 'container-1',
+    name: 'Agent One',
+    image: 'war-browser-agent:test',
+    deviceId: 'managed-device-1',
+    status: 'running',
+    runtime: { dockerName: 'war-agent-one', privileged: false },
+    resourceUsage: { cpuPercent: 1, memoryBytes: 1024 * 1024 },
+    ...overrides,
+  };
+}
+
+async function containerOperation(action, containerId, status) {
+  apiState.containerCalls[action] = (apiState.containerCalls[action] || 0) + 1;
+  if (apiState.containerResults[action]) return apiState.containerResults[action];
+  apiState.containers = apiState.containers.map((container) => (
+    container.id === containerId ? { ...container, status, lastError: null } : container
+  ));
+  return { ok: true, data: {} };
 }
 
 function installFakeDom() {
