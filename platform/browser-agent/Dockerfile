@@ -33,6 +33,7 @@ RUN apt-get update \
       fonts-noto-color-emoji \
       libx11-6 \
       libxtst6 \
+      xclip \
       x11-utils \
       xvfb \
     && rm -rf /var/lib/apt/lists/*

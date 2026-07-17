@@ -85,6 +85,7 @@ export const browserAgentFiles = [
   'platform/browser-agent/src/screenshotController.js',
   'platform/browser-agent/src/semanticController.js',
   'platform/browser-agent/src/workflowRegistry.js',
+  'platform/browser-agent/src/clipboardVerifier.js',
   'platform/browser-agent/src/x11InputClient.js',
   'platform/diagnostics/src/redaction.js',
   'platform/protocol/src/protocolV2.js',

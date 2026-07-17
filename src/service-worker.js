@@ -104,7 +104,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 async function queueNavigationContinuation(tabId, message) {
   if (!tabId) return { ok: false, error: 'Không xác định được tab để tiếp tục' };
   const key = `war_pending_${tabId}`;
-  await chrome.storage.session.set({ [key]: { runId: message.runId, profile: message.profile, startIds: message.startIds, inputs: message.inputs || {} } });
+  await chrome.storage.session.set({ [key]: { runId: message.runId, profile: message.profile, startIds: message.startIds, inputs: message.inputs || {}, authorizedControllerJob: message.authorizedControllerJob === true } });
   return { ok: true };
 }
 
@@ -168,7 +168,7 @@ async function runProfilePayloadOnActiveTab(profile, inputs = {}, options = {}) 
   runtime.running.set(runId, { profileId: profile.id, tabId: tab.id, startedAt: Date.now(), inputs, controllerJob: options.controllerJob || null });
   await addLog({ level: 'info', message: `Run started: ${profile.name}`, runId });
   await options.onStarted?.();
-  const delivered = await sendRunProfileToTab(tab.id, { type: 'WAR_RUN_PROFILE', runId, profile, startIds: graph.roots, inputs }).catch(async (error) => {
+  const delivered = await sendRunProfileToTab(tab.id, { type: 'WAR_RUN_PROFILE', runId, profile, startIds: graph.roots, inputs, authorizedControllerJob: Boolean(options.controllerJob?.jobId) }).catch(async (error) => {
     runtime.running.delete(runId);
     await addLog({ level: 'error', message: error.message, runId });
     return { ok: false, error: error.message };
@@ -259,14 +259,16 @@ async function switchTab(message, sender) {
     profileId: message.profile?.id || previous.profileId,
     tabId: found.id,
     startedAt: previous.startedAt || Date.now(),
-    inputs: message.inputs || {}
+    inputs: message.inputs || {},
+    authorizedControllerJob: message.authorizedControllerJob === true
   });
   const delivered = await sendRunProfileToTab(found.id, {
     type: 'WAR_RUN_PROFILE',
     runId: message.runId,
     profile: message.profile,
     startIds,
-    inputs: message.inputs || {}
+    inputs: message.inputs || {},
+    authorizedControllerJob: message.authorizedControllerJob === true
   });
   if (!delivered?.ok) {
     await addLog({ level: 'error', message: delivered.error, runId: message.runId });

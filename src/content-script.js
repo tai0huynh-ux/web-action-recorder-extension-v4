@@ -289,7 +289,7 @@ async function handleMessage(message) {
     });
   }
   
-  if (message?.type === 'WAR_RUN_PROFILE') return runProfile(message.runId, message.profile, message.startIds, message.inputs || {});
+  if (message?.type === 'WAR_RUN_PROFILE') return runProfile(message.runId, message.profile, message.startIds, message.inputs || {}, { authorizedControllerJob: message.authorizedControllerJob === true });
   if (message?.type === 'WAR_STOP_PROFILE') { activeRuns.delete(message.runId); return { ok: true }; }
   
   // Legacy immediate capture (if no element clicked)
@@ -306,8 +306,12 @@ async function handleMessage(message) {
 }
 
 
-async function runProfile(runId, profile, startIds = null, inputs = {}) {
+async function runProfile(runId, profile, startIds = null, inputs = {}, options = {}) {
   activeRuns.add(runId);
+  const executionOptions = {
+    ...options,
+    authorizedControllerJob: options.authorizedControllerJob === true || String(runId || '').startsWith('controller-cmd-')
+  };
   const steps = Array.isArray(profile?.steps) ? profile.steps : [];
   const stepById = new Map(steps.map((s) => [s.id, s]));
   if (!steps.length) {
@@ -330,7 +334,7 @@ async function runProfile(runId, profile, startIds = null, inputs = {}) {
   // Start execution from roots
   for (const root of roots) {
       if (!activeRuns.has(runId)) break;
-      const result = await executeGraphNode(root, stepById, runId, profile, new Set(), inputs, executed);
+      const result = await executeGraphNode(root, stepById, runId, profile, new Set(), inputs, executed, executionOptions);
       if (result?.ok === false) {
         chrome.runtime.sendMessage({ type: 'WAR_RUN_FINISHED', runId, result }).catch(() => {});
         return result;
@@ -348,7 +352,7 @@ async function runProfile(runId, profile, startIds = null, inputs = {}) {
   return { ok: true, runId };
 }
 
-async function executeGraphNode(step, stepById, runId, profile, path, inputs, executed) {
+async function executeGraphNode(step, stepById, runId, profile, path, inputs, executed, options = {}) {
     if (!activeRuns.has(runId)) return;
     if (executed?.has(step.id)) return;
     if (path.has(step.id)) {
@@ -361,7 +365,7 @@ async function executeGraphNode(step, stepById, runId, profile, path, inputs, ex
     
     // Execute the step itself
     const executableStep = resolveStepTemplates(step, inputs);
-    const result = await executeStep(executableStep, runId, profile, inputs);
+    const result = await executeStep(executableStep, runId, profile, inputs, options);
     if (!activeRuns.has(runId)) return;
     if (!result?.ok) { activeRuns.delete(runId); return result; }
     if (result.handedOff) { handedOffRuns.add(runId); activeRuns.delete(runId); return result; }
@@ -380,7 +384,7 @@ async function executeGraphNode(step, stepById, runId, profile, path, inputs, ex
         if (Array.isArray(branchIds) && branchIds.length) {
             for (const id of branchIds) {
                 const nextStep = stepById.get(id);
-                if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+                if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
             }
         }
     } else if (step.type === 'OR') {
@@ -396,7 +400,7 @@ async function executeGraphNode(step, stepById, runId, profile, path, inputs, ex
         }
         if (matchedIdx !== -1 && step.conditions[matchedIdx].next) {
             const nextStep = stepById.get(step.conditions[matchedIdx].next);
-            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
         }
     } else if (step.type === 'AND') {
         // Evaluate all. ALL must match.
@@ -420,14 +424,14 @@ async function executeGraphNode(step, stepById, runId, profile, path, inputs, ex
             // Run them concurrently
             await Promise.all(nexts.map(id => {
                 const nextStep = stepById.get(id);
-                if (nextStep) return executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+                if (nextStep) return executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
             }));
         } else {
             // Fire Fail port
             if (step.elseSteps && step.elseSteps.length > 0) {
                  for (const id of step.elseSteps) {
                      const nextStep = stepById.get(id);
-                      if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+                      if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
                  }
             }
         }
@@ -444,19 +448,19 @@ async function executeGraphNode(step, stepById, runId, profile, path, inputs, ex
         }
         if (matchedIdx !== -1 && step.conditions[matchedIdx].next) {
             const nextStep = stepById.get(step.conditions[matchedIdx].next);
-            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
         }
     } else {
         // Standard action nodes follow "next"
         if (step.next) {
             const nextStep = stepById.get(step.next);
-            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed);
+            if (nextStep) await executeGraphNode(nextStep, stepById, runId, profile, nextPath, inputs, executed, options);
         }
     }
 }
 
 
-async function executeStep(step, runId, profile, inputs) {
+async function executeStep(step, runId, profile, inputs, options = {}) {
   try {
     if (step.type === 'click') {
       const el = await waitForSelector(step.selector, step.timeoutMs || 8000, runId);
@@ -484,8 +488,7 @@ async function executeStep(step, runId, profile, inputs) {
         if (typeof el.select === 'function') el.select();
         else document.getSelection()?.selectAllChildren(el);
       } else if (shortcut === 'CTRL+C') {
-        const copied = document.execCommand('copy');
-        if (!copied) throw new Error('Copy command was rejected');
+        await copySelectionForAuthorizedWorkflow(el, options);
       }
       log('info', `Da thuc hien shortcut: ${shortcut}`, runId);
       return { ok: true, shortcut };
@@ -504,6 +507,7 @@ async function executeStep(step, runId, profile, inputs) {
         runId,
         profile,
         inputs,
+        authorizedControllerJob: options.authorizedControllerJob === true,
         startIds: step.next ? [step.next] : [],
         sourceUrl: location.href,
         sourceTitle: document.title
@@ -633,6 +637,28 @@ function resolveTemplate(value, inputs = {}) {
     if (!Object.prototype.hasOwnProperty.call(inputs, key)) throw new Error(`Missing input: ${key}`);
     return String(inputs[key] ?? '');
   });
+}
+
+async function copySelectionForAuthorizedWorkflow(el, options = {}) {
+  if (!options.authorizedControllerJob) throw new Error('COPY_SHORTCUT_REJECTED');
+  const value = selectedTextForElement(el);
+  if (!value) throw new Error('COPY_SELECTION_REQUIRED');
+  try {
+    await navigator.clipboard.writeText(value);
+    return { copied: true };
+  } catch {
+    const copied = document.execCommand('copy');
+    if (!copied) throw new Error('COPY_EXECUTION_FAILED');
+    return { copied: true };
+  }
+}
+
+function selectedTextForElement(el) {
+  if (!el) return '';
+  if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+    return String(el.value || '').slice(el.selectionStart, el.selectionEnd);
+  }
+  return String(document.getSelection?.() || '');
 }
 function normalizeShortcut(keys) {
   const list = Array.isArray(keys) ? keys : String(keys || '').split('+');

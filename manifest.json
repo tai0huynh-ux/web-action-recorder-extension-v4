@@ -4,7 +4,7 @@
   "description": "Record, edit, and run simple browser workflows with conditions and profiles.",
   "version": "0.1.0",
   "minimum_chrome_version": "114",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "commands", "alarms", "nativeMessaging"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "commands", "alarms", "nativeMessaging", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "src/service-worker.js", "type": "module" },
   "side_panel": { "default_path": "ui/sidepanel.html" },
