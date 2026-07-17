@@ -98,6 +98,23 @@ test('application cancel uses controller-side state and reports transport separa
   assert.equal(transport.cancels.length, 2);
 });
 
+test('application revoke closes the active session and rejects the revoked credential', async () => {
+  const closed = [];
+  const core = await connectedCore();
+  const session = core.sessions.getPublicSession('dev-a');
+  core.sessions.attachClose('dev-a', session.generation, (reason) => closed.push(reason));
+  const app = application(core, fakeTransport());
+
+  const revoked = await app.revokeAgent({ deviceId: 'dev-a' });
+
+  assert.equal(revoked.ok, true);
+  assert.equal(core.devices.getDevice('dev-a').revoked, true);
+  assert.equal(core.devices.getDevice('dev-a').status, 'offline');
+  assert.equal(core.sessions.getPublicSession('dev-a').status, 'offline');
+  assert.equal(closed[0].code, 'revoked');
+  await assert.rejects(() => core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' }), code('AUTH_DENIED'));
+});
+
 test('offline cancel keeps controller-side cancellation and returns an offline transport warning', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());

@@ -31,7 +31,14 @@ export class ControllerApplicationService extends EventEmitter {
   async requestPairing({ device, displayName, requestId }) { const data = await this.core.pairing.requestPairing({ device, displayName, requestId }); this.invalidate('pairings', { deviceId: device?.deviceId }); return this.result(data); }
   async confirmPairing({ requestId, code }) { const data = await this.core.pairing.confirmPairing(requestId, code); this.invalidate('pairings', { deviceId: data.deviceId }); this.invalidate('devices', { deviceId: data.deviceId }); return this.result(data); }
   async rejectPairing({ pairingId, reason }) { const data = await this.core.pairing.rejectPairing(pairingId, reason); this.invalidate('pairings'); return this.result(data); }
-  async revokeAgent({ deviceId }) { const data = await this.core.pairing.revoke(deviceId); this.invalidate('pairings', { deviceId }); this.invalidate('devices', { deviceId }); return this.result(data); }
+  async revokeAgent({ deviceId }) {
+    const data = await this.core.pairing.revoke(deviceId);
+    await this.core.sessions.closeDeviceSession(deviceId, 'revoked');
+    this.invalidate('pairings', { deviceId });
+    this.invalidate('devices', { deviceId });
+    this.invalidate('sessions', { deviceId });
+    return this.result(data);
+  }
   listDevices() { return this.result(this.core.devices.listDevices()); }
   getDevice({ deviceId }) { return this.result(this.core.devices.getDevice(deviceId)); }
   async getSettings() { return this.result(await this.settingsStore.get()); }

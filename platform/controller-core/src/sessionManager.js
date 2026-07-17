@@ -185,6 +185,13 @@ export class SessionManager {
     return true;
   }
 
+  async closeDeviceSession(deviceId, code = 'revoked') {
+    const session = this.sessions.get(deviceId);
+    if (!session) return false;
+    session.close?.({ code, generation: session.generation });
+    return this.disconnect(deviceId, session.generation, 'offline');
+  }
+
   shutdown() {
     for (const session of this.sessions.values()) {
       session.close?.({ code: 'shutdown' });
