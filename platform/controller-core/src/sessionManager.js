@@ -150,6 +150,9 @@ export class SessionManager {
     if (command.deviceId !== session.deviceId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Stale session event rejected', 409);
     if (envelope.sessionId !== session.sessionId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Stale session event rejected', 409);
     const event = await this.core.events.appendEvent({ ...envelope.payload, deviceId: session.deviceId, jobId: command.id });
+    if ((envelope.type === 'agent.execution.event' || envelope.type === 'execution.event') && envelope.payload.eventType === 'job_started' && companionToUnifiedStatus(command.status) === 'dispatched') {
+      await this.core.jobs.acknowledge(session.deviceId, command.id, command.leaseId);
+    }
     if (envelope.type === 'execution.result') {
       if (companionToUnifiedStatus(command.status) === 'dispatched') await this.core.jobs.acknowledge(session.deviceId, command.id, command.leaseId);
       await this.core.jobs.finish(session.deviceId, command.id, command.leaseId, envelope.payload.result || { ok: envelope.payload.eventType === 'job_succeeded' });
@@ -178,6 +181,7 @@ export class SessionManager {
     session.status = status;
     session.lastSeenAt = this.now();
     await this.core.devices.setStatus(deviceId, status);
+    await this.core.jobs.failRunningForDevice(deviceId);
     return true;
   }
 

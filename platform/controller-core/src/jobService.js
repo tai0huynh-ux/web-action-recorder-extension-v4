@@ -112,6 +112,23 @@ export class JobService {
     });
   }
 
+  failRunningForDevice(deviceId, result = { ok: false, error: 'Agent disconnected during execution' }) {
+    return this.store.update((state) => {
+      const failed = [];
+      for (const command of state.commands) {
+        if (command.deviceId !== deviceId || companionToUnifiedStatus(command.status) !== 'running') continue;
+        this.transition(command, 'failed', { result });
+        command.result = structuredClone(result);
+        command.error = result.error || 'Agent disconnected during execution';
+        command.completedAt = this.now();
+        state.results.push({ commandId: command.id, deviceId, result: redactResult(result), completedAt: command.completedAt });
+        this.audit.append(state, 'job.terminal', { commandId: command.id, status: command.status });
+        failed.push(structuredClone(command));
+      }
+      return failed;
+    });
+  }
+
   legacyResult(commandId, result) {
     return this.store.update((state) => {
       const command = state.commands.find((item) => item.id === commandId);

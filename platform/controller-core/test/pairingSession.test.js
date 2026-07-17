@@ -173,6 +173,20 @@ test('expired undelivered dispatch lease replays with the same job id and a fres
   assert.equal(command.dispatchMetadata.deadline, command.leaseUntil);
 });
 
+test('disconnect during started execution fails job and prevents reconnect replay', async () => {
+  const core = await pairedCore();
+  const session = await core.sessions.authenticateHello(agentHello('dev-a'), { credential: 'cred-a' });
+  await core.sessions.reconcileWorkflows('dev-a', session.generation, [revision()]);
+  const first = await core.sessions.dispatch(dispatchArgs(session, { idempotencyKey: 'disconnect-running' }));
+  const jobId = first.dispatch.jobId;
+  await core.sessions.receiveExecutionEvent(executionEvent(session, jobId, 'job_started'));
+  assert.equal(core.jobs.getCommand(jobId).status, 'running');
+  await core.sessions.disconnect('dev-a', session.generation, 'offline');
+  assert.equal(core.jobs.getCommand(jobId).status, 'failed');
+  const nextSession = await core.sessions.authenticateHello(agentHello('dev-a', 'after-disconnect'), { credential: 'cred-a' });
+  assert.deepEqual(await core.sessions.replayNonTerminal('dev-a', nextSession.generation), []);
+});
+
 test('terminal result is idempotent and stale session event is rejected', async () => {
   const core = await pairedCore();
   const session = await core.sessions.authenticateHello(agentHello('dev-a'), { credential: 'cred-a' });
@@ -347,5 +361,20 @@ function executionResult(session, jobId) {
     sessionId: session.sessionId,
     jobId,
     payload: { jobId, eventType: 'job_succeeded', sentAt: '2026-07-16T00:00:01.000Z', result: { ok: true }, generation: session.generation }
+  };
+}
+
+function executionEvent(session, jobId, eventType) {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    messageId: `${eventType}-${jobId}-${session.sessionId}`,
+    type: 'agent.execution.event',
+    sentAt: '2026-07-16T00:00:01.000Z',
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: `${eventType}-${jobId}`,
+    deviceId: session.deviceId,
+    sessionId: session.sessionId,
+    jobId,
+    payload: { jobId, eventType, sentAt: '2026-07-16T00:00:01.000Z', generation: session.generation }
   };
 }
