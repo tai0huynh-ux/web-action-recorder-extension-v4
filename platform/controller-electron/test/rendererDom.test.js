@@ -27,6 +27,9 @@ class FakeElement extends FakeNode {
     this.listeners = new Map();
     this.className = '';
     this.disabled = false;
+    this.checked = false;
+    this.multiple = false;
+    this.size = 0;
     this.value = '';
     this.type = '';
     this.name = '';
@@ -35,6 +38,10 @@ class FakeElement extends FakeNode {
     this.placeholder = '';
     this._text = '';
     this.style = { setProperty() {} };
+  }
+
+  get options() {
+    return this.childNodes.filter((child) => child instanceof FakeElement && child.localName === 'option');
   }
 
   get textContent() {
@@ -363,6 +370,80 @@ test('origin synchronization failed preview leaves safe error and success clears
   assert.equal(state.store.originSync.error, '');
 });
 
+test('grouped input mode switching clears transient preview while retaining typed text', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setGroupedFixtures();
+  state.store.groupedInputPreview = groupedPlanFixture();
+  const rendered = views.renderView(() => {});
+  const selects = all(rendered, (node) => node.localName === 'select');
+  const mode = selects[3];
+  const groupedText = all(rendered, (node) => node.localName === 'textarea')[1];
+  groupedText.value = 'hôm nay thật vui';
+  await fire(groupedText, 'input');
+  mode.value = 'cell';
+  await fire(mode, 'change');
+  assert.equal(state.store.groupedInput.mode, 'cell');
+  assert.equal(state.store.groupedInput.text, 'hôm nay thật vui');
+  assert.equal(state.store.groupedInputPreview, null);
+});
+
+test('grouped input preview preserves Vietnamese text and uses normalized backend plan', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setGroupedFixtures();
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await prepareGroupedForm(current, { text: 'hôm nay thật vui', mode: 'text' });
+  await clickButton(current, 'Xem trước nhập liệu nhóm');
+  assert.equal(apiState.groupedCalls.preview, 1);
+  assert.equal(apiState.groupedRequests[0].text, 'hôm nay thật vui');
+  assert.ok(current.textContent.includes('Đã có xem trước nhập liệu nhóm'));
+  assert.ok(current.textContent.includes('hôm nay thật vui'));
+});
+
+test('grouped input dispatch is blocked before preview and duplicate dispatch is prevented', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setGroupedFixtures();
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await prepareGroupedForm(current, { text: 'hôm nay thật vui', mode: 'table' });
+  const dispatch = findButton(current, 'Dispatch nhập liệu nhóm');
+  assert.equal(dispatch.disabled, true);
+  await dispatch.click();
+  assert.equal(apiState.groupedCalls.dispatch || 0, 0);
+  assert.equal(state.store.groupedInput.error, 'Cần xem trước hợp lệ trước khi dispatch');
+
+  state.store.groupedInput.error = '';
+  state.store.groupedInputPreview = groupedPlanFixture();
+  apiState.groupedDispatchDelay = true;
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  await prepareGroupedForm(current, { text: 'hôm nay thật vui', mode: 'table' });
+  const enabledDispatch = findButton(current, 'Dispatch nhập liệu nhóm');
+  const firstClick = enabledDispatch.click();
+  await enabledDispatch.click();
+  await firstClick;
+  assert.equal(apiState.groupedCalls.dispatch, 1);
+});
+
+test('grouped input backend validation errors render and clear after correction', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setGroupedFixtures();
+  apiState.groupedPreviewResult = { ok: false, code: 'DUPLICATE_TABLE_HEADER', message: 'Duplicate table header' };
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await prepareGroupedForm(current, { text: 'name|name\nA|B', mode: 'table' });
+  await clickButton(current, 'Xem trước nhập liệu nhóm');
+  assert.equal(state.store.groupedInput.error, 'DUPLICATE_TABLE_HEADER: Duplicate table header');
+  assert.ok(current.textContent.includes('DUPLICATE_TABLE_HEADER'));
+
+  apiState.groupedPreviewResult = null;
+  current = views.renderView(() => { current = views.renderView(() => {}); });
+  await prepareGroupedForm(current, { text: 'name|query\nA|B', mode: 'table' });
+  await clickButton(current, 'Xem trước nhập liệu nhóm');
+  assert.equal(state.store.groupedInput.error, '');
+  assert.ok(current.textContent.includes('Đã có xem trước nhập liệu nhóm'));
+});
+
 test('input mode tabs switch renderer state', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -508,6 +589,11 @@ function resetStore() {
   apiState.originPullDelay = false;
   apiState.originPreviewResult = null;
   apiState.originPullResult = null;
+  apiState.groupedCalls = {};
+  apiState.groupedRequests = [];
+  apiState.groupedPreviewResult = null;
+  apiState.groupedDispatchResult = null;
+  apiState.groupedDispatchDelay = false;
   apiState.workflows = [];
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
@@ -546,6 +632,15 @@ function resetStore() {
     selectedJob: null,
     jobEvents: [],
     jobTransports: {},
+    groupedInput: {
+      mode: 'text',
+      text: '',
+      selectedDeviceIds: [],
+      broadcastSingleRow: true,
+      pending: '',
+      notice: '',
+      error: '',
+    },
     groupedInputPreview: null,
     groupedInputResult: null,
     lastJobNotice: '',
@@ -561,6 +656,12 @@ async function clickButton(root, label) {
 
 function findButton(root, label) {
   return all(root, (node) => node.localName === 'button' && node.textContent === label)[0];
+}
+
+async function fire(node, type) {
+  for (const listener of node.listeners.get(type) || []) {
+    await listener({ currentTarget: node, target: node });
+  }
 }
 
 function accessibleName(node) {
@@ -599,6 +700,11 @@ const apiState = {
   originPullDelay: false,
   originPreviewResult: null,
   originPullResult: null,
+  groupedCalls: {},
+  groupedRequests: [],
+  groupedPreviewResult: null,
+  groupedDispatchResult: null,
+  groupedDispatchDelay: false,
   workflows: [],
   groupCreateResult: null,
   settingsUpdates: [],
@@ -692,8 +798,23 @@ function installControllerApi() {
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),
         dispatch: async () => ({ ok: true, data: { job: { id: 'job-offline' }, transport: { delivered: false, warningCode: 'SESSION_OFFLINE' } } }),
-        groupedPreview: async () => ({ ok: true, data: { counts: { devices: 1, rows: 1, assignments: 1 }, assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { url: 'https://example.test' } }] } }),
-        groupedDispatch: async () => ({ ok: true, data: { counts: { devices: 1, rows: 1, assignments: 1 }, assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { url: 'https://example.test' } }], dispatched: [{ deviceId: 'dev-a', job: { id: 'job-a' } }] } }),
+        groupedPreview: async (request) => {
+          apiState.groupedCalls.preview = (apiState.groupedCalls.preview || 0) + 1;
+          apiState.groupedRequests.push(request);
+          return apiState.groupedPreviewResult || { ok: true, data: groupedPlanFixture(request) };
+        },
+        groupedDispatch: async (request) => {
+          apiState.groupedCalls.dispatch = (apiState.groupedCalls.dispatch || 0) + 1;
+          apiState.groupedRequests.push(request);
+          if (apiState.groupedDispatchDelay) await Promise.resolve();
+          return apiState.groupedDispatchResult || {
+            ok: true,
+            data: {
+              ...groupedPlanFixture(request),
+              dispatched: [{ deviceId: 'dev-a', job: { id: 'job-a' }, transport: { delivered: true } }],
+            },
+          };
+        },
         get: async () => ({ ok: true, data: {} }),
         events: async () => ({ ok: true, data: { events: [] } }),
         cancel: async () => ({ ok: true, data: {} }),
@@ -752,6 +873,35 @@ function originPreviewFixture() {
       { workflowId: 'wf-origin', revision: 1, name: 'Origin', action: 'skip', conflict: false, secretValue: 'top-secret-value' },
       { workflowId: 'wf-conflict', revision: 2, name: 'Conflict', action: 'preserveBoth', conflict: true },
     ],
+  };
+}
+
+function setGroupedFixtures() {
+  state.store.devices = [{ id: 'dev-a', name: 'Agent A', status: 'online' }];
+  state.store.workflows = [{ workflowId: 'wf-a', revision: 1, name: 'Workflow A' }];
+}
+
+async function prepareGroupedForm(root, { text, mode }) {
+  const selects = all(root, (node) => node.localName === 'select');
+  selects[1].value = 'wf-a:1';
+  selects[2].options[0].selected = true;
+  selects[3].value = mode;
+  const groupedText = all(root, (node) => node.localName === 'textarea')[1];
+  groupedText.value = text;
+  Object.assign(state.store.groupedInput, {
+    mode,
+    text,
+    selectedDeviceIds: ['dev-a'],
+    broadcastSingleRow: true,
+  });
+}
+
+function groupedPlanFixture(request = {}) {
+  const text = request.text || state.store.groupedInput.text || 'hôm nay thật vui';
+  return {
+    mode: request.mode || state.store.groupedInput.mode || 'text',
+    counts: { devices: 1, rows: 1, assignments: 1 },
+    assignments: [{ deviceId: 'dev-a', sourceRowIndex: 0, preview: { value: text } }],
   };
 }
 

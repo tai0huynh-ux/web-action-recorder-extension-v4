@@ -25,6 +25,9 @@ export function el(tag, options = {}, children = []) {
     else if (key === 'tabIndex') node.tabIndex = Number(value);
     else if (key === 'colSpan') node.colSpan = Number(value);
     else if (key === 'disabled') node.disabled = Boolean(value);
+    else if (key === 'checked') node.checked = Boolean(value);
+    else if (key === 'multiple') node.multiple = Boolean(value);
+    else if (key === 'size') node.size = Number(value);
     else if (key === 'min') node.min = String(value);
     else if (key === 'max') node.max = String(value);
     else if (key === 'step') node.step = String(value);

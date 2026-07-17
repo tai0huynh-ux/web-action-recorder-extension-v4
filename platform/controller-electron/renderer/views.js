@@ -915,15 +915,50 @@ function jobsView(refresh) {
   const workflow = select('Workflow', store.workflows.map((item) => [`${item.workflowId}:${item.revision}`, `${item.workflowId} rev ${item.revision}`]));
   const deadline = el('input', { type: 'number', min: 10, max: 86400, step: 1, value: '300' });
   const payload = el('textarea', { rows: 8, placeholder: '{"inputName":"value"}' });
-  const groupedDevices = el('select', { multiple: true, size: Math.max(2, Math.min(6, store.devices.length || 2)), ariaLabel: 'Grouped devices' }, store.devices.map((item) => el('option', { value: item.id, text: item.name || item.id })));
-  const groupedMode = el('select', { ariaLabel: 'Grouped mode' }, [
-    el('option', { value: 'text', text: 'Text' }),
-    el('option', { value: 'table', text: 'Table' }),
-    el('option', { value: 'cell', text: 'Cell' }),
+  const groupedState = store.groupedInput || {};
+  const groupedDevices = el('select', { multiple: true, size: Math.max(2, Math.min(6, store.devices.length || 2)), ariaLabel: t('groupedInput.devices') }, store.devices.map((item) => {
+    const option = el('option', { value: item.id, text: item.name || item.id });
+    option.selected = groupedState.selectedDeviceIds?.includes(item.id);
+    return option;
+  }));
+  const groupedMode = el('select', { ariaLabel: t('groupedInput.mode') }, [
+    el('option', { value: 'text', text: t('groupedInput.textMode') }),
+    el('option', { value: 'table', text: t('groupedInput.tableMode') }),
+    el('option', { value: 'cell', text: t('groupedInput.cellMode') }),
   ]);
-  const groupedInput = el('textarea', { rows: 6, placeholder: 'value-a|value-b\nvalue-c|value-d' });
+  groupedMode.value = groupedState.mode || 'text';
+  const groupedInput = el('textarea', { rows: 6, placeholder: groupedInputPlaceholder(groupedMode.value), ariaDescribedBy: 'grouped-input-help' });
+  groupedInput.value = groupedState.text || '';
+  const broadcast = el('input', { type: 'checkbox', checked: groupedState.broadcastSingleRow !== false });
+  groupedMode.addEventListener('change', () => {
+    store.groupedInput.mode = groupedMode.value;
+    store.groupedInput.error = '';
+    store.groupedInput.notice = '';
+    store.groupedInputPreview = null;
+    store.groupedInputResult = null;
+    refresh();
+  });
+  groupedInput.addEventListener('input', () => {
+    store.groupedInput.text = groupedInput.value;
+    store.groupedInput.error = '';
+    store.groupedInputPreview = null;
+    store.groupedInputResult = null;
+  });
+  groupedDevices.addEventListener('change', () => {
+    store.groupedInput.selectedDeviceIds = selectedOptionValues(groupedDevices);
+    store.groupedInputPreview = null;
+    store.groupedInputResult = null;
+  });
+  broadcast.addEventListener('change', () => {
+    store.groupedInput.broadcastSingleRow = broadcast.checked;
+    store.groupedInputPreview = null;
+    store.groupedInputResult = null;
+  });
   const status = el('p', { className: 'status' });
   status.textContent = store.lastJobNotice || '';
+  const groupedStatus = el('p', { className: groupedState.error ? 'status error' : 'status', text: groupedState.error || groupedState.notice || '', ariaLive: 'polite' });
+  const groupedPending = Boolean(groupedState.pending);
+  const canDispatchGrouped = Boolean(store.groupedInputPreview) && !groupedPending && !groupedState.error;
   return section('Jobs', [
     el('div', { className: 'form-grid' }, [
       device.label,
@@ -954,18 +989,21 @@ function jobsView(refresh) {
       }),
       button('Manual refresh', async () => { await refreshAll(); refresh(); }),
     ]),
-    el('h3', { text: 'Grouped input' }),
+    el('h3', { text: t('groupedInput.title') }),
     el('div', { className: 'form-grid' }, [
-      field('Grouped devices', groupedDevices),
-      field('Grouped mode', groupedMode),
-      field('Grouped input rows', groupedInput),
+      field(t('groupedInput.devices'), groupedDevices),
+      field(t('groupedInput.mode'), groupedMode),
+      field(t('groupedInput.rows'), groupedInput),
+      field(t('groupedInput.broadcast'), broadcast),
     ]),
+    el('p', { id: 'grouped-input-help', className: 'muted', text: t('groupedInput.guidance') }),
     el('div', { className: 'toolbar' }, [
-      button('Preview grouped input', async () => groupedInputAction('preview', { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh })),
-      button('Dispatch grouped input', async () => groupedInputAction('dispatch', { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh })),
+      button(t('groupedInput.preview'), async () => groupedInputAction('preview', { workflow, deadline, groupedDevices, groupedMode, groupedInput, broadcast, refresh }), { disabled: groupedPending }),
+      button(t('groupedInput.dispatch'), async () => groupedInputAction('dispatch', { workflow, deadline, groupedDevices, groupedMode, groupedInput, broadcast, refresh }), { disabled: !canDispatchGrouped }),
     ]),
+    groupedStatus,
     store.groupedInputPreview ? groupedInputPanel(store.groupedInputPreview) : null,
-    store.groupedInputResult ? codeBlock(store.groupedInputResult.dispatched || []) : null,
+    store.groupedInputResult ? groupedDispatchPanel(store.groupedInputResult) : null,
     status,
     table([
       { key: 'id', label: 'Job' },
@@ -983,46 +1021,98 @@ function jobsView(refresh) {
   ]);
 }
 
-async function groupedInputAction(action, { workflow, deadline, groupedDevices, groupedMode, groupedInput, status, refresh }) {
+async function groupedInputAction(action, { workflow, deadline, groupedDevices, groupedMode, groupedInput, broadcast, refresh }) {
+  if (store.groupedInput?.pending) return;
+  if (action === 'dispatch' && !store.groupedInputPreview) {
+    store.groupedInput.error = t('groupedInput.previewRequired');
+    refresh();
+    return;
+  }
+  store.groupedInput = {
+    ...store.groupedInput,
+    mode: groupedMode.value,
+    text: groupedInput.value,
+    selectedDeviceIds: selectedOptionValues(groupedDevices),
+    broadcastSingleRow: broadcast.checked,
+    pending: action,
+    notice: action === 'preview' ? t('groupedInput.previewLoading') : t('groupedInput.dispatchLoading'),
+    error: '',
+  };
+  refresh();
   try {
     const [workflowId, revisionText] = workflow.control.value.split(':');
-    const deviceIds = [...groupedDevices.options].filter((option) => option.selected).map((option) => option.value);
+    const deviceIds = store.groupedInput.selectedDeviceIds;
     const request = {
       workflowId,
       revision: Number(revisionText),
       deviceIds,
       text: groupedInput.value,
       mode: groupedMode.value,
+      broadcastSingleRow: broadcast.checked,
       deadlineSeconds: Number(deadline.value),
     };
     const result = action === 'preview'
       ? await window.warController.jobs.groupedPreview(request)
       : await window.warController.jobs.groupedDispatch(request);
+    if (result?.ok === false) {
+      store.groupedInput.error = safeError(result);
+      store.groupedInput.notice = '';
+      return;
+    }
     const data = unwrap(result);
     store.groupedInputPreview = data;
     if (action === 'dispatch') store.groupedInputResult = data;
-    setStatus(status, result, action === 'preview' ? 'Grouped input preview ready' : 'Grouped input dispatched');
+    store.groupedInput.notice = action === 'preview' ? t('groupedInput.previewReady') : t('groupedInput.dispatchDone');
+    store.groupedInput.error = '';
     if (action === 'dispatch') await refreshAll();
-    refresh();
   } catch (error) {
-    status.textContent = error.message;
+    store.groupedInput.error = safeError({ code: error.code || 'ERROR', message: error.message });
+    store.groupedInput.notice = '';
+  } finally {
+    store.groupedInput.pending = '';
+    refresh();
   }
 }
 
 function groupedInputPanel(plan) {
   return el('article', { className: 'details' }, [
-    el('h3', { text: 'Grouped input preview' }),
+    el('h3', { text: t('groupedInput.previewReady') }),
     metricGrid([
-      ['Devices', plan.counts?.devices ?? 0],
-      ['Rows', plan.counts?.rows ?? 0],
-      ['Assignments', plan.counts?.assignments ?? 0],
+      [t('groupedInput.deviceCount'), plan.counts?.devices ?? 0],
+      [t('groupedInput.rowCount'), plan.counts?.rows ?? 0],
+      [t('groupedInput.assignmentCount'), plan.counts?.assignments ?? 0],
     ]),
     table([
-      { key: 'deviceId', label: 'Device' },
-      { key: 'sourceRowIndex', label: 'Row' },
-      { key: 'preview', label: 'Inputs' },
+      { key: 'deviceId', label: t('groupedInput.device') },
+      { key: 'sourceRowIndex', label: t('groupedInput.row') },
+      { key: 'preview', label: t('groupedInput.inputs') },
     ], (plan.assignments || []).map((item) => ({ ...item, preview: JSON.stringify(item.preview) }))),
   ]);
+}
+
+function groupedDispatchPanel(result) {
+  return el('article', { className: 'details' }, [
+    el('h3', { text: t('groupedInput.dispatchDone') }),
+    table([
+      { key: 'deviceId', label: t('groupedInput.device') },
+      { key: 'jobId', label: t('groupedInput.job') },
+      { key: 'status', label: t('groupedInput.status') },
+    ], (result.dispatched || []).map((item) => ({
+      deviceId: item.deviceId,
+      jobId: item.job?.id || item.jobId || '',
+      status: item.transport?.delivered ? t('groupedInput.delivered') : (item.transport?.warningCode || t('groupedInput.persisted')),
+    }))),
+  ]);
+}
+
+function selectedOptionValues(selectNode) {
+  return [...(selectNode.options || [])].filter((option) => option.selected).map((option) => option.value);
+}
+
+function groupedInputPlaceholder(mode) {
+  if (mode === 'table') return 'url|query\nexample.test|hôm nay thật vui';
+  if (mode === 'cell') return 'hôm nay thật vui|ô 2|ô 3';
+  return 'value-a|value-b\nvalue-c|value-d';
 }
 
 function jobDetails() {
