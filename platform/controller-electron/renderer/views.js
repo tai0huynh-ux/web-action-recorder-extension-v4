@@ -589,6 +589,7 @@ function jobsView(refresh) {
   const deadline = el('input', { type: 'number', min: 10, max: 86400, step: 1, value: '300' });
   const payload = el('textarea', { rows: 8, placeholder: '{"inputName":"value"}' });
   const status = el('p', { className: 'status' });
+  status.textContent = store.lastJobNotice || '';
   return section('Jobs', [
     el('div', { className: 'form-grid' }, [
       device.label,
@@ -607,7 +608,10 @@ function jobsView(refresh) {
             deadlineSeconds: Number(deadline.value),
             inputs: parseJsonInput(payload.value),
           });
-          setStatus(status, result, transportSummary(unwrap(result)));
+          const data = unwrap(result);
+          store.lastJobNotice = transportSummary(data);
+          if (data?.job?.id && data.transport) store.jobTransports[data.job.id] = data.transport;
+          setStatus(status, result, store.lastJobNotice);
           await refreshAll();
           refresh();
         } catch (error) {
@@ -634,12 +638,13 @@ function jobsView(refresh) {
 }
 
 function jobDetails() {
+  const transport = store.selectedJob?.transport || store.jobTransports?.[store.selectedJob?.id] || {};
   return el('article', { className: 'details' }, [
     el('h3', { text: 'Job details' }),
     metricGrid([
       ['Job persisted', store.selectedJob?.id ? 'yes' : 'no'],
-      ['Transport delivered', store.selectedJob?.transport?.delivered ? 'yes' : 'see warning or state'],
-      ['Transport warning', store.selectedJob?.transport?.warningCode || 'none'],
+      ['Transport delivered', transport.delivered ? 'yes' : 'see warning or state'],
+      ['Transport warning', transport.warningCode || 'none'],
       ['Acknowledged', store.selectedJob?.acknowledgedAt || 'not yet'],
       ['Execution status', store.selectedJob?.status || 'unknown'],
       ['Cancel state', store.selectedJob?.cancelledAt || 'not cancelled'],

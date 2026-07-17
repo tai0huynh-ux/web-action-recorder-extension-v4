@@ -297,6 +297,22 @@ test('pairing request and confirm notices survive renderer refresh', async () =>
   assert.ok(current.textContent.includes('test-credential'));
 });
 
+test('jobs dispatch transport warning remains visible after refresh', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  state.store.devices = [deviceFixture('dev-a', 'Agent A')];
+  state.store.workflows = [{ workflowId: 'wf-a', revision: 1 }];
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  const selects = all(current, (node) => node.localName === 'select');
+  selects[0].value = 'dev-a';
+  selects[1].value = 'wf-a:1';
+
+  await clickButton(current, 'Dispatch');
+
+  assert.ok(current.textContent.includes('Transport warning: SESSION_OFFLINE'));
+  assert.equal(state.store.jobTransports['job-offline'].warningCode, 'SESSION_OFFLINE');
+});
+
 function resetStore() {
   views.clearPairingSecret();
   apiState.groups = [];
@@ -322,6 +338,8 @@ function resetStore() {
     selectedWorkflow: null,
     selectedJob: null,
     jobEvents: [],
+    jobTransports: {},
+    lastJobNotice: '',
     lastRefresh: null,
   });
 }
@@ -408,7 +426,7 @@ function installControllerApi() {
       },
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),
-        dispatch: async () => ({ ok: true, data: { transport: { delivered: false, warningCode: 'not delivered' } } }),
+        dispatch: async () => ({ ok: true, data: { job: { id: 'job-offline' }, transport: { delivered: false, warningCode: 'SESSION_OFFLINE' } } }),
         get: async () => ({ ok: true, data: {} }),
         events: async () => ({ ok: true, data: { events: [] } }),
         cancel: async () => ({ ok: true, data: {} }),

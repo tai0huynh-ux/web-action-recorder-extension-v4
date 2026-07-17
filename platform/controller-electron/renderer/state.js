@@ -25,6 +25,8 @@ export const store = {
   selectedWorkflow: null,
   selectedJob: null,
   jobEvents: [],
+  jobTransports: {},
+  lastJobNotice: '',
   lastRefresh: null,
 };
 
