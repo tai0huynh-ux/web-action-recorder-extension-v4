@@ -41,11 +41,14 @@ export async function maybeRunPackagedSmoke({ app, runtime }) {
     });
 
     await run('packaged preload and renderer labels', async () => {
-      const state = await js(runtime, `({
-        hasApi: Boolean(window.warController),
-        apiKeys: Object.keys(window.warController || {}).sort(),
-        text: document.body.innerText
-      })`);
+      const state = await waitForRendererState(runtime, `(() => {
+        const state = {
+          hasApi: Boolean(window.warController),
+          apiKeys: Object.keys(window.warController || {}).sort(),
+          text: document.body.innerText
+        };
+        return ${JSON.stringify(VIEW_LABELS)}.every((label) => state.text.includes(label)) ? state : null;
+      })()`);
       assert(state.hasApi, 'preload API missing');
       for (const label of VIEW_LABELS) assert(state.text.includes(label), `missing visible label: ${label}`);
       return { apiKeys: state.apiKeys, labels: VIEW_LABELS };
@@ -108,6 +111,21 @@ export async function maybeRunPackagedSmoke({ app, runtime }) {
 
 function js(runtime, source) {
   return runtime.mainWindow.webContents.executeJavaScript(source, true);
+}
+
+async function waitForRendererState(runtime, source, timeoutMs = 5000) {
+  const start = Date.now();
+  let lastState = null;
+  while (Date.now() - start < timeoutMs) {
+    lastState = await js(runtime, source);
+    if (lastState) return lastState;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return lastState || await js(runtime, `({
+    hasApi: Boolean(window.warController),
+    apiKeys: Object.keys(window.warController || {}).sort(),
+    text: document.body.innerText
+  })`);
 }
 
 async function waitForRendererUrl(webContents, timeoutMs = 5000) {
