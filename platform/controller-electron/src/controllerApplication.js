@@ -10,7 +10,7 @@ const MAX_INPUT_DEPTH = 8;
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, config = null, version = '0.1.0', now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.config = config; this.version = version; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -34,6 +34,8 @@ export class ControllerApplicationService extends EventEmitter {
   async revokeAgent({ deviceId }) { const data = await this.core.pairing.revoke(deviceId); this.invalidate('pairings', { deviceId }); this.invalidate('devices', { deviceId }); return this.result(data); }
   listDevices() { return this.result(this.core.devices.listDevices()); }
   getDevice({ deviceId }) { return this.result(this.core.devices.getDevice(deviceId)); }
+  async getSettings() { return this.result(await this.settingsStore.get()); }
+  async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   listGroups() { return this.result(this.core.groups.listGroups()); }
   async createGroup(payload) { const data = await this.core.groups.createGroup(payload); this.invalidate('groups'); return this.result(data); }

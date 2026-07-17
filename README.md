@@ -18,7 +18,11 @@ npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
 ```
 
-The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, and diagnostics. Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Container Real-World Gate: PASS in GitHub Actions run `29525195037`. Deterministic unsigned development packaging is available; production signing requires external certificate material.
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, diagnostics, and the Vietnamese-first Workspace route.
+
+Workspace Phase 1 includes three panes: real machines/containers, draft input configuration, and a read-only action graph preview. Vietnamese is the default locale, English is the fallback, language changes do not require restart, and locale/panel layout settings persist through typed Controller IPC. Prototype-only controls are explicitly deferred: Add Container backend, field picker backend, grouped input execution, and origin synchronization are `NOT_IMPLEMENTED_PHASE_1`.
+
+Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Container Real-World Gate: PASS in GitHub Actions run `29525195037`. Deterministic unsigned development packaging is available; production signing requires external certificate material.
 
 ## Container Real-World Gate
 

@@ -13,6 +13,15 @@ export function el(tag, options = {}, children = []) {
     else if (key === 'role') node.setAttribute('role', String(value));
     else if (key === 'ariaLabel') node.setAttribute('aria-label', String(value));
     else if (key === 'ariaCurrent') node.setAttribute('aria-current', String(value));
+    else if (key === 'ariaSelected') node.setAttribute('aria-selected', String(value));
+    else if (key === 'ariaExpanded') node.setAttribute('aria-expanded', String(value));
+    else if (key === 'ariaOrientation') node.setAttribute('aria-orientation', String(value));
+    else if (key === 'ariaValueMin') node.setAttribute('aria-valuemin', String(value));
+    else if (key === 'ariaValueMax') node.setAttribute('aria-valuemax', String(value));
+    else if (key === 'ariaValueNow') node.setAttribute('aria-valuenow', String(value));
+    else if (key === 'title') node.title = String(value);
+    else if (key === 'tabIndex') node.tabIndex = Number(value);
+    else if (key === 'colSpan') node.colSpan = Number(value);
     else if (key === 'disabled') node.disabled = Boolean(value);
     else if (key === 'min') node.min = String(value);
     else if (key === 'max') node.max = String(value);

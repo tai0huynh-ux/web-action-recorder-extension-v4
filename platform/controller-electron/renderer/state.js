@@ -1,9 +1,19 @@
+import { t } from './i18n.js';
+import { clampWorkspaceLayout, createWorkspaceSelection } from './workspaceState.js';
+
 const api = window.warController;
 
-export const views = Object.freeze(['overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics']);
+export const views = Object.freeze(['workspace', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics']);
 
 export const store = {
-  view: 'overview',
+  view: 'workspace',
+  settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
+  workspace: {
+    selection: createWorkspaceSelection(),
+    activeInputMode: 'text',
+    search: '',
+    addContainerOpen: false,
+  },
   bootstrap: null,
   runtime: null,
   pairings: { pending: [], paired: [] },
@@ -24,9 +34,10 @@ export function unwrap(result) {
 }
 
 export async function refreshAll() {
-  const [bootstrap, runtime, pairings, devices, sessions, groups, workflows, jobs] = await Promise.all([
+  const [bootstrap, runtime, settings, pairings, devices, sessions, groups, workflows, jobs] = await Promise.all([
     api.system.getBootstrapState(),
     api.system.getRuntimeStatus(),
+    api.settings.get(),
     api.pairings.list({ limit: 200 }),
     api.devices.list({ limit: 200 }),
     api.sessions.list({ limit: 200 }),
@@ -36,6 +47,8 @@ export async function refreshAll() {
   ]);
   store.bootstrap = unwrap(bootstrap);
   store.runtime = unwrap(runtime);
+  store.settings = unwrap(settings) || store.settings;
+  store.settings.workspace = clampWorkspaceLayout(store.settings.workspace);
   store.pairings = unwrap(pairings) || { pending: [], paired: [] };
   store.devices = unwrap(devices)?.devices || [];
   store.sessions = unwrap(sessions)?.sessions || [];
@@ -61,5 +74,5 @@ export async function refreshJob(jobId) {
 }
 
 export function navLabel(id) {
-  return id.slice(0, 1).toUpperCase() + id.slice(1);
+  return t(`navigation.${id}`);
 }

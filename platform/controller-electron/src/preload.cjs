@@ -16,6 +16,10 @@ const IPC_CHANNELS = Object.freeze({
     list: 'war-controller:v1:devices:list',
     get: 'war-controller:v1:devices:get',
   }),
+  settings: Object.freeze({
+    get: 'war-controller:v1:settings:get',
+    update: 'war-controller:v1:settings:update',
+  }),
   sessions: Object.freeze({
     list: 'war-controller:v1:sessions:list',
   }),
@@ -92,6 +96,10 @@ const api = deepFreeze({
   devices: {
     list: call(IPC_CHANNELS.devices.list),
     get: call(IPC_CHANNELS.devices.get),
+  },
+  settings: {
+    get: call(IPC_CHANNELS.settings.get),
+    update: call(IPC_CHANNELS.settings.update),
   },
   sessions: {
     list: call(IPC_CHANNELS.sessions.list),

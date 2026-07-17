@@ -34,6 +34,7 @@ class FakeElement extends FakeNode {
     this.rows = 0;
     this.placeholder = '';
     this._text = '';
+    this.style = { setProperty() {} };
   }
 
   get textContent() {
@@ -83,6 +84,7 @@ installFakeDom();
 installControllerApi();
 
 const dom = await import('../renderer/dom.js');
+const i18n = await import('../renderer/i18n.js');
 const state = await import('../renderer/state.js');
 const views = await import('../renderer/views.js');
 
@@ -129,17 +131,61 @@ test('nested text nodes remain visible and nullish children are ignored', () => 
   assert.equal(node.textContent, 'Nested0false');
 });
 
-test('all seven navigation controls receive non-empty accessible names', () => {
+test('all navigation controls receive non-empty Vietnamese names by default', () => {
   const buttons = state.views.map((view) => dom.button(state.navLabel(view), () => {}));
   assert.deepEqual(buttons.map(accessibleName), [
-    'Overview',
-    'Pairing',
-    'Devices',
-    'Groups',
-    'Workflows',
-    'Jobs',
-    'Diagnostics',
+    'Workspace',
+    'Tổng quan',
+    'Ghép nối',
+    'Thiết bị',
+    'Nhóm',
+    'Quy trình',
+    'Tác vụ',
+    'Chẩn đoán',
   ]);
+});
+
+test('locale defaults to Vietnamese, switches at runtime, persists, and falls back safely', async () => {
+  apiState.settingsUpdates = [];
+  await i18n.initLocale({ locale: 'vi' });
+  assert.equal(i18n.t('navigation.devices'), 'Thiết bị');
+  await i18n.setLocale('en');
+  assert.equal(i18n.t('navigation.devices'), 'Devices');
+  assert.deepEqual(apiState.settingsUpdates.at(-1), { locale: 'en' });
+  assert.equal(i18n.t('missing.key'), 'missing.key');
+  assert.equal(i18n.localeKeysMatch(), true);
+  await i18n.setLocale('vi');
+});
+
+test('workspace renders three panels and accessible prototype controls', () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.devices = [deviceFixture('dev-a', 'Máy 1'), deviceFixture('dev-b', 'Máy 2')];
+  const rendered = views.renderView(() => {});
+  assert.equal(all(rendered, (node) => node.className.includes('workspace-pane')).length, 3);
+  assert.ok(rendered.textContent.includes('Máy và container'));
+  assert.ok(rendered.textContent.includes('Cấu hình nhập liệu'));
+  assert.ok(rendered.textContent.includes('Luồng hành động'));
+  assert.ok(accessibleName(all(rendered, (node) => node.localName === 'button' && node.textContent.includes('Thêm container'))[0]).includes('Thêm container'));
+});
+
+test('workspace selected machine count updates', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.devices = [deviceFixture('dev-a', 'Máy 1'), deviceFixture('dev-b', 'Máy 2')];
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Máy 1Trực tuyếndev-aAgent 0.1 / Ext 0.1Chưa có dữ liệuGốc');
+  assert.equal(state.store.workspace.selection.selectedIds.has('dev-a'), true);
+  current = views.renderView(() => {});
+  assert.ok(current.textContent.includes('Đã chọn 1 máy'));
+});
+
+test('input mode tabs switch renderer state', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Bảng');
+  assert.equal(state.store.workspace.activeInputMode, 'grid');
 });
 
 test('interactive renderer controls expose visible labels or explicit accessible names', () => {
@@ -238,8 +284,16 @@ test('navigation away and back does not resurrect stale validation error', async
 function resetStore() {
   apiState.groups = [];
   apiState.groupCreateResult = null;
+  apiState.settingsUpdates = [];
   Object.assign(state.store, {
     view: 'overview',
+    settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
+    workspace: {
+      selection: { selectedIds: new Set(), anchorId: null },
+      activeInputMode: 'text',
+      search: '',
+      addContainerOpen: false,
+    },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },
     pairings: { pending: [], paired: [] },
@@ -289,6 +343,7 @@ function all(root, predicate) {
 const apiState = {
   groups: [],
   groupCreateResult: null,
+  settingsUpdates: [],
 };
 
 function installControllerApi() {
@@ -307,6 +362,13 @@ function installControllerApi() {
         revoke: async () => ({ ok: true, data: {} }),
       },
       devices: { list: async () => ({ ok: true, data: { devices: [] } }) },
+      settings: {
+        get: async () => ({ ok: true, data: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } } }),
+        update: async (payload) => {
+          apiState.settingsUpdates.push(payload);
+          return { ok: true, data: payload };
+        },
+      },
       sessions: { list: async () => ({ ok: true, data: { sessions: [] } }) },
       groups: {
         list: async () => ({ ok: true, data: { groups: apiState.groups } }),
@@ -342,9 +404,21 @@ function installControllerApi() {
   };
 }
 
+function deviceFixture(deviceId, displayName) {
+  return {
+    deviceId,
+    displayName,
+    status: 'online',
+    agentVersion: '0.1',
+    extensionVersion: '0.1',
+    groupIds: [],
+  };
+}
+
 function installFakeDom() {
   globalThis.Node = FakeNode;
   globalThis.document = {
+    documentElement: new FakeElement('html'),
     createElement: (tag) => new FakeElement(tag),
     createTextNode: (value) => new FakeText(value),
   };

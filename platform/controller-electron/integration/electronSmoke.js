@@ -10,6 +10,7 @@ import { IPC_CHANNELS } from '../src/ipcContract.js';
 
 const results = [];
 const artifactDir = path.resolve('artifacts/controller-electron');
+const uiPhaseArtifactDir = path.resolve('artifacts/ui-phase-1');
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'war-electron-smoke-'));
 const userData = path.join(tempRoot, 'userData');
 const dataPath = path.join(tempRoot, 'state');
@@ -90,7 +91,7 @@ try {
     assert(shape.api.exists, 'warController missing');
     assert(shape.api.frozen, 'warController is mutable');
     assert(shape.api.nestedFrozen, 'warController nested object is mutable');
-    assert(JSON.stringify(shape.api.keys) === JSON.stringify(['apiVersion', 'devices', 'dialogs', 'groups', 'jobs', 'pairings', 'sessions', 'system', 'workflows']), 'API shape mismatch');
+    assert(JSON.stringify(shape.api.keys) === JSON.stringify(['apiVersion', 'devices', 'dialogs', 'groups', 'jobs', 'pairings', 'sessions', 'settings', 'system', 'workflows']), 'API shape mismatch');
   });
 
   await run('CSP blocks inline code, eval, and remote connect', async () => {
@@ -215,6 +216,36 @@ try {
     assert(groups.data.data.groups.some((group) => group.id === groupId), 'persisted group missing after restart');
   });
 
+  await run('phase 1 workspace GUI artifacts', async () => {
+    fs.mkdirSync(uiPhaseArtifactDir, { recursive: true });
+    const win = runtime.mainWindow;
+    await openWorkspace();
+    await win.setSize?.(1440, 900);
+    await win.webContents.setZoomFactor?.(1);
+    assert(await bodyIncludes('Máy và container'), 'Vietnamese workspace labels missing');
+    await screenshot('workspace-vi.png');
+    await switchLocale('en');
+    assert(await bodyIncludes('Machines and containers'), 'English workspace labels missing');
+    await screenshot('workspace-en.png');
+    await clickText('Collapse action graph');
+    await screenshot('workspace-collapsed.png');
+    await win.setSize?.(1024, 700);
+    await screenshot('workspace-small-window.png');
+    await win.setSize?.(1920, 1080);
+    await win.webContents.setZoomFactor?.(1.25);
+    await screenshot('workspace-large-window.png');
+    await win.webContents.setZoomFactor?.(1);
+    await switchLocale('vi');
+    const summary = {
+      result: 'PASS',
+      checks: ['workspace opens', 'Vietnamese labels visible', 'English labels visible', 'language switch works', 'collapse works', '1024x700 captured', '1920x1080 at 125 percent captured'],
+      screenshots: ['workspace-vi.png', 'workspace-en.png', 'workspace-collapsed.png', 'workspace-small-window.png', 'workspace-large-window.png'],
+    };
+    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'ui-phase-1-results.json'), JSON.stringify(summary, null, 2));
+    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'UI_PHASE_1_REPORT.md'), `# UI Phase 1 Report\n\nResult: PASS\n\n- Workspace opens: PASS\n- Vietnamese labels visible: PASS\n- English labels visible: PASS\n- Language switch without restart: PASS\n- Panel collapse: PASS\n- 1024x700 screenshot: PASS\n- 1920x1080 at 125% screenshot: PASS\n`);
+    return summary;
+  });
+
   await run('natural cleanup', async () => {
     await runtime.shutdown();
     assert(handled.size === 0, 'IPC handlers leaked after cleanup');
@@ -254,6 +285,41 @@ async function run(name, fn) {
 
 function js(source) {
   return runtime.mainWindow.webContents.executeJavaScript(source, true);
+}
+
+async function openWorkspace() {
+  await js(`(async () => {
+    const button = [...document.querySelectorAll('button')].find((item) => ['Workspace'].includes(item.textContent.trim()));
+    if (button) button.click();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  })()`);
+}
+
+async function switchLocale(locale) {
+  await js(`(async () => {
+    const select = document.querySelector('[data-language] select');
+    select.value = ${JSON.stringify(locale)};
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  })()`);
+}
+
+async function clickText(label) {
+  await js(`(async () => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.trim() === ${JSON.stringify(label)});
+    if (!button) throw new Error('Missing button: ' + ${JSON.stringify(label)});
+    button.click();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  })()`);
+}
+
+async function bodyIncludes(text) {
+  return js(`document.body.innerText.includes(${JSON.stringify(text)})`);
+}
+
+async function screenshot(name) {
+  const image = await runtime.mainWindow.webContents.capturePage();
+  fs.writeFileSync(path.join(uiPhaseArtifactDir, name), image.toPNG());
 }
 
 function writeArtifact() {

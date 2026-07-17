@@ -52,6 +52,9 @@ Status: Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT
 
 - Electron app service, typed IPC, secure preload, sender validation, runtime composition, runtime configuration, error mapping, active WSS registry integration, WSS dispatch, controller-side cancel, replay, and idempotency were preserved.
 - Functional renderer is complete with Overview, Pairing, Devices, Groups, Workflows, Jobs, and Diagnostics.
+- WAR v5 Phase 1 adds a Vietnamese-first `Workspace` route with three panes: machines/containers, draft input configuration, and read-only action graph preview. The seven existing administration views remain accessible.
+- Locale and workspace panel settings are persisted through typed IPC settings; renderer `localStorage`, `sessionStorage`, and `indexedDB` remain forbidden.
+- Phase 1 prototype limits are explicit: `Add Container backend: NOT_IMPLEMENTED_PHASE_1`, `Field picker backend: NOT_IMPLEMENTED_PHASE_1`, `Grouped input execution: NOT_IMPLEMENTED_PHASE_1`, and `Origin synchronization: NOT_IMPLEMENTED_PHASE_1`.
 - Renderer security policy is enforced by a production scanner and strict CSP.
 - Real Electron smoke runs Electron `43.1.1` with temporary userData/state and covers window security, renderer isolation, CSP, navigation/window/permission denial, trusted IPC, untrusted IPC denial, persistence restart, pairing sanitization, dispatch rejection, and cleanup.
 - Electron dispatch transport is complete, and the later Controller-to-Extension E2E gate is now accepted on the local Edge MV3 path.

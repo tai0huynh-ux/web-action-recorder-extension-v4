@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const VIEW_LABELS = ['Overview', 'Devices', 'Pairing', 'Groups', 'Workflows', 'Jobs', 'Diagnostics'];
+const VIEW_LABELS = ['Workspace', 'Tổng quan', 'Thiết bị', 'Ghép nối', 'Nhóm', 'Quy trình', 'Tác vụ', 'Chẩn đoán'];
 
 export async function maybeRunPackagedSmoke({ app, runtime }) {
   const outputPath = process.env.WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT;

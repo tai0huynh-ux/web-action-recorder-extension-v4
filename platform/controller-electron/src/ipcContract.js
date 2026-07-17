@@ -20,6 +20,10 @@ export const IPC_CHANNELS = deepFreeze({
     list: `${CHANNEL_PREFIX}devices:list`,
     get: `${CHANNEL_PREFIX}devices:get`,
   },
+  settings: {
+    get: `${CHANNEL_PREFIX}settings:get`,
+    update: `${CHANNEL_PREFIX}settings:update`,
+  },
   sessions: {
     list: `${CHANNEL_PREFIX}sessions:list`,
   },
@@ -62,6 +66,8 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.pairings.revoke,
   IPC_CHANNELS.devices.list,
   IPC_CHANNELS.devices.get,
+  IPC_CHANNELS.settings.get,
+  IPC_CHANNELS.settings.update,
   IPC_CHANNELS.sessions.list,
   IPC_CHANNELS.groups.list,
   IPC_CHANNELS.groups.create,
@@ -103,6 +109,8 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.pairings.revoke, objectSchema({ deviceId: 'id' })],
   [IPC_CHANNELS.devices.list, LIST_PAYLOAD],
   [IPC_CHANNELS.devices.get, objectSchema({ deviceId: 'id' })],
+  [IPC_CHANNELS.settings.get, NO_PAYLOAD],
+  [IPC_CHANNELS.settings.update, objectSchema({ locale: 'optionalString', workspace: 'optionalObject' })],
   [IPC_CHANNELS.sessions.list, LIST_PAYLOAD],
   [IPC_CHANNELS.groups.list, LIST_PAYLOAD],
   [IPC_CHANNELS.groups.create, objectSchema({ name: 'id', deviceIds: 'optionalIdArray' })],

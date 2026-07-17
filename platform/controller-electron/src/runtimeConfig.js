@@ -35,6 +35,7 @@ export function resolveElectronRuntimeConfig({
   return deepFreeze({
     dataPath,
     storePath: path.join(dataPath, 'controller-state.json'),
+    settingsPath: path.join(dataPath, 'controller-settings.json'),
     devTools: env.WAR_CONTROLLER_ELECTRON_DEVTOOLS === '1',
     degraded: errors.length > 0,
     errors,

@@ -98,7 +98,7 @@ function fakeApplication() {
   const names = [
     'getBootstrapState', 'getRuntimeStatus', 'listPairings', 'requestPairing', 'confirmPairing', 'rejectPairing', 'revokeAgent',
     'listDevices', 'getDevice', 'listSessions', 'listGroups', 'createGroup', 'updateGroup', 'deleteGroup', 'addDeviceToGroup',
-    'removeDeviceFromGroup', 'listWorkflows', 'getWorkflowRevision', 'importWorkflowRevision', 'listJobs', 'getJob',
+    'removeDeviceFromGroup', 'getSettings', 'updateSettings', 'listWorkflows', 'getWorkflowRevision', 'importWorkflowRevision', 'listJobs', 'getJob',
     'listJobEvents', 'dispatchWorkflow', 'cancelJob',
   ];
   for (const name of names) {

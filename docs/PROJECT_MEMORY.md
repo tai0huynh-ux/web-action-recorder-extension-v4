@@ -4,7 +4,7 @@ Updated: 2026-07-17
 
 ## Current Milestone
 
-Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
+WAR v5 Phase 1 - Localized Three-Pane Controller Workspace.
 
 ## Confirmed Architecture Decisions
 
@@ -60,6 +60,10 @@ Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
 - Container Chromium requires a system Native Messaging host manifest for the fixed extension id used by the gate; the Dockerfile installs it under `/etc/chromium/native-messaging-hosts/`.
 - MV3 `job_started` must be emitted at the tab execution boundary before terminal result delivery can race it.
 - Browser Agent must wake Extension Native Bridge polling after native host manifest install and after the one-time Chromium restart used to pick up a newly installed manifest.
+- Controller Workspace Phase 1 is Vietnamese-first with English fallback, runtime language switching, and typed IPC settings persistence.
+- The workspace renders real Controller devices but keeps selection and draft input state renderer-only in Phase 1.
+- `Thêm container`, field picker, grouped input execution, and origin synchronization are explicit placeholders only: `NOT_IMPLEMENTED_PHASE_1`.
+- The Electron workspace must not introduce a second workflow graph schema; future graph editing should reuse existing Extension graph semantics.
 
 ## Tests And Baseline
 
@@ -86,7 +90,7 @@ Architecture contract verification:
 
 ## Next Milestone
 
-Physical two-machine LAN pilot.
+PHASE_2_GROUPED_INPUT_MAPPING.
 
 ## Open Questions
 

@@ -1,13 +1,18 @@
 import { button, el } from './dom.js';
+import { getLocale, initLocale, setLocale, t } from './i18n.js';
 import { navLabel, refreshAll, store, views } from './state.js';
 import { clearPairingSecret, renderView } from './views.js';
 
 const nav = document.querySelector('[data-nav]');
 const main = document.querySelector('[data-main]');
 const banner = document.querySelector('[data-banner]');
+const title = document.querySelector('[data-title]');
+const language = document.querySelector('[data-language]');
 
 async function boot() {
   await refreshAll();
+  await initLocale(store.settings);
+  renderLanguageControl();
   render();
   window.warController.system.onInvalidation(async () => {
     await refreshAll();
@@ -27,10 +32,29 @@ function render() {
     return item;
   }));
   main.replaceChildren(renderView(render));
-  banner.textContent = `Secure Electron Controller Shell - ${store.runtime?.status || 'loading'}`;
+  title.textContent = t('app.title');
+  banner.textContent = `${t('app.banner')} - ${store.runtime?.status || 'loading'}`;
+}
+
+function renderLanguageControl() {
+  const picker = el('select', { ariaLabel: t('app.language') }, [
+    el('option', { value: 'vi', text: t('language.vi') }),
+    el('option', { value: 'en', text: t('language.en') }),
+  ]);
+  picker.value = getLocale();
+  picker.addEventListener('change', async () => {
+    await setLocale(picker.value);
+    store.settings.locale = picker.value;
+    renderLanguageControl();
+    render();
+  });
+  language.replaceChildren(el('label', { className: 'language-picker' }, [
+    el('span', { text: t('app.language') }),
+    picker,
+  ]));
 }
 
 boot().catch((error) => {
   banner.textContent = error.message;
-  main.replaceChildren(el('p', { className: 'status error', text: 'Renderer startup failed.' }));
+  main.replaceChildren(el('p', { className: 'status error', text: t('app.startupFailed') }));
 });

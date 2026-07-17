@@ -17,6 +17,57 @@ Next milestone: Physical two-machine LAN pilot.
 
 Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate now also passes with a real Browser Agent container, real Chromium, real MV3 Extension, TLS WSS Controller dispatch, Google search/copy workflow execution, result uplink, terminal replay protection, and cancel coverage. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
 
+## WAR v5 Phase 1 - Localized Three-Pane Controller Workspace
+
+Updated: 2026-07-17
+
+Status: PASS.
+
+Baseline before changes:
+
+- HEAD: `082499395df2993dde427bc0ce15d9b03b2c8ded`.
+- Branch: `main`.
+- `origin/main`: `082499395df2993dde427bc0ce15d9b03b2c8ded`.
+- Working tree: clean.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 290/290 tests.
+- `npm.cmd run test:container-real-world`: Pass locally.
+- Container gate accepted commit: `082499395df2993dde427bc0ce15d9b03b2c8ded`.
+
+Implemented:
+
+- Electron `Workspace` route while preserving Overview, Pairing, Devices, Groups, Workflows, Jobs, and Diagnostics.
+- Vietnamese-first renderer i18n with English fallback, runtime language switch, matching locale keys, and typed IPC persistence.
+- Three-pane workspace: machines/containers, draft input configuration, and action graph preview.
+- Real `store.devices` rendering with translated status labels, renderer-only multi-selection, keyboard selection, search, filters, and select/clear controls.
+- Prototype-only `Thêm container` notice. `Add Container backend: NOT_IMPLEMENTED_PHASE_1`.
+- Draft input tabs for `Văn bản`, `Bảng`, and `Chọn ô`. `Field picker backend: NOT_IMPLEMENTED_PHASE_1`. `Grouped input execution: NOT_IMPLEMENTED_PHASE_1`.
+- Read-only action graph fixture using the existing action vocabulary and no second graph schema. `Origin synchronization: NOT_IMPLEMENTED_PHASE_1`.
+- Panel sizing/collapse settings persisted through `controller-settings.json`; no renderer storage APIs are used.
+- Mockups tracked under `docs/design/`.
+- Design spec added: `docs/design/CONTROLLER_WORKSPACE_SPEC.md`.
+
+Verification:
+
+- `npm.cmd run check:controller-electron`: Pass.
+- `npm.cmd run test:controller-electron:unit`: Pass, 88/88.
+- `npm.cmd run test:controller-electron:smoke`: Pass, including Phase 1 GUI screenshots in `artifacts/ui-phase-1/`.
+- `npm.cmd run check`: Pass.
+- `npm.cmd run test:all`: Pass, 300/300 tests.
+- `npm.cmd run test:controller-session:wss-gate`: Pass.
+- `npm.cmd run test:controller-extension:e2e`: Pass on Edge.
+- `npm.cmd run test:release:integrity`: Pass.
+- `npm.cmd run test:controller-electron:packaged`: Pass.
+- `npm.cmd run test:release:gate`: Pass when run without a concurrent packaged-controller gate.
+- `npm.cmd audit`: Pass, 0 vulnerabilities.
+- `npm.cmd ls --depth=0`: Pass.
+- `git diff --check`: Pass with LF/CRLF warnings only.
+- Unsafe DOM scan was run with the requested pattern; matches are existing Extension/Companion/test/dependency references, not new Electron renderer production code.
+
+Next phase:
+
+- `PHASE_2_GROUPED_INPUT_MAPPING`
+
 ## Container Real-World Gate
 
 Updated: 2026-07-17
@@ -101,7 +152,7 @@ Known limitations:
 
 ## Controller-to-Extension Workflow Execution Downlink and E2E Gate
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 Status: Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS.
 

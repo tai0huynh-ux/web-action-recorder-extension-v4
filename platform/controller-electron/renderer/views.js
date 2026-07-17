@@ -1,5 +1,13 @@
 import { button, codeBlock, el, field, parseJsonInput, section, setStatus, stableJson, table } from './dom.js';
 import { refreshAll, refreshJob, refreshWorkflow, store, unwrap } from './state.js';
+import { t } from './i18n.js';
+import {
+  WORKSPACE_SAMPLE_NODES,
+  clampWorkspaceLayout,
+  normalizeDeviceStatus,
+  reduceDeviceSelection,
+  selectedDevices,
+} from './workspaceState.js';
 
 let oneTimeSecret = null;
 
@@ -9,6 +17,7 @@ export function clearPairingSecret() {
 
 export function renderView(refresh) {
   if (store.view !== 'pairing') clearPairingSecret();
+  if (store.view === 'workspace') return workspaceView(refresh);
   if (store.view === 'overview') return overviewView(refresh);
   if (store.view === 'pairing') return pairingView(refresh);
   if (store.view === 'devices') return devicesView();
@@ -16,6 +25,349 @@ export function renderView(refresh) {
   if (store.view === 'workflows') return workflowsView(refresh);
   if (store.view === 'jobs') return jobsView(refresh);
   return diagnosticsView(refresh);
+}
+
+function workspaceView(refresh) {
+  const layout = clampWorkspaceLayout(store.settings?.workspace);
+  const selected = selectedDevices(store.devices, store.workspace.selection);
+  const root = el('section', { className: layout.graphCollapsed ? 'workspace-view graph-collapsed' : 'workspace-view', ariaLabel: t('navigation.workspace') }, [
+    workspaceMobileToolbar(),
+    containersPane(refresh),
+    inputPane(selected, refresh),
+    graphPane(refresh),
+  ]);
+  if (root.style?.setProperty) {
+    root.style.setProperty('--workspace-left', `${layout.leftWidth}px`);
+    root.style.setProperty('--workspace-center', `${layout.centerWidth}px`);
+  }
+  return root;
+}
+
+function workspaceMobileToolbar() {
+  return el('div', { className: 'workspace-mobile-toolbar', role: 'toolbar', ariaLabel: t('navigation.workspace') }, [
+    button(t('workspace.toolbar.machines'), () => {}, { className: 'button compact' }),
+    button(t('workspace.toolbar.input'), () => {}, { className: 'button compact' }),
+    button(t('workspace.toolbar.graph'), () => {}, { className: 'button compact' }),
+  ]);
+}
+
+function containersPane(refresh) {
+  const devices = visibleWorkspaceDevices();
+  const search = el('input', { type: 'search', placeholder: t('workspace.containers.search'), value: store.workspace.search, ariaLabel: t('workspace.containers.search') });
+  search.addEventListener('input', () => {
+    store.workspace.search = search.value;
+    refresh();
+  });
+  const status = selectionStatus();
+  return el('aside', { className: 'workspace-pane containers-pane', ariaLabel: t('workspace.containers.title') }, [
+    el('div', { className: 'pane-header' }, [
+      el('div', {}, [
+        el('h2', { text: t('workspace.containers.title') }),
+        el('p', { className: 'muted', text: status }),
+      ]),
+      button(`+ ${t('workspace.containers.add')}`, () => {
+        store.workspace.addContainerOpen = !store.workspace.addContainerOpen;
+        refresh();
+      }, { className: 'button primary' }),
+    ]),
+    search,
+    el('div', { className: 'toolbar tight' }, [
+      button(t('workspace.containers.all'), () => {}, { className: 'button chip' }),
+      button(t('workspace.containers.filter'), () => {}, { className: 'button chip' }),
+      button(t('workspace.containers.selectAll'), () => {
+        store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'selectAllVisible' });
+        refresh();
+      }, { className: 'button chip' }),
+      button(t('workspace.containers.clear'), () => {
+        store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'clear' });
+        refresh();
+      }, { className: 'button chip' }),
+    ]),
+    store.workspace.addContainerOpen ? addContainerPrototype() : null,
+    devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
+  ]);
+}
+
+function addContainerPrototype() {
+  return el('article', { className: 'prototype-note', role: 'status' }, [
+    el('strong', { text: t('workspace.containers.addPrototypeTitle') }),
+    el('p', { text: t('workspace.containers.addPrototype') }),
+    el('code', { text: 'NOT_IMPLEMENTED_PHASE_1' }),
+  ]);
+}
+
+function deviceList(devices, refresh) {
+  return el('div', { className: 'device-list', role: 'listbox', ariaLabel: t('workspace.containers.title') },
+    devices.map((device, index) => deviceCard(device, devices, index, refresh)));
+}
+
+function deviceCard(device, devices, index, refresh) {
+  const id = device.id || device.deviceId;
+  const status = normalizeDeviceStatus(device);
+  const name = device.displayName || device.name || id || t('workspace.containers.unknown');
+  const selected = store.workspace.selection.selectedIds.has(id);
+  const group = groupNames(device.groupIds || []);
+  const card = el('button', {
+    className: selected ? 'device-card selected' : 'device-card',
+    role: 'option',
+    ariaSelected: selected,
+    ariaLabel: `${name} ${t(`status.${status}`)}`,
+  }, [
+    el('span', { className: 'device-name', text: name }),
+    el('span', { className: `status-pill ${status}`, text: t(`status.${status}`) }),
+    el('span', { className: 'device-meta', text: shortId(id) }),
+    el('span', { className: 'device-meta', text: versionSummary(device) }),
+    group ? el('span', { className: 'device-meta', text: group }) : null,
+    el('span', { className: 'device-meta', text: device.lastSeenAt || t('workspace.containers.unknown') }),
+    el('span', { className: 'origin-badge', text: t('workspace.containers.origin') }),
+  ]);
+  card.addEventListener('click', (event) => {
+    store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, selectionAction(event, id));
+    refresh();
+  });
+  card.addEventListener('keydown', (event) => {
+    if (event.target?.localName === 'input' || event.target?.localName === 'textarea') return;
+    if (event.key === ' ') {
+      event.preventDefault();
+      store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'toggle', id });
+      refresh();
+    } else if (event.key === 'Escape') {
+      store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'clear' });
+      refresh();
+    } else if (event.key === 'a' && event.ctrlKey) {
+      event.preventDefault();
+      store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'selectAllVisible' });
+      refresh();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const nextIndex = Math.min(devices.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)));
+      store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'single', id: devices[nextIndex].id || devices[nextIndex].deviceId });
+      refresh();
+    }
+  });
+  return card;
+}
+
+function inputPane(selected, refresh) {
+  return el('section', { className: 'workspace-pane input-pane', ariaLabel: t('workspace.input.title') }, [
+    el('div', { className: 'pane-header' }, [
+      el('div', {}, [
+        el('h2', { text: t('workspace.input.title') }),
+        el('p', { className: 'muted', text: t('workspace.input.draft') }),
+      ]),
+    ]),
+    inputTabs(refresh),
+    inputModeContent(selected),
+    inputSummary(selected),
+  ]);
+}
+
+function inputTabs(refresh) {
+  const modes = [
+    ['text', t('workspace.input.text')],
+    ['grid', t('workspace.input.grid')],
+    ['picker', t('workspace.input.picker')],
+  ];
+  return el('div', { className: 'segmented', role: 'tablist', ariaLabel: t('workspace.input.title') }, modes.map(([mode, label]) => {
+    const active = store.workspace.activeInputMode === mode;
+    const tab = button(label, () => {
+      store.workspace.activeInputMode = mode;
+      refresh();
+    }, { className: active ? 'segment active' : 'segment' });
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(active));
+    return tab;
+  }));
+}
+
+function visibleWorkspaceDevices() {
+  const query = store.workspace.search.trim().toLowerCase();
+  if (!query) return store.devices;
+  return store.devices.filter((device) => {
+    const text = [device.id, device.deviceId, device.displayName, device.name, device.status].filter(Boolean).join(' ').toLowerCase();
+    return text.includes(query);
+  });
+}
+
+function selectionStatus() {
+  const count = store.workspace.selection.selectedIds.size;
+  if (count === 0) return t('workspace.containers.selectedNone');
+  if (count === 1) return t('workspace.containers.selectedOne');
+  return t('workspace.containers.selectedMany', { count });
+}
+
+function selectionAction(event, id) {
+  if (event.shiftKey) return { type: 'range', id };
+  if (event.ctrlKey || event.metaKey) return { type: 'toggle', id };
+  return { type: 'single', id };
+}
+
+function shortId(id) {
+  if (!id) return t('workspace.containers.unknown');
+  return String(id).length > 12 ? `${String(id).slice(0, 8)}...` : String(id);
+}
+
+function versionSummary(device) {
+  const version = device.agentVersion || device.extensionVersion;
+  if (!version) return t('workspace.containers.unknown');
+  return device.agentVersion && device.extensionVersion
+    ? `Agent ${device.agentVersion} / Ext ${device.extensionVersion}`
+    : version;
+}
+
+function groupNames(groupIds) {
+  if (!groupIds.length) return '';
+  const names = groupIds.map((id) => store.groups.find((group) => group.id === id)?.name || id);
+  return names.join(', ');
+}
+
+function inputModeContent(selected) {
+  if (store.workspace.activeInputMode === 'grid') return gridInputPreview(selected);
+  if (store.workspace.activeInputMode === 'picker') return pickerInputPreview();
+  const textarea = el('textarea', {
+    rows: 7,
+    placeholder: 'group: 1\ndữ liệu ô 1|dữ liệu ô 2|dữ liệu ô 3 (máy 1)\ndữ liệu ô 1|dữ liệu ô 2|dữ liệu ô 3 (máy 2)',
+  });
+  return el('div', { className: 'input-mode' }, [
+    field(t('workspace.input.textareaLabel'), textarea),
+    el('p', { className: 'muted', text: `${t('workspace.input.separator')}: |` }),
+    el('p', { className: 'muted', text: t('workspace.input.validation') }),
+  ]);
+}
+
+function gridInputPreview(selected) {
+  const rows = selected.length ? selected : store.devices.slice(0, 3);
+  return el('div', { className: 'input-mode' }, [
+    el('div', { className: 'group-chip', text: t('workspace.input.group') }),
+    table([
+      { key: 'machine', label: t('workspace.input.machine') },
+      { key: 'cell1', label: t('workspace.input.cell1') },
+      { key: 'cell2', label: t('workspace.input.cell2') },
+      { key: 'cell3', label: t('workspace.input.cell3') },
+    ], rows.map((device, index) => ({
+      machine: device.displayName || device.name || device.deviceId || `${t('workspace.input.machine')} ${index + 1}`,
+      cell1: `${t('workspace.input.cell1')} ${index + 1}`,
+      cell2: `${t('workspace.input.cell2')} ${index + 1}`,
+      cell3: `${t('workspace.input.cell3')} ${index + 1}`,
+    }))),
+  ]);
+}
+
+function pickerInputPreview() {
+  return el('div', { className: 'input-mode picker-mode' }, [
+    el('p', { text: t('workspace.input.chooseMachine') }),
+    button(t('workspace.input.chooseCell'), () => {}, { disabled: true }),
+    el('p', { text: t('workspace.input.pickedCount') }),
+    el('p', { className: 'muted', text: t('workspace.input.pickerUnavailable') }),
+  ]);
+}
+
+function inputSummary(selected) {
+  return el('dl', { className: 'metric-grid compact-grid' }, [
+    el('dt', { text: t('workspace.input.selectedMachines') }),
+    el('dd', { text: selected.length }),
+    el('dt', { text: t('workspace.input.groups') }),
+    el('dd', { text: 1 }),
+    el('dt', { text: t('workspace.input.targets') }),
+    el('dd', { text: 3 }),
+    el('dt', { text: t('workspace.input.totalValues') }),
+    el('dd', { text: selected.length * 3 }),
+  ]);
+}
+
+function graphPane(refresh) {
+  const layout = clampWorkspaceLayout(store.settings?.workspace);
+  const toggle = button(layout.graphCollapsed ? t('workspace.graph.expand') : t('workspace.graph.collapse'), async () => {
+    store.settings.workspace = { ...layout, graphCollapsed: !layout.graphCollapsed };
+    await window.warController.settings.update({ workspace: store.settings.workspace });
+    refresh();
+  }, { className: 'button compact' });
+  return el('section', { className: 'workspace-pane graph-pane', ariaLabel: t('workspace.graph.title') }, [
+    el('div', { className: 'pane-header' }, [
+      el('div', {}, [
+        el('h2', { text: t('workspace.graph.title') }),
+        el('p', { className: 'muted', text: t('workspace.graph.sampleNotice') }),
+      ]),
+      toggle,
+    ]),
+    graphResizeHandle(refresh),
+    graphToolbar(),
+    layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : graphCanvas(),
+  ]);
+}
+
+function graphResizeHandle(refresh) {
+  const layout = clampWorkspaceLayout(store.settings?.workspace);
+  const handle = el('div', {
+    className: 'resize-handle',
+    role: 'separator',
+    ariaLabel: t('workspace.graph.title'),
+    ariaOrientation: 'vertical',
+    ariaValueMin: 480,
+    ariaValueMax: 1600,
+    ariaValueNow: 900,
+    tabIndex: 0,
+  });
+  handle.addEventListener('keydown', async (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const delta = event.key === 'ArrowLeft' ? -20 : 20;
+    store.settings.workspace = { ...layout, centerWidth: Math.max(320, Math.min(600, layout.centerWidth - delta)) };
+    await window.warController.settings.update({ workspace: store.settings.workspace });
+    refresh();
+  });
+  return handle;
+}
+
+function graphToolbar() {
+  return el('div', { className: 'graph-toolbar', role: 'toolbar', ariaLabel: t('workspace.graph.title') }, [
+    button('+', () => {}, { className: 'icon-button', disabled: false }),
+    button('-', () => {}, { className: 'icon-button', disabled: false }),
+    button(t('workspace.graph.fit'), () => {}, { className: 'button compact' }),
+    button(t('workspace.graph.reset'), () => {}, { className: 'button compact' }),
+    button(t('workspace.graph.undo'), () => {}, { className: 'button compact', disabled: true }),
+    button(t('workspace.graph.redo'), () => {}, { className: 'button compact', disabled: true }),
+  ]);
+}
+
+function graphCanvas() {
+  return el('div', { className: 'graph-canvas', tabIndex: 0, ariaLabel: t('workspace.graph.title') }, [
+    edgeLayer(),
+    ...WORKSPACE_SAMPLE_NODES.map((node) => graphNode(node)),
+  ]);
+}
+
+function edgeLayer() {
+  return el('div', { className: 'graph-edges', ariaLabel: '' }, [
+    el('span', { className: 'graph-edge edge-one', text: '' }),
+    el('span', { className: 'graph-edge edge-two', text: '' }),
+  ]);
+}
+
+function graphNode(node) {
+  const item = el('article', { className: `graph-node ${node.type}` }, [
+    el('div', { className: 'graph-node-header' }, [
+      el('strong', { text: `Bước ${node.title}` }),
+      button('×', () => {}, { className: 'node-delete', disabled: true }),
+      el('span', { className: 'origin-badge strong', text: t('workspace.containers.origin') }),
+    ]),
+    el('div', { className: 'graph-node-body' }, [
+      el('span', { className: 'port input-port', text: '' }),
+      el('label', { className: 'delay-field' }, [
+        el('span', { text: `${t('workspace.graph.delay')}:` }),
+        el('input', { type: 'number', value: node.delay, disabled: true, ariaLabel: t('workspace.graph.delay') }),
+        el('span', { text: 'ms' }),
+      ]),
+      el('span', { className: 'order-badge', text: node.badge }),
+      el('input', { type: 'text', value: node.body, disabled: true, ariaLabel: node.type === 'input' ? t('workspace.graph.input') : t('workspace.graph.selector') }),
+      el('span', { className: 'port output-port', text: '' }),
+    ]),
+  ]);
+  if (item.style?.setProperty) {
+    item.style.setProperty('--node-x', `${node.x}px`);
+    item.style.setProperty('--node-y', `${node.y}px`);
+  }
+  return item;
 }
 
 function overviewView(refresh) {

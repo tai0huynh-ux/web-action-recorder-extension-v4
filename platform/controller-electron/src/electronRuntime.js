@@ -9,6 +9,7 @@ import { ControllerApplicationService } from './controllerApplication.js';
 import { resolveRendererAsset, CSP } from './appProtocol.js';
 import { registerControllerIpcHandlers } from './ipcHandlers.js';
 import { resolveElectronRuntimeConfig } from './runtimeConfig.js';
+import { createControllerSettingsStore } from './settingsStore.js';
 import { secureWindowOptions } from './secureWindow.js';
 
 export function createElectronControllerRuntime(dependencies = {}) {
@@ -25,6 +26,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     JsonStore: dependencies.JsonStore || JsonStore,
     ControllerCore: dependencies.ControllerCore || ControllerCore,
     ControllerApplicationService: dependencies.ControllerApplicationService || ControllerApplicationService,
+    createControllerSettingsStore: dependencies.createControllerSettingsStore || createControllerSettingsStore,
     ControllerWssServerAdapter: dependencies.ControllerWssServerAdapter || ControllerWssServerAdapter,
     ControllerWssRuntimeServer: dependencies.ControllerWssRuntimeServer || ControllerWssRuntimeServer,
     rendererRoot: dependencies.rendererRoot || path.join(import.meta.dirname, '..', 'renderer'),
@@ -33,6 +35,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     env: dependencies.env || process.env,
     config: null,
     store: null,
+    settingsStore: null,
     core: null,
     application: null,
     mainWindow: null,
@@ -73,10 +76,11 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.config = resolveElectronRuntimeConfig({ app: state.app, env: state.env, fs: state.fs, path: state.path });
       registerProtocolHandler(state);
       state.store = new state.JsonStore(state.config.storePath);
+      state.settingsStore = state.createControllerSettingsStore({ fs: state.fs, path: state.path, filePath: state.config.settingsPath });
       state.core = new state.ControllerCore({ store: state.store });
       await state.core.load();
       await maybeStartWss(state);
-      state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, config: state.config, version: state.version });
+      state.application = new state.ControllerApplicationService({ core: state.core, wssRuntime: state.wssRuntime, config: state.config, version: state.version, settingsStore: state.settingsStore });
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
       });
@@ -111,6 +115,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.application = null;
       state.core = null;
       state.store = null;
+      state.settingsStore = null;
       state.started = false;
     },
   };
