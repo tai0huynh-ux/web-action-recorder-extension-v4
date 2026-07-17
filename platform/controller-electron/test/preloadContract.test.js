@@ -25,7 +25,7 @@ test('preload exposes only the warController global with the exact API shape', (
     sessions: ['list'],
     containers: ['add', 'delete', 'duplicate', 'list', 'refresh', 'restart', 'start', 'stop'],
     groups: ['addDevice', 'create', 'list', 'remove', 'removeDevice', 'update'],
-    workflows: ['get', 'importFile', 'list'],
+    workflows: ['get', 'importFile', 'list', 'originPreview', 'originPull'],
     jobs: ['cancel', 'dispatch', 'events', 'get', 'list'],
     dialogs: ['importDeviceDescriptor', 'importWorkflow'],
   });
@@ -78,6 +78,8 @@ test('preload methods invoke the fixed IPC contract channels with intact payload
     [api.workflows.list, IPC_CHANNELS.workflows.list],
     [api.workflows.get, IPC_CHANNELS.workflows.get],
     [api.workflows.importFile, IPC_CHANNELS.workflows.import],
+    [api.workflows.originPreview, IPC_CHANNELS.workflows.originPreview],
+    [api.workflows.originPull, IPC_CHANNELS.workflows.originPull],
     [api.jobs.list, IPC_CHANNELS.jobs.list],
     [api.jobs.get, IPC_CHANNELS.jobs.get],
     [api.jobs.events, IPC_CHANNELS.jobs.events],

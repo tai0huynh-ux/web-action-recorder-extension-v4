@@ -102,11 +102,27 @@ export class ControllerSessionClient extends EventEmitter {
       this.pending.delete(key);
       if (envelope.payload?.session) this.session = envelope.payload.session;
       pending.resolve(envelope);
+      return;
     }
     if (envelope.payload?.session) this.session = envelope.payload.session;
     if (envelope.type === 'execution.dispatch') this.emit('dispatch', envelope.payload);
     if (envelope.type === 'execution.cancel') this.emit('cancel', envelope.payload);
+    if (envelope.type === 'origin.inventory.request') this.emit('originInventoryRequest', envelope);
+    if (envelope.type === 'origin.workflow.get') this.emit('originWorkflowGet', envelope);
     if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
+  }
+
+  sendOriginResponse(request, payload) {
+    return this.send({
+      protocolVersion: PROTOCOL_VERSION,
+      messageId: id('origin'),
+      type: request.type === 'origin.workflow.get' ? 'origin.workflow.response' : 'origin.inventory.response',
+      sentAt: this.now(),
+      correlationId: request.messageId,
+      deviceId: this.identity.deviceId,
+      sessionId: this.session?.sessionId,
+      payload
+    });
   }
 
   onClose(socket = this.socket) {

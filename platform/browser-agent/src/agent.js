@@ -84,6 +84,17 @@ export async function main() {
     controllerSession.on('cancel', (cancel) => {
       nativeBridge.enqueueCancel(cancel);
     });
+    controllerSession.on('originInventoryRequest', (request) => {
+      const workflows = registry.listMetadata();
+      controllerSession.sendOriginResponse(request, {
+        workflows,
+        counts: { workflows: workflows.length },
+      });
+    });
+    controllerSession.on('originWorkflowGet', (request) => {
+      const workflow = registry.getRevision(request.payload?.workflowId, request.payload?.revision);
+      controllerSession.sendOriginResponse(request, workflow ? { workflow } : { error: { code: 'WORKFLOW_NOT_FOUND', message: 'Origin workflow not found' } });
+    });
     process.once('SIGTERM', () => controllerSession?.gracefulShutdown());
     process.once('SIGINT', () => controllerSession?.gracefulShutdown());
   }

@@ -8,6 +8,7 @@ import {
   PROTOCOL_VERSION,
   validateAgentEnvelope,
   validateControllerEnvelope,
+  validateEnvelope,
   validateNativeBridgeEnvelope
 } from '../src/protocolV2.js';
 import { validateSchemaValue } from '../src/schemaValidator.js';
@@ -124,6 +125,28 @@ test('missing idempotency key is rejected for dispatch', () => {
   assert.match(result.errors.map((item) => item.path).join('\n'), /\$\.idempotencyKey/);
 });
 
+test('origin synchronization envelopes validate bounded inventory and workflow payloads', () => {
+  const inventory = {
+    ...agentEnvelope(),
+    type: 'origin.inventory.response',
+    payload: {
+      workflows: [{
+        workflowId: 'wf-origin',
+        revision: 1,
+        contentHash: 'b'.repeat(64),
+        name: 'Origin',
+        updatedAt: '2026-07-14T00:00:00.000Z'
+      }]
+    }
+  };
+  assert.equal(validateAgentEnvelope(inventory).ok, false);
+  assert.equal(validateEnvelope(inventory).ok, true);
+  assert.equal(validateEnvelope({ ...inventory, payload: { workflows: [{ ...inventory.payload.workflows[0], contentHash: 'bad' }] } }).ok, false);
+  assert.equal(validateEnvelope({ ...inventory, type: 'origin.workflow.get', payload: { workflowId: 'wf-origin', revision: 1 } }).ok, true);
+  assert.equal(validateEnvelope({ ...inventory, type: 'origin.workflow.response', payload: { workflow: workflowRevision() } }).ok, true);
+  assert.equal(validateEnvelope({ ...inventory, type: 'origin.workflow.response', payload: { error: { code: 'WORKFLOW_NOT_FOUND', message: 'missing' } } }).ok, true);
+});
+
 test('companion status compatibility mapping normalizes leased commands', () => {
   assert.equal(mapCompanionStatusToExecutionJobStatus('leased'), 'dispatched');
   const job = createExecutionJobFromCompanionCommand({
@@ -235,5 +258,21 @@ function deviceDescriptor() {
     groupIds: ['group-a'],
     status: 'online',
     lastSeenAt: '2026-07-14T00:00:00.000Z'
+  };
+}
+
+function workflowRevision() {
+  return {
+    workflowId: 'wf-origin',
+    revision: 1,
+    schemaVersion: 'war-workflow-revision.v2',
+    contentHash: 'b'.repeat(64),
+    name: 'Origin',
+    description: '',
+    createdAt: '2026-07-14T00:00:00.000Z',
+    updatedAt: '2026-07-14T00:00:00.000Z',
+    sourceDeviceId: 'dev-a',
+    requiredInputs: [],
+    profilePayload: { id: 'wf-origin', steps: [] }
   };
 }

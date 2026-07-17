@@ -13,6 +13,7 @@ export const EMPTY_STATE = {
   workflowRevisions: [],
   executionEvents: [],
   managedContainers: [],
+  originSyncResults: [],
   auditEvents: [],
   pendingPairings: [],
   pairedAgents: []

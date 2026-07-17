@@ -130,6 +130,43 @@ test('controller WSS adapter emits execution invalidation after persisted result
   assert.deepEqual(events, [{ jobId: dispatch.jobId, deviceId: 'dev-a', eventType: 'job_succeeded' }]);
 });
 
+test('controller WSS origin request resolves only authenticated matching Agent responses', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const connection = new FakeConnection();
+  const state = { connection };
+  await adapter.handleMessage(JSON.stringify(agentHello()), state, 'cred-a', () => {});
+  const session = core.sessions.getPublicSession('dev-a');
+
+  const request = adapter.requestOriginInventory('dev-a', session.generation);
+  const sent = JSON.parse(connection.sent.at(-1));
+  assert.equal(sent.type, 'origin.inventory.request');
+
+  const unauthenticated = await adapter.handleMessage(JSON.stringify({
+    protocolVersion: PROTOCOL_VERSION,
+    messageId: 'spoof-a',
+    type: 'origin.inventory.response',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    correlationId: sent.messageId,
+    payload: { workflows: [] }
+  }), {}, 'cred-a', () => {});
+  assert.equal(unauthenticated.payload.error.code, 'unauthenticated');
+
+  const ack = await adapter.handleMessage(JSON.stringify({
+    protocolVersion: PROTOCOL_VERSION,
+    messageId: 'response-a',
+    type: 'origin.inventory.response',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    correlationId: sent.messageId,
+    deviceId: 'dev-a',
+    sessionId: session.sessionId,
+    payload: { workflows: [{ workflowId: 'wf-origin', revision: 1, contentHash: 'b'.repeat(64), name: 'Origin', updatedAt: '2026-07-16T00:00:00.000Z' }] }
+  }), state, 'cred-a', () => {});
+  const response = await request;
+  assert.equal(ack, null);
+  assert.equal(response.payload.workflows[0].workflowId, 'wf-origin');
+});
+
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
   assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
   assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });
@@ -278,6 +315,11 @@ function codeOf(fn) {
 
 function tick() {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function sequenceId() {
+  let i = 0;
+  return (prefix) => `${prefix}-${++i}`;
 }
 
 function device() {

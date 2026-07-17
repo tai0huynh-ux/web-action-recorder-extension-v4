@@ -107,6 +107,35 @@ export class ControllerApplicationService extends EventEmitter {
   listWorkflows() { return this.result({ workflows: this.core.workflows.listMetadata() }); }
   getWorkflowRevision({ workflowId, revision }) { return this.result(this.core.workflows.getRevision(workflowId, revision)); }
   async importWorkflowRevision({ workflow }) { const data = await this.core.workflows.putRevision(workflow); this.invalidate('workflows'); return this.result(data); }
+  async previewOriginSync({ deviceId }) {
+    const session = this.requireOnlineSession(deviceId);
+    const response = await this.wssTransport.requestOriginInventory(deviceId, session.generation, { entityTypes: ['workflows'] });
+    const inventory = sanitizeOriginInventory(response.payload || {});
+    const preview = this.buildOriginPreview(deviceId, inventory);
+    return this.result(preview);
+  }
+  async pullOriginSync({ deviceId, conflictPolicy = 'preserveBoth' }) {
+    if (!['preserveBoth', 'skip'].includes(conflictPolicy)) throw codedError('INVALID_ORIGIN_SYNC_POLICY', 'Unsupported origin sync policy');
+    const session = this.requireOnlineSession(deviceId);
+    const preview = this.buildOriginPreview(deviceId, sanitizeOriginInventory((await this.wssTransport.requestOriginInventory(deviceId, session.generation, { entityTypes: ['workflows'] })).payload || {}));
+    const imported = [];
+    const skipped = [];
+    for (const item of preview.workflows) {
+      if (item.action === 'skipIdentical' || (item.conflict && conflictPolicy === 'skip')) {
+        skipped.push({ workflowId: item.workflowId, revision: item.revision, reason: item.action });
+        continue;
+      }
+      const response = await this.wssTransport.requestOriginWorkflow(deviceId, session.generation, { workflowId: item.workflowId, revision: item.revision });
+      if (response.payload?.error) throw codedError(response.payload.error.code || 'ORIGIN_WORKFLOW_GET_FAILED', response.payload.error.message || 'Origin workflow pull failed');
+      const workflow = sanitizeOriginWorkflow(response.payload?.workflow);
+      const result = await this.core.workflows.putRevision(workflow);
+      imported.push({ workflowId: result.revision.workflowId, revision: result.revision.revision, created: result.created, contentHash: result.revision.contentHash });
+    }
+    const syncResult = await this.persistOriginSyncResult({ deviceId, conflictPolicy, imported, skipped, preview });
+    this.invalidate('workflows');
+    this.invalidate('originSync', { deviceId });
+    return this.result(syncResult);
+  }
   listJobs(payload) { return this.result({ jobs: this.core.jobs.listCommands(payload) }); }
   getJob({ jobId }) { return this.result(this.core.jobs.getCommand(jobId)); }
   listJobEvents(payload) { return this.result({ events: this.core.events.listRecent(payload) }); }
@@ -142,6 +171,51 @@ export class ControllerApplicationService extends EventEmitter {
     const transport = this.deliverCancel(job, session);
     this.invalidate('jobs', { jobId });
     return this.result({ job: sanitizeJob(job), transport });
+  }
+
+  requireOnlineSession(deviceId) {
+    const session = this.core.sessions.getPublicSession(deviceId);
+    if (!session || session.status !== 'online') throw codedError('SESSION_OFFLINE', 'Origin device is not connected');
+    if (!this.wssTransport?.requestOriginInventory || !this.wssTransport?.requestOriginWorkflow) throw codedError('ORIGIN_SYNC_UNAVAILABLE', 'Origin sync transport is unavailable');
+    return session;
+  }
+
+  buildOriginPreview(deviceId, inventory) {
+    const local = this.core.workflows.listMetadata();
+    const workflows = inventory.workflows.map((item) => {
+      const sameHash = local.find((entry) => entry.workflowId === item.workflowId && entry.contentHash === item.contentHash);
+      const sameId = local.find((entry) => entry.workflowId === item.workflowId);
+      const conflict = Boolean(!sameHash && sameId);
+      return {
+        workflowId: item.workflowId,
+        revision: item.revision,
+        name: item.name,
+        contentHash: item.contentHash,
+        updatedAt: item.updatedAt,
+        conflict,
+        action: sameHash ? 'skipIdentical' : conflict ? 'preserveBoth' : 'importNew',
+      };
+    });
+    return { deviceId, counts: { workflows: workflows.length }, workflows };
+  }
+
+  async persistOriginSyncResult(result) {
+    const item = {
+      id: this.id('origin-sync'),
+      deviceId: result.deviceId,
+      conflictPolicy: result.conflictPolicy,
+      imported: result.imported,
+      skipped: result.skipped,
+      previewCounts: result.preview.counts,
+      completedAt: this.now(),
+    };
+    return this.core.store.update((state) => {
+      state.originSyncResults ||= [];
+      state.originSyncResults.push(item);
+      if (state.originSyncResults.length > 100) state.originSyncResults = state.originSyncResults.slice(-100);
+      this.core.audit.append(state, 'origin.sync.completed', { syncId: item.id, deviceId: item.deviceId, imported: item.imported.length, skipped: item.skipped.length });
+      return structuredClone(item);
+    });
   }
 
   createDeadline(deadlineSeconds) {
@@ -272,6 +346,32 @@ function assertInputType(definition, value) {
 function sanitizeJob(job) {
   const { inputs: _inputs, dispatchMetadata: _dispatchMetadata, leaseId: _leaseId, ...safe } = job;
   return structuredClone(safe);
+}
+
+function sanitizeOriginInventory(payload = {}) {
+  const workflows = Array.isArray(payload.workflows) ? payload.workflows.slice(0, 200).map((item) => ({
+    workflowId: String(item.workflowId || ''),
+    revision: Number.isInteger(item.revision) ? item.revision : 1,
+    name: String(item.name || item.workflowId || 'Workflow').slice(0, 200),
+    contentHash: String(item.contentHash || ''),
+    updatedAt: String(item.updatedAt || item.createdAt || ''),
+  })).filter((item) => item.workflowId && /^[a-f0-9]{64}$/.test(item.contentHash)) : [];
+  return { workflows };
+}
+
+function sanitizeOriginWorkflow(workflow) {
+  const clone = structuredClone(workflow || {});
+  stripSecretLikeFields(clone);
+  return clone;
+}
+
+function stripSecretLikeFields(value) {
+  if (Array.isArray(value)) return value.forEach(stripSecretLikeFields);
+  if (!value || typeof value !== 'object') return;
+  for (const key of Object.keys(value)) {
+    if (/password|passwd|token|secret|credential|cookie/i.test(key)) delete value[key];
+    else stripSecretLikeFields(value[key]);
+  }
 }
 
 function managedDeviceDescriptor({ deviceId, displayName }) {

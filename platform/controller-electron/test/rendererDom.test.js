@@ -353,6 +353,8 @@ function resetStore() {
     workflows: [],
     jobs: [],
     selectedWorkflow: null,
+    originSyncPreview: null,
+    originSyncResult: null,
     selectedJob: null,
     jobEvents: [],
     jobTransports: {},
@@ -462,6 +464,8 @@ function installControllerApi() {
         list: async () => ({ ok: true, data: { workflows: [] } }),
         importFile: async () => ({ ok: true, data: {} }),
         get: async () => ({ ok: true, data: {} }),
+        originPreview: async () => ({ ok: true, data: { counts: { workflows: 1 }, workflows: [{ workflowId: 'wf-origin', revision: 1, name: 'Origin', action: 'importNew', conflict: false }] } }),
+        originPull: async () => ({ ok: true, data: { imported: [{ workflowId: 'wf-origin', revision: 1 }], skipped: [] } }),
       },
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),

@@ -138,6 +138,57 @@ test('application revoke closes the active session and rejects the revoked crede
   await assert.rejects(() => core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' }), code('AUTH_DENIED'));
 });
 
+test('application previews origin inventory with conflict and duplicate decisions', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision());
+  const transport = fakeTransport({
+    originInventory: {
+      workflows: [
+        { workflowId: 'wf-1', revision: 1, contentHash: 'a'.repeat(64), name: 'Same', updatedAt: '2026-07-16T00:00:00.000Z' },
+        { workflowId: 'wf-1', revision: 2, contentHash: 'b'.repeat(64), name: 'Conflict', updatedAt: '2026-07-16T00:00:00.000Z' },
+        { workflowId: 'wf-new', revision: 1, contentHash: 'c'.repeat(64), name: 'New', updatedAt: '2026-07-16T00:00:00.000Z' },
+        { workflowId: 'wf-bad', revision: 1, contentHash: 'not-a-hash', name: 'Bad' }
+      ]
+    }
+  });
+  const preview = await application(core, transport).previewOriginSync({ deviceId: 'dev-a' });
+  assert.equal(preview.data.counts.workflows, 3);
+  assert.deepEqual(preview.data.workflows.map((item) => item.action), ['skipIdentical', 'preserveBoth', 'importNew']);
+  assert.equal(preview.data.workflows[1].conflict, true);
+});
+
+test('application pulls origin workflows through WSS, strips secret-like fields, skips conflicts, and audits result', async () => {
+  const core = await connectedCore();
+  await core.workflows.putRevision(revision());
+  const originWorkflow = revision({
+    workflowId: 'wf-origin',
+    contentHash: 'd'.repeat(64),
+    name: 'Origin',
+    sourceDeviceId: 'dev-a',
+    profilePayload: { id: 'wf-origin', steps: [], credential: 'must-not-persist', nested: { token: 'must-not-persist', keep: true } }
+  });
+  const transport = fakeTransport({
+    originInventory: {
+      workflows: [
+        { workflowId: 'wf-1', revision: 2, contentHash: 'b'.repeat(64), name: 'Conflict', updatedAt: '2026-07-16T00:00:00.000Z' },
+        { workflowId: 'wf-origin', revision: 1, contentHash: 'd'.repeat(64), name: 'Origin', updatedAt: '2026-07-16T00:00:00.000Z' }
+      ]
+    },
+    originWorkflows: { 'wf-origin:1': originWorkflow }
+  });
+  const result = await application(core, transport).pullOriginSync({ deviceId: 'dev-a', conflictPolicy: 'skip' });
+  const stored = core.workflows.getRevision('wf-origin', 1);
+  const snapshot = core.store.snapshot();
+
+  assert.equal(result.data.imported.length, 1);
+  assert.equal(result.data.skipped[0].workflowId, 'wf-1');
+  assert.equal(stored.profilePayload.nested.keep, true);
+  assert.equal(Object.hasOwn(stored.profilePayload, 'credential'), false);
+  assert.equal(Object.hasOwn(stored.profilePayload.nested, 'token'), false);
+  assert.equal(snapshot.originSyncResults.length, 1);
+  assert.equal(snapshot.auditEvents.at(-1).type, 'origin.sync.completed');
+});
+
 test('offline cancel keeps controller-side cancellation and returns an offline transport warning', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());
@@ -160,10 +211,12 @@ function application(core, transport) {
   });
 }
 
-function fakeTransport({ failDispatch = false, failCancel = false } = {}) {
+function fakeTransport({ failDispatch = false, failCancel = false, originInventory = { workflows: [] }, originWorkflows = {} } = {}) {
   return {
     dispatches: [],
     cancels: [],
+    originInventoryRequests: [],
+    originWorkflowRequests: [],
     sendDispatch(deviceId, generation, dispatch) {
       if (failDispatch) throw Object.assign(new Error('send failed'), { code: 'WSS_SEND_FAILED' });
       this.dispatches.push({ deviceId, generation, dispatch });
@@ -173,6 +226,15 @@ function fakeTransport({ failDispatch = false, failCancel = false } = {}) {
       if (failCancel) throw Object.assign(new Error('send failed'), { code: 'WSS_SEND_FAILED' });
       this.cancels.push({ deviceId, generation, cancel });
       return { delivered: true, deviceId, generation };
+    },
+    async requestOriginInventory(deviceId, generation, payload) {
+      this.originInventoryRequests.push({ deviceId, generation, payload });
+      return { payload: structuredClone(originInventory) };
+    },
+    async requestOriginWorkflow(deviceId, generation, payload) {
+      this.originWorkflowRequests.push({ deviceId, generation, payload });
+      const workflow = originWorkflows[`${payload.workflowId}:${payload.revision}`];
+      return workflow ? { payload: { workflow: structuredClone(workflow) } } : { payload: { error: { code: 'WORKFLOW_NOT_FOUND', message: 'missing' } } };
     }
   };
 }

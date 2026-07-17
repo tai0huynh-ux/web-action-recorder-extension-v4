@@ -52,6 +52,10 @@ export const MESSAGE_TYPES = Object.freeze([
   'workflow.list.result',
   'workflow.get',
   'workflow.get.result',
+  'origin.inventory.request',
+  'origin.inventory.response',
+  'origin.workflow.get',
+  'origin.workflow.response',
   'execution.dispatch',
   'execution.cancel',
   'execution.event',
@@ -160,6 +164,10 @@ export function validateEnvelope(envelope, options = {}) {
   if (envelope.type === 'agent.execution.event') validateExecutionEvent(envelope.payload, '$.payload', errors);
   if (envelope.type === 'workflow.upload') validateWorkflowUploadPayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'workflow.get') validateWorkflowGetPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'origin.inventory.request') validateOriginInventoryRequestPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'origin.inventory.response') validateOriginInventoryResponsePayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'origin.workflow.get') validateWorkflowGetPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'origin.workflow.response') validateOriginWorkflowResponsePayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'execution.dispatch') validateExecutionDispatchPayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') validateExecutionEvent(envelope.payload, '$.payload', errors);
   if (envelope.type === 'controller.dispatch.create') validateDispatchPlan(envelope.payload, '$.payload', errors);
@@ -338,6 +346,40 @@ function validateWorkflowGetPayload(value, path, errors) {
   if (!isPlainObject(value)) return error(errors, path, 'workflow.get payload must be an object.');
   requireString(value, 'workflowId', `${path}.workflowId`, errors);
   requirePositiveInteger(value.revision, `${path}.revision`, errors);
+}
+
+function validateOriginInventoryRequestPayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'origin.inventory.request payload must be an object.');
+  if (value.entityTypes !== undefined) requireStringArray(value.entityTypes, `${path}.entityTypes`, errors, { maxItems: 16 });
+}
+
+function validateOriginInventoryResponsePayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'origin.inventory.response payload must be an object.');
+  requireArray(value.workflows || [], `${path}.workflows`, errors);
+  for (const [index, workflow] of (value.workflows || []).entries()) validateWorkflowMetadataPayload(workflow, `${path}.workflows[${index}]`, errors);
+}
+
+function validateOriginWorkflowResponsePayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'origin.workflow.response payload must be an object.');
+  if (value.error !== undefined) {
+    if (!isPlainObject(value.error)) error(errors, `${path}.error`, 'error must be an object.');
+    else {
+      requireString(value.error, 'code', `${path}.error.code`, errors);
+      requireString(value.error, 'message', `${path}.error.message`, errors);
+    }
+    return;
+  }
+  validateWorkflowRevisionInto(value.workflow, `${path}.workflow`, errors);
+}
+
+function validateWorkflowMetadataPayload(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'workflow metadata must be an object.');
+  requireString(value, 'workflowId', `${path}.workflowId`, errors);
+  requirePositiveInteger(value.revision, `${path}.revision`, errors);
+  requireString(value, 'contentHash', `${path}.contentHash`, errors);
+  if (typeof value.contentHash === 'string' && !/^[a-f0-9]{64}$/.test(value.contentHash)) error(errors, `${path}.contentHash`, 'contentHash must be a sha256 hex string.');
+  if (value.name !== undefined) optionalString(value.name, `${path}.name`, errors);
+  if (value.updatedAt !== undefined) requireIsoUtc(value.updatedAt, `${path}.updatedAt`, errors);
 }
 
 function validateExecutionDispatchPayload(value, path, errors) {

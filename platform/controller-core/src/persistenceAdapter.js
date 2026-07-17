@@ -38,6 +38,7 @@ export function ensureControllerState(state) {
   state.workflowRevisions ||= [];
   state.executionEvents ||= [];
   state.managedContainers ||= [];
+  state.originSyncResults ||= [];
   state.auditEvents ||= [];
   state.pendingPairings ||= [];
   state.pairedAgents ||= [];

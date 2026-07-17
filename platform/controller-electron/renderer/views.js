@@ -618,8 +618,38 @@ function groupEditor(group, refresh) {
 
 function workflowsView(refresh) {
   const imported = el('textarea', { rows: 10, placeholder: '{...WorkflowRevision JSON...}' });
+  const originDevice = el('select', {}, [
+    el('option', { value: '', text: 'Select origin device' }),
+    ...store.sessions.filter((session) => session.status === 'online').map((session) => el('option', { value: session.deviceId, text: session.deviceId })),
+  ]);
+  const conflictPolicy = el('select', {}, [
+    el('option', { value: 'preserveBoth', text: 'Preserve both' }),
+    el('option', { value: 'skip', text: 'Skip conflicts' }),
+  ]);
   const status = el('p', { className: 'status' });
   return section('Workflows', [
+    el('h3', { text: 'Origin synchronization' }),
+    field('Origin device', originDevice),
+    field('Conflict policy', conflictPolicy),
+    el('div', { className: 'toolbar' }, [
+      button('Preview origin pull', async () => {
+        if (!originDevice.value) { status.textContent = 'Select one connected origin device'; return; }
+        const result = await window.warController.workflows.originPreview({ deviceId: originDevice.value });
+        store.originSyncPreview = unwrap(result);
+        setStatus(status, result, 'Origin preview loaded');
+        refresh();
+      }),
+      button('Pull from origin', async () => {
+        if (!originDevice.value) { status.textContent = 'Select one connected origin device'; return; }
+        const result = await window.warController.workflows.originPull({ deviceId: originDevice.value, conflictPolicy: conflictPolicy.value });
+        store.originSyncResult = unwrap(result);
+        setStatus(status, result, 'Origin pull completed');
+        await refreshAll();
+        refresh();
+      }),
+    ]),
+    store.originSyncPreview ? originPreviewPanel() : null,
+    store.originSyncResult ? codeBlock(store.originSyncResult) : null,
     field('WorkflowRevision JSON', imported),
     el('div', { className: 'toolbar' }, [
       button('Import file', async () => {
@@ -649,6 +679,21 @@ function workflowsView(refresh) {
       button('View revision', async () => { await refreshWorkflow(workflow.workflowId, workflow.revision); refresh(); }),
     ])),
     store.selectedWorkflow ? workflowDetails(store.selectedWorkflow) : el('p', { text: 'Select a workflow revision to inspect safe metadata.' }),
+  ]);
+}
+
+function originPreviewPanel() {
+  return el('article', { className: 'item-row' }, [
+    el('div', {}, [
+      el('strong', { text: `Origin workflows: ${store.originSyncPreview.counts?.workflows || 0}` }),
+      table([
+        { key: 'workflowId', label: 'Workflow' },
+        { key: 'revision', label: 'Revision' },
+        { key: 'name', label: 'Name' },
+        { key: 'action', label: 'Action' },
+        { key: 'conflict', label: 'Conflict' },
+      ], store.originSyncPreview.workflows || []),
+    ]),
   ]);
 }
 

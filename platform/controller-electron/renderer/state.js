@@ -25,6 +25,8 @@ export const store = {
   workflows: [],
   jobs: [],
   selectedWorkflow: null,
+  originSyncPreview: null,
+  originSyncResult: null,
   selectedJob: null,
   jobEvents: [],
   jobTransports: {},

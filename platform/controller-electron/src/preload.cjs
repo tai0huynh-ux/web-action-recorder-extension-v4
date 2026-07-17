@@ -45,6 +45,8 @@ const IPC_CHANNELS = Object.freeze({
     list: 'war-controller:v1:workflows:list',
     get: 'war-controller:v1:workflows:get',
     import: 'war-controller:v1:workflows:import',
+    originPreview: 'war-controller:v1:workflows:origin-preview',
+    originPull: 'war-controller:v1:workflows:origin-pull',
   }),
   jobs: Object.freeze({
     list: 'war-controller:v1:jobs:list',
@@ -136,6 +138,8 @@ const api = deepFreeze({
     list: call(IPC_CHANNELS.workflows.list),
     get: call(IPC_CHANNELS.workflows.get),
     importFile: call(IPC_CHANNELS.workflows.import),
+    originPreview: call(IPC_CHANNELS.workflows.originPreview),
+    originPull: call(IPC_CHANNELS.workflows.originPull),
   },
   jobs: {
     list: call(IPC_CHANNELS.jobs.list),

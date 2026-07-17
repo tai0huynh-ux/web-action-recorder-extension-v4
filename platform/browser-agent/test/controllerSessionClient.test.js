@@ -170,6 +170,39 @@ test('controller session tracks session, emits cancel, and sends execution event
   assert.equal(sent.payload.eventType, 'job_started');
 });
 
+test('controller session handles origin sync requests and sends correlated responses', () => {
+  const scheduler = fakeScheduler();
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler,
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const requests = [];
+  client.on('originInventoryRequest', (request) => requests.push(request));
+  client.start();
+  socket.emit('open');
+  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
+  socket.emit('message', JSON.stringify({
+    protocolVersion: 'war-control.v2',
+    messageId: 'origin-request-a',
+    type: 'origin.inventory.request',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    payload: { entityTypes: ['workflows'] }
+  }));
+
+  client.sendOriginResponse(requests[0], { workflows: [], counts: { workflows: 0 } });
+
+  const sent = JSON.parse(socket.sent.at(-1));
+  assert.equal(requests.length, 1);
+  assert.equal(sent.type, 'origin.inventory.response');
+  assert.equal(sent.correlationId, 'origin-request-a');
+  assert.equal(sent.sessionId, 'session-1');
+});
+
 class FakeSocket extends EventEmitter {
   constructor() {
     super();

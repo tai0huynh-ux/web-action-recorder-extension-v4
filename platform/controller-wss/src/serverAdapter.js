@@ -17,6 +17,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
     this.id = id;
     this.connections = new Set();
     this.activeConnections = new Map();
+    this.pendingRequests = new Map();
   }
 
   accept(connection, { credential } = {}) {
@@ -53,6 +54,16 @@ export class ControllerWssServerAdapter extends EventEmitter {
         return this.response(envelope, { ok: true, session: state.session, replay: await this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });
       }
       if (!state.session) throw publicError('unauthenticated', 'Agent session is not authenticated', 401);
+      if (envelope.correlationId && this.pendingRequests.has(envelope.correlationId)) {
+        const pending = this.pendingRequests.get(envelope.correlationId);
+        if (pending.deviceId !== state.session.deviceId || pending.generation !== state.session.generation || (pending.expectedTypes.length && !pending.expectedTypes.includes(envelope.type))) {
+          throw publicError('invalid_response', 'Agent response does not match the pending request', 400);
+        }
+        this.pendingRequests.delete(envelope.correlationId);
+        clearTimeout(pending.timer);
+        pending.resolve(envelope);
+        return null;
+      }
       const withSession = { ...envelope, deviceId: envelope.deviceId || state.session.deviceId, sessionId: envelope.sessionId || state.session.sessionId, payload: { ...envelope.payload, generation: state.session.generation } };
       if (envelope.type === 'agent.presence') return this.response(envelope, { ok: true, session: await this.sessionManager.handlePresence(withSession) });
       if (envelope.type === 'agent.execution.event' || envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') {
@@ -108,6 +119,45 @@ export class ControllerWssServerAdapter extends EventEmitter {
     return { delivered: true, deviceId, generation };
   }
 
+  requestAgent(deviceId, generation, envelope, { timeoutMs = 10000, expectedTypes = [] } = {}) {
+    const connection = this.requireActiveConnection(deviceId, generation);
+    if (this.pendingRequests.size >= 64) return Promise.reject(wssError('WSS_SEND_FAILED', 'Agent request limit exceeded'));
+    const messageId = envelope.messageId || this.id('controller-request');
+    const request = { protocolVersion: PROTOCOL_VERSION, sentAt: this.now(), ...envelope, messageId, deviceId };
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(messageId);
+        reject(wssError('SESSION_OFFLINE', 'Agent request timed out'));
+      }, timeoutMs);
+      this.pendingRequests.set(messageId, { resolve, reject, timer, deviceId, generation, expectedTypes });
+    });
+    try {
+      this.sendEnvelope(connection, request);
+    } catch (error) {
+      const pending = this.pendingRequests.get(messageId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(messageId);
+      }
+      throw error;
+    }
+    return promise;
+  }
+
+  requestOriginInventory(deviceId, generation, payload = {}) {
+    return this.requestAgent(deviceId, generation, {
+      type: 'origin.inventory.request',
+      payload,
+    }, { timeoutMs: 10000, expectedTypes: ['origin.inventory.response'] });
+  }
+
+  requestOriginWorkflow(deviceId, generation, payload = {}) {
+    return this.requestAgent(deviceId, generation, {
+      type: 'origin.workflow.get',
+      payload,
+    }, { timeoutMs: 10000, expectedTypes: ['origin.workflow.response'] });
+  }
+
   registerActiveConnection(session, connection) {
     if (!connection) return;
     this.activeConnections.set(session.deviceId, { generation: session.generation, connection });
@@ -142,6 +192,11 @@ export class ControllerWssServerAdapter extends EventEmitter {
   }
 
   shutdown() {
+    for (const [key, pending] of this.pendingRequests.entries()) {
+      clearTimeout(pending.timer);
+      pending.reject?.(wssError('SESSION_OFFLINE', 'Controller WSS shutting down'));
+      this.pendingRequests.delete(key);
+    }
     for (const connection of this.connections) connection.close?.();
     this.connections.clear();
     this.activeConnections.clear();
