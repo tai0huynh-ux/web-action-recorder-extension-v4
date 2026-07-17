@@ -84,7 +84,6 @@ export async function main() {
     controllerSession.on('cancel', (cancel) => {
       nativeBridge.enqueueCancel(cancel);
     });
-    controllerSession.start();
     process.once('SIGTERM', () => controllerSession?.gracefulShutdown());
     process.once('SIGINT', () => controllerSession?.gracefulShutdown());
   }
@@ -106,6 +105,7 @@ export async function main() {
   const server = createHttpServer({ config, identity, supervisor, dispatcher, version: packageJson.version, log });
   await listen(server, config);
   log('info', 'agent', 'http_listening', { host: config.host, port: config.port });
+  controllerSession?.start();
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
