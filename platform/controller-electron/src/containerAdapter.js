@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -7,17 +7,18 @@ const CONTROL_PORT = '3766';
 const MANAGED_LABEL = 'war-controller';
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 
-export function createDockerContainerAdapter({ config, execFileImpl = execFileAsync } = {}) {
+export function createDockerContainerAdapter({ config, execFileImpl = execFileAsync, spawnImpl = spawn } = {}) {
   const containerConfig = config?.containers;
   if (!containerConfig?.enabled) return null;
-  return new DockerContainerAdapter({ config: containerConfig, wss: config?.wss, execFileImpl });
+  return new DockerContainerAdapter({ config: containerConfig, wss: config?.wss, execFileImpl, spawnImpl });
 }
 
 export class DockerContainerAdapter {
-  constructor({ config, wss, execFileImpl = execFileAsync }) {
+  constructor({ config, wss, execFileImpl = execFileAsync, spawnImpl = spawn }) {
     this.config = config;
     this.wss = wss;
     this.execFile = execFileImpl;
+    this.spawn = spawnImpl;
   }
 
   async create(container) {
@@ -25,7 +26,8 @@ export class DockerContainerAdapter {
     const volume = dataVolume(name);
     await this.docker(['volume', 'create', volume]);
     try {
-      await this.docker([
+      const environment = this.environment(container);
+      await this.dockerRun([
         'run', '-d',
         '--name', name,
         '--label', `managed-by=${MANAGED_LABEL}`,
@@ -33,9 +35,9 @@ export class DockerContainerAdapter {
         '-p', `127.0.0.1::${CONTROL_PORT}`,
         '-v', `${volume}:/data`,
         '--add-host', 'host.docker.internal:host-gateway',
-        ...this.environmentArgs(container),
+        ...environment.mountArgs,
         image(container),
-      ]);
+      ], environment.entries);
     } catch (error) {
       await this.docker(['volume', 'rm', '-f', volume]).catch(() => {});
       throw error;
@@ -74,24 +76,22 @@ export class DockerContainerAdapter {
     return { status: 'deleted', runtime: { dockerName: name } };
   }
 
-  environmentArgs(container) {
-    const env = [
+  environment(container) {
+    const entries = [
       ['WAR_MANAGED_DEVICE_ID', container.deviceId],
       ['WAR_CONTROLLER_SESSION_CREDENTIAL', container.provisioning?.credential],
       ['WAR_CONTROLLER_WSS_URL', this.controllerWssUrl()],
       ['WAR_BROWSER_NO_SANDBOX', '1'],
     ];
     if (this.config.controllerCaPath) {
-      env.push(['NODE_EXTRA_CA_CERTS', '/run/war/controller-ca.pem']);
+      entries.push(['NODE_EXTRA_CA_CERTS', '/run/war/controller-ca.pem']);
     }
-    const args = [];
-    for (const [key, value] of env) {
-      if (value) args.push('-e', `${key}=${value}`);
-    }
+    const filteredEntries = entries.filter(([, value]) => value !== undefined && value !== null && value !== '');
+    const mountArgs = [];
     if (this.config.controllerCaPath) {
-      args.push('-v', `${this.config.controllerCaPath}:/run/war/controller-ca.pem:ro`);
+      mountArgs.push('-v', `${this.config.controllerCaPath}:/run/war/controller-ca.pem:ro`);
     }
-    return args;
+    return { entries: filteredEntries, mountArgs };
   }
 
   controllerWssUrl() {
@@ -136,6 +136,26 @@ export class DockerContainerAdapter {
     }
     if (this.config.runtime === 'ssh-docker') {
       return this.execFile('ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...args])], { timeout: this.config.timeoutMs });
+    }
+    throw new Error('Unsupported container runtime');
+  }
+
+  dockerRun(args, entries) {
+    if (this.config.runtime === 'local-docker') {
+      const environmentArgs = entries.flatMap(([key]) => ['-e', key]);
+      const imageIndex = args.length - 1;
+      return this.execFile('docker', [...args.slice(0, imageIndex), ...environmentArgs, args[imageIndex]], {
+        timeout: this.config.timeoutMs,
+        env: { ...process.env, ...Object.fromEntries(entries) },
+      });
+    }
+    if (this.config.runtime === 'ssh-docker') {
+      const imageIndex = args.length - 1;
+      const remoteArgs = [...args.slice(0, imageIndex), '--env-file', '/dev/stdin', args[imageIndex]];
+      return spawnWithInput(this.spawn, 'ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...remoteArgs])], {
+        input: encodeEnvironment(entries),
+        timeoutMs: this.config.timeoutMs,
+      });
     }
     throw new Error('Unsupported container runtime');
   }
@@ -184,4 +204,55 @@ function parseBytes(value) {
 
 function shellJoin(args) {
   return args.map((arg) => `'${String(arg).replace(/'/g, `'\\''`)}'`).join(' ');
+}
+
+function encodeEnvironment(entries) {
+  return `${entries.map(([key, value]) => {
+    const text = String(value);
+    if (!/^[A-Z0-9_]+$/.test(key) || /[\r\n]/.test(text)) throw new Error('Invalid managed container environment');
+    return `${key}=${text}`;
+  }).join('\n')}\n`;
+}
+
+function spawnWithInput(spawnImpl, file, args, { input, timeoutMs, maxOutputBytes = 1024 * 1024 }) {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(file, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const collect = (chunks, kind) => (chunk) => {
+      const buffer = Buffer.from(chunk);
+      if (kind === 'stdout') stdoutBytes += buffer.length;
+      else stderrBytes += buffer.length;
+      if (stdoutBytes > maxOutputBytes || stderrBytes > maxOutputBytes) {
+        child.kill();
+        finish(new Error('Managed container command output limit exceeded'));
+        return;
+      }
+      chunks.push(buffer);
+    };
+    child.stdout?.on('data', collect(stdout, 'stdout'));
+    child.stderr?.on('data', collect(stderr, 'stderr'));
+    child.on('error', (error) => finish(error));
+    child.on('close', (code) => {
+      const result = { stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') };
+      if (code === 0) finish(null, result);
+      else finish(Object.assign(new Error('Managed container command failed'), { code, ...result }));
+    });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(new Error('Managed container command timed out'));
+    }, timeoutMs);
+    child.stdin?.on('error', (error) => finish(error));
+    child.stdin?.end(input);
+  });
 }
