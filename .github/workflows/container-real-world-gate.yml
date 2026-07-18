@@ -20,7 +20,7 @@ defaults:
 jobs:
   controlled_search_copy:
     name: Controlled container search copy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -37,6 +37,8 @@ jobs:
         run: npm ci
       - name: Build Browser Agent image
         run: npm run container:browser-agent:build
+      - name: Probe Chromium sandbox host capability
+        run: npm run probe:chromium-sandbox-host
       - name: Run real-world container gate
         run: npm run test:container-real-world
       - name: Upload sanitized evidence
