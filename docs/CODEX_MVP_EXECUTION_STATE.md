@@ -1,19 +1,19 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
+Phase 10 - Final packaged-product acceptance and soak
 
 Current subphase:
-Phase 10 clean packaged-product acceptance and soak; managed-container execution is blocked on the local host.
+Phase 10 step 5 Docker recovery; SSH access is restored but the reviewed Linux security policy is not installed.
 
 Last green commit:
-9fa0c1af53921d7e887c71d3fa63da9854aebc73
+56304b03d58441d2a3c5ad9b317727493830768f
 
 HEAD:
-9fa0c1af53921d7e887c71d3fa63da9854aebc73
+56304b03d58441d2a3c5ad9b317727493830768f
 
 origin/main:
-9fa0c1af53921d7e887c71d3fa63da9854aebc73
+56304b03d58441d2a3c5ad9b317727493830768f
 
 Working tree:
 Clean before this execution-state update.
@@ -50,21 +50,23 @@ Phase 9 local verification after documentation:
 - `npm.cmd audit`: PASS; 0 vulnerabilities.
 - `npm.cmd ls --depth=0`: PASS; only the approved top-level runtime packages are present.
 - Local Windows `test:container-real-world`: `BLOCKED_INFRASTRUCTURE` because Docker CLI is unavailable; the GitHub-hosted exact-SHA gate remains mandatory and is not replaced by this local result.
+- Remote Docker recovery: SSH batch authentication PASS with the explicit identity; Docker server `29.4.2`, approved image present, no `war-phase10-*` resources found.
+- Remote host preflight: required AppArmor profile and `/etc/war/security/chromium-userns-seccomp.json` are missing; non-interactive sudo is unavailable. No managed container was created.
 - Phase 10 local WSS gate: PASS; TLS verification, replay, revocation, and cleanup passed on `9a0ee7563ad3ffe06ac1e99278cd431bbb462ef5`.
 - Phase 10 local Controller-to-Extension Edge E2E: PASS; real Browser Agent/Chromium/MV3, grouped input, graph edit, execution, cancel, replay, and cleanup passed.
 - Phase 10 local Electron smoke, packaged smoke, release integrity, and release gate: PASS.
 - Phase 10 local Browser Agent soak: `BLOCKED_INFRASTRUCTURE` with `spawn docker ENOENT`; no soak success is claimed.
 
 Final acceptance:
-Phase 10 is partially verified and blocked. Packaged Controller, secure WSS/TLS, Edge Controller-to-Extension E2E, Electron smoke, package integrity, packaged smoke, and release gate pass on `9a0ee7563ad3ffe06ac1e99278cd431bbb462ef5`. Managed-container active-sandbox execution and the required soak matrix cannot run on this Windows host because Docker CLI is unavailable.
+Phase 10 is partially verified and blocked. Packaged Controller, secure WSS/TLS, Edge Controller-to-Extension E2E, Electron smoke, package integrity, packaged smoke, and release gate pass. Managed-container active-sandbox execution and the required soak matrix cannot start until the remote host has the reviewed AppArmor/seccomp policy installed.
 
 Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29654213429` passed at exact SHA `9fa0c1af53921d7e887c71d3fa63da9854aebc73` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 - The Windows credential-file regression is repaired with a platform-aware identity comparison that retains strict type, symlink, size, and POSIX permission checks; CI and Windows full tests now pass.
-- Phase 10 managed-container and soak commands are blocked locally by `spawn docker ENOENT`; this is infrastructure absence, not a product failure. A reviewed disposable Linux Docker host is required to run the remaining acceptance matrix.
+- Phase 10 managed-container and soak are blocked by missing remote host security policy and unavailable non-interactive sudo. This is an infrastructure/privilege blocker, not a product failure. Do not replace it with unconfined security options or an unsandboxed Chromium run.
 
 Next exact action:
-Run the remaining Phase 10 product path and soak matrix on a reviewed disposable Linux Docker host, then record the exact evidence and final decision.
+Have an administrator install and load the reviewed AppArmor profile and seccomp policy on the remote Linux Docker host, then rerun the bounded preflight and Phase 10 acceptance.
 
 Remaining MVP work:
 - Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
