@@ -5,6 +5,38 @@ import os from 'node:os';
 import { chromium } from 'playwright-core';
 import { AgentError, redactUrl } from './errors.js';
 
+const SANDBOX_YES_NO_ROWS = Object.freeze({
+  pidNs: 'PID namespaces',
+  netNs: 'Network namespaces',
+  seccompBpf: 'Seccomp-BPF sandbox',
+  seccompTsync: 'Seccomp-BPF sandbox supports TSYNC',
+});
+
+export function parseSandboxStatusSnapshot(snapshot) {
+  const rows = new Map((snapshot?.rows || []).filter((row) => Array.isArray(row) && row.length === 2));
+  const layerOne = rows.get('Layer 1 Sandbox');
+  if (!['Namespace', 'SUID', 'None'].includes(layerOne)) {
+    throw new AgentError('sandbox_status_unavailable', 'Chromium sandbox layer-one status is unavailable', 503);
+  }
+  const status = {
+    source: 'chrome://sandbox',
+    suid: layerOne === 'SUID',
+    userNs: layerOne === 'Namespace',
+  };
+  for (const [key, label] of Object.entries(SANDBOX_YES_NO_ROWS)) {
+    const value = rows.get(label);
+    if (!['Yes', 'No'].includes(value)) {
+      throw new AgentError('sandbox_status_unavailable', `Chromium ${label} status is unavailable`, 503);
+    }
+    status[key] = value === 'Yes';
+  }
+  if (!['You are adequately sandboxed.', 'You are NOT adequately sandboxed.'].includes(snapshot?.evaluation)) {
+    throw new AgentError('sandbox_status_unavailable', 'Chromium sandbox evaluation is unavailable', 503);
+  }
+  status.sandboxGood = snapshot.evaluation === 'You are adequately sandboxed.';
+  return status;
+}
+
 export class BrowserController {
   constructor(config, log = () => {}) {
     this.config = config;
@@ -150,20 +182,16 @@ export class BrowserController {
     try {
       page = await this.context.newPage();
       await page.goto('chrome://sandbox/', { waitUntil: 'domcontentloaded', timeout: 5000 });
-      await page.waitForFunction(() => typeof globalThis.loadTimeData?.getBoolean === 'function', null, { timeout: 5000 });
-      const status = await page.evaluate(() => Object.fromEntries([
-        'suid',
-        'userNs',
-        'pidNs',
-        'netNs',
-        'seccompBpf',
-        'seccompTsync',
-        'sandboxGood',
-      ].map((key) => [key, globalThis.loadTimeData.getBoolean(key)])));
-      if (!status || Object.values(status).some((value) => typeof value !== 'boolean')) {
-        throw new AgentError('sandbox_status_unavailable', 'Chromium sandbox status is unavailable', 503);
-      }
-      return { source: 'chrome://sandbox', ...status };
+      await page.waitForFunction(() => {
+        const evaluation = document.querySelector('#evaluation')?.textContent?.trim();
+        return document.querySelectorAll('#sandbox-status tr').length >= 5 && Boolean(evaluation);
+      }, null, { timeout: 5000 });
+      const snapshot = await page.evaluate(() => ({
+        rows: Array.from(document.querySelectorAll('#sandbox-status tr'), (row) =>
+          Array.from(row.querySelectorAll('td'), (cell) => cell.textContent?.trim() || '')),
+        evaluation: document.querySelector('#evaluation')?.textContent?.trim() || '',
+      }));
+      return parseSandboxStatusSnapshot(snapshot);
     } finally {
       await page?.close().catch(() => {});
     }

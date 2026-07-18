@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; the constrained AppArmor and seccomp runtime passed the product gate, and authoritative Chromium sandbox plus bounded-runtime proof is pending.
+Phase 9D managed-container Docker verification; exact-head run `29652969620` exposed that current Chromium keeps `loadTimeData` module-scoped, so authoritative rendered sandbox evidence is being repaired without weakening the runtime.
 
 Last green commit:
 8e5adceadfef204f643293d7204b27bb7834e196
 
 HEAD:
-8e5adceadfef204f643293d7204b27bb7834e196 plus authoritative sandbox/runtime proof pending commit.
+6df2629e7cc725610175198daf93848e40f76753 plus the Chromium-rendered sandbox evidence repair pending commit.
 
 origin/main:
-8e5adceadfef204f643293d7204b27bb7834e196
+6df2629e7cc725610175198daf93848e40f76753
 
 Working tree:
-Modified only for authoritative `chrome://sandbox` status, bounded Docker resources, runtime policy assertions, focused tests, and this execution-state update.
+Modified only to parse Chromium's rendered `chrome://sandbox` ZygoteHost table, fail an unsupported capability probe, add focused tests, and update this execution state.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29652632420` at `8e5adce` passed the complete container product path under `war-browser-agent` AppArmor plus the constrained seccomp profile. Acceptance still requires Chromium's own `ZygoteHost` sandbox flags and bounded Docker runtime facts in sanitized evidence.
+- GitHub Container Real World Gate `29652969620` at `6df2629` reached the secure runtime but timed out waiting for a nonexistent global `loadTimeData`; its probe artifact correctly remained unsupported. Chromium's current WebUI imports `loadTimeData` as an ES module and renders the authoritative ZygoteHost values into `#sandbox-status` and `#evaluation`.
 
 Next exact action:
-Commit and push authoritative sandbox/runtime proof, rerun the exact-head gate, and require `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
+Commit and push the Chromium-rendered status parser plus fail-closed probe, rerun the exact-head gate, and require `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

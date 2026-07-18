@@ -50,7 +50,9 @@ assert(JSON.stringify(chromiumRules.filter((rule) => rule.names[0] === 'clone').
 assert(chromiumRules.some((rule) => rule.names[0] === 'unshare' && rule.args[0].valueTwo === 0x10000000), 'Chromium user namespace unshare rule is missing');
 assert(chromiumRules.every((rule) => ['clone', 'unshare'].includes(rule.names[0])), 'Chromium seccomp additions must not allow unrelated syscalls');
 assert(browserController.includes("page.goto('chrome://sandbox/'"), 'Browser Agent must query Chromium sandbox status from chrome://sandbox');
-assert(browserController.includes('globalThis.loadTimeData.getBoolean'), 'Browser Agent must use Chromium WebUI sandbox booleans');
+assert(browserController.includes("document.querySelectorAll('#sandbox-status tr')"), 'Browser Agent must read the Chromium-rendered sandbox status table');
+assert(browserController.includes("document.querySelector('#evaluation')"), 'Browser Agent must read Chromium overall sandbox evaluation');
+assert(runtimes[2].includes('if (!report.classification.supported) process.exitCode = 1'), 'sandbox capability probe must fail CI when authoritative proof is unavailable');
 
 if (findings.length) {
   console.error(findings.join('\n'));

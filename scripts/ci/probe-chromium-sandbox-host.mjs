@@ -20,6 +20,7 @@ const NAMESPACE_CASES = Object.freeze({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   probeChromiumSandboxHost().then((report) => {
     console.log(JSON.stringify(report, null, 2));
+    if (!report.classification.supported) process.exitCode = 1;
   }).catch((error) => {
     console.error(`SANDBOX_HOST_PROBE_ERROR=${safeText(error.message)}`);
     process.exit(1);
@@ -160,9 +161,10 @@ async function runChromiumCase() {
   const script = [
     "import fs from 'node:fs/promises'",
     "import { chromium } from '/app/node_modules/playwright-core/index.js'",
+    "import { parseSandboxStatusSnapshot } from '/app/platform/browser-agent/src/browserController.js'",
     "const profile='/tmp/war-sandbox-probe-'+process.pid",
     "let context",
-    "try{context=await chromium.launchPersistentContext(profile,{executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>typeof globalThis.loadTimeData?.getBoolean==='function',null,{timeout:5000});const status=await page.evaluate(()=>Object.fromEntries(['suid','userNs','pidNs','netNs','seccompBpf','seccompTsync','sandboxGood'].map((key)=>[key,globalThis.loadTimeData.getBoolean(key)])));console.log(JSON.stringify(status))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}",
+    "try{context=await chromium.launchPersistentContext(profile,{executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>document.querySelectorAll('#sandbox-status tr').length>=5&&Boolean(document.querySelector('#evaluation')?.textContent?.trim()),null,{timeout:5000});const snapshot=await page.evaluate(()=>({rows:Array.from(document.querySelectorAll('#sandbox-status tr'),(row)=>Array.from(row.querySelectorAll('td'),(cell)=>cell.textContent?.trim()||'')),evaluation:document.querySelector('#evaluation')?.textContent?.trim()||''}));console.log(JSON.stringify(parseSandboxStatusSnapshot(snapshot)))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}",
   ].join(';');
   const result = await dockerRun(['--entrypoint', 'node', IMAGE, '--input-type=module', '-e', script], 30000);
   const combined = `${result.stdout}\n${result.stderr}`;

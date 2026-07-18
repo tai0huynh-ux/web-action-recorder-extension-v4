@@ -10,7 +10,7 @@ import { ArtifactRegistry } from '../src/artifactRegistry.js';
 import { SemanticController } from '../src/semanticController.js';
 import { RawInputController, InputQueue, createX11Backend } from '../src/rawInputController.js';
 import { X11InputClient, encodeX11Command, parseX11Response } from '../src/x11InputClient.js';
-import { BrowserController } from '../src/browserController.js';
+import { BrowserController, parseSandboxStatusSnapshot } from '../src/browserController.js';
 import { ControlDispatcher } from '../src/controlDispatcher.js';
 import { validateShortcut } from '../src/inputSafety.js';
 
@@ -217,12 +217,21 @@ test('phase2 internal pages allow extensions', async () => {
   assert.equal(tab.url, 'chrome://extensions/');
 });
 
-test('phase2 sandbox status returns only authoritative Chromium booleans', async () => {
+test('phase2 sandbox status parses the Chromium-rendered ZygoteHost table', async () => {
   const controller = fakeBrowserController();
   controller.context.newPage = async () => ({
     goto: async (url) => assert.equal(url, 'chrome://sandbox/'),
     waitForFunction: async () => {},
-    evaluate: async () => ({ suid: false, userNs: true, pidNs: true, netNs: true, seccompBpf: true, seccompTsync: true, sandboxGood: true }),
+    evaluate: async () => ({
+      rows: [
+        ['Layer 1 Sandbox', 'Namespace'],
+        ['PID namespaces', 'Yes'],
+        ['Network namespaces', 'Yes'],
+        ['Seccomp-BPF sandbox', 'Yes'],
+        ['Seccomp-BPF sandbox supports TSYNC', 'Yes'],
+      ],
+      evaluation: 'You are adequately sandboxed.',
+    }),
     close: async () => {},
   });
   assert.deepEqual(await controller.getSandboxStatus(), {
@@ -235,6 +244,13 @@ test('phase2 sandbox status returns only authoritative Chromium booleans', async
     seccompTsync: true,
     sandboxGood: true,
   });
+});
+
+test('phase2 sandbox status rejects incomplete Chromium-rendered evidence', () => {
+  assert.throws(() => parseSandboxStatusSnapshot({
+    rows: [['Layer 1 Sandbox', 'Namespace']],
+    evaluation: 'You are adequately sandboxed.',
+  }), /PID namespaces status is unavailable/);
 });
 
 test('phase2 internal pages block crash URL', async () => {
