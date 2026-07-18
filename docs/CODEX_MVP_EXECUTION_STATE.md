@@ -4,16 +4,16 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8 complete. All Workspace and UX Integration checkpoints, packaged GUI gate, and full regression passed.
+Phase 8 complete. All Workspace and UX Integration checkpoints, packaged GUI gate, full regression, and the post-completion production check coverage audit passed.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
 
-Last pushed green commit before final state update:
-034457d9a8182d2dffab92655fca0ad871eaebf9
+Last pushed green commit before the production check coverage checkpoint:
+db24da69cfc42417a94266d6d0bb653f7fbcb464
 
 Latest green checkpoint:
-Phase 8 Workspace and UX Integration full regression. This document is part of the final Phase 8 state checkpoint.
+Phase 8 production check coverage audit. `platform/protocol/src/protocolV2.js` is now included directly in `check:platform`; the other audited production files were already covered by `check:controller-core` or `check:controller-electron`.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
@@ -28,6 +28,10 @@ Phase 8 subphases remaining:
 - None.
 
 Tests passed for the latest checkpoint:
+- node --check platform/protocol/src/protocolV2.js
+- npm.cmd run test:platform:protocol
+- npm.cmd run check:platform
+- npm.cmd run test:controller-electron:packaged
 - node --test platform\controller-electron\test\rendererDom.test.js
 - npm.cmd run check:controller-electron
 - npm.cmd run test:controller-electron:unit
