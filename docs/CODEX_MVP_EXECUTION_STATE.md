@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; Electron import symlink and file-swap handling are repaired locally.
+Phase 9D security review is in progress; Browser Agent Docker base images are digest-pinned locally.
 
 Last green commit:
-24d15aab1d4d7904d902a5fccfd405febd646fda
+dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9
 
 HEAD:
-24d15aab1d4d7904d902a5fccfd405febd646fda with the intended Electron import file-safety repair uncommitted.
+dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9 with the intended Docker base-image digest pin uncommitted.
 
 origin/main:
-24d15aab1d4d7904d902a5fccfd405febd646fda
+dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9
 
 Working tree:
-Modified only for Electron import symlink/file-swap hardening, regression coverage, and this execution-state update.
+Modified only for immutable Browser Agent Docker base-image pinning, policy regression coverage, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Earlier blockers plus grouped dispatch hardening are fixed through `24d15aab1d4d7904d902a5fccfd405febd646fda`. Main-agent verification confirmed Electron import used path-based `stat` followed by path-based `readFile`, which followed symlinks and allowed a file-swap window. The local repair rejects symlinks, compares the opened handle identity with a second `lstat`, reads only from the stable handle, and enforces the byte cap during reading.
+In progress. Earlier blockers plus Electron import hardening are fixed through `dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9`. The official Docker Registry manifest-list digest for `node:22-bookworm-slim` was verified on 2026-07-18 and is pinned for both Browser Agent build stages; regression coverage rejects mutable Docker base tags.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate packaged GUI import handling, commit, and push Electron import hardening, then continue the remaining security/release findings.
+Validate release policy, commit, push, and run the Container Real World Gate for the exact Docker-pin commit.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

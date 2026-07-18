@@ -40,3 +40,11 @@ test('release file allowlists separate sidecar extension and browser agent packa
   assert(browserAgentFiles.includes('platform/browser-agent/src/terminalOutbox.js'));
   assert(browserAgentFiles.every((file) => !file.includes(`${path.sep}test${path.sep}`)));
 });
+
+test('Browser Agent Docker stages use an immutable multi-architecture base image digest', () => {
+  const dockerfile = fs.readFileSync(new URL('../../browser-agent/Dockerfile', import.meta.url), 'utf8');
+  const fromLines = dockerfile.split(/\r?\n/).filter((line) => line.startsWith('FROM '));
+  assert.equal(fromLines.length, 2);
+  assert(fromLines.every((line) => /^FROM node:22-bookworm-slim@sha256:[a-f0-9]{64}(?: AS native-build)?$/.test(line)));
+  assert.equal(new Set(fromLines.map((line) => line.match(/sha256:[a-f0-9]{64}/)[0])).size, 1);
+});

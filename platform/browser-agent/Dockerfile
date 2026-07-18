@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS native-build
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS native-build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -11,7 +11,7 @@ WORKDIR /native/x11-inputd
 COPY platform/browser-agent/native/x11-inputd ./
 RUN make
 
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
 
 ENV NODE_ENV=production \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
