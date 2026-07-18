@@ -7,11 +7,13 @@ const workflowPath = path.join(root, '.github', 'workflows', 'container-real-wor
 const adapterPath = path.join(root, 'platform', 'controller-electron', 'src', 'containerAdapter.js');
 const gatePath = path.join(root, 'platform', 'browser-agent', 'integration', 'realWorldContainerGate.js');
 const probePath = path.join(root, 'scripts', 'ci', 'probe-chromium-sandbox-host.mjs');
+const dockerfilePath = path.join(root, 'platform', 'browser-agent', 'Dockerfile');
 const findings = [];
 
 const profile = fs.readFileSync(profilePath, 'utf8');
 const workflow = fs.readFileSync(workflowPath, 'utf8');
 const runtimes = [adapterPath, gatePath, probePath].map((file) => fs.readFileSync(file, 'utf8'));
+const dockerfile = fs.readFileSync(dockerfilePath, 'utf8');
 
 assert((profile.match(/^\s*userns,\s*$/gm) || []).length === 1, 'AppArmor profile must contain exactly one userns rule');
 assert(profile.includes('/usr/lib/chromium/chromium cx -> chromium,'), 'AppArmor userns transition must target the exact Chromium binary');
@@ -24,8 +26,11 @@ assert(workflow.includes('sudo apparmor_parser -R'), 'workflow must unload the t
 for (const runtime of runtimes) {
   assert(runtime.includes("apparmor=war-browser-agent"), 'runtime must select the reviewed AppArmor profile');
   assert(!runtime.includes('apparmor=unconfined'), 'runtime must not disable AppArmor');
-  assert(runtime.includes('no-new-privileges:true'), 'userns sandbox runtime must retain no-new-privileges');
+  assert(!runtime.includes('no-new-privileges:true'), 'exact AppArmor userns transition must not be blocked by no-new-privileges');
 }
+assert(!/^\s*chromium-sandbox\s*\\?\s*$/m.test(dockerfile), 'userns-only image must not install the Chromium SUID helper package');
+assert(dockerfile.includes('test ! -e /usr/lib/chromium/chrome-sandbox'), 'image build must verify the Chromium SUID helper is absent');
+assert(dockerfile.includes('-exec chmod a-s {} +'), 'userns-only image must strip all SUID and SGID file bits');
 
 if (findings.length) {
   console.error(findings.join('\n'));

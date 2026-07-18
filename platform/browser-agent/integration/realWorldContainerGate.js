@@ -78,7 +78,6 @@ export async function runRealWorldContainerGate() {
       '--name', container,
       '--shm-size', '1g',
       '--user', 'war',
-      '--security-opt', 'no-new-privileges:true',
       '--security-opt', 'apparmor=war-browser-agent',
       '--network', 'bridge',
       '-p', '127.0.0.1::3766',

@@ -37,7 +37,6 @@ export class DockerContainerAdapter {
         '--label', `managed-by=${MANAGED_LABEL}`,
         '--restart', 'unless-stopped',
         '--user', 'war',
-        '--security-opt', 'no-new-privileges:true',
         '--security-opt', 'apparmor=war-browser-agent',
         '--network', 'bridge',
         '-p', `127.0.0.1::${CONTROL_PORT}`,
@@ -157,7 +156,6 @@ export class DockerContainerAdapter {
     const safe = config.User === 'war'
       && host.Privileged === false
       && host.NetworkMode !== 'host'
-      && securityOptions.some((option) => option === 'no-new-privileges' || option === 'no-new-privileges:true')
       && securityOptions.includes('apparmor=war-browser-agent')
       && binds.some((bind) => bind === `${volume}:/data`)
       && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))

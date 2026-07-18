@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; the host capability probe proved Ubuntu AppArmor userns restriction is the first denial layer, and the reviewed exact-path Chromium profile is pending exact-head verification.
+Phase 9D managed-container Docker verification; the exact Chromium AppArmor profile loaded successfully, and the next checkpoint removes the measured no-new-privileges transition conflict while eliminating the SUID helper from the userns-only image.
 
 Last green commit:
-86e6574fc7294d4bb93fc52eca6e86c74aa7292f
+c60288fddc5c3b1a85e6570c2c33a5bda28710c3
 
 HEAD:
-86e6574fc7294d4bb93fc52eca6e86c74aa7292f plus the exact-path AppArmor repair pending commit.
+c60288fddc5c3b1a85e6570c2c33a5bda28710c3 plus the userns-only transition repair pending commit.
 
 origin/main:
-86e6574fc7294d4bb93fc52eca6e86c74aa7292f
+c60288fddc5c3b1a85e6570c2c33a5bda28710c3
 
 Working tree:
-Modified only for the reviewed AppArmor profile, secure runtime selection, focused policy tests, workflow load/cleanup, and this execution-state update.
+Modified only to remove the SUID helper, permit the exact AppArmor userns transition, update capability classification/tests, and record execution state.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29651700291` at `86e6574` proved Ubuntu 24.04 enables AppArmor restricted unprivileged user namespaces and `docker-default` denies all measured nested namespace cases. Docker seccomp remains an expected second layer and must be measured after the exact Chromium AppArmor transition loads.
+- GitHub Container Real World Gate `29652018736` at `c60288f` proved the root-owned `war-browser-agent` profile loads in enforce mode, but `no-new-privileges` blocks the exact transition to its Chromium userns child profile (`exec` exit 126). The image must be userns-only before removing that conflicting runtime option.
 
 Next exact action:
-Commit and push the exact-path AppArmor repair, rerun the capability probe and real-world gate, then use the resulting namespace matrix to constrain Docker seccomp without adding capabilities or disabling confinement.
+Commit and push the userns-only transition repair, rerun the capability probe and real-world gate, then constrain Docker seccomp only if Chromium reaches the namespace creation boundary.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

@@ -27,6 +27,23 @@ test('classifies no-new-privileges conflict from Chromium evidence', () => {
   assert.equal(result.code, 'NO_NEW_PRIVILEGES_CONFLICT');
 });
 
+test('classifies an AppArmor transition blocked by no-new-privileges', () => {
+  const result = classifySandboxCapability(evidence({
+    runtime: { noNewPrivileges: true, appArmorProfile: 'war-browser-agent (enforce)' },
+    chromium: { signals: { execDenied: true } },
+  }));
+  assert.equal(result.code, 'NO_NEW_PRIVILEGES_CONFLICT');
+});
+
+test('classifies Chromium namespace denial behind the exact AppArmor profile as seccomp', () => {
+  const result = classifySandboxCapability(evidence({
+    runtime: { seccompMode: 2, appArmorProfile: 'war-browser-agent (enforce)' },
+    namespaces: { user: { ok: false } },
+    chromium: { signals: { namespaceFailure: true } },
+  }));
+  assert.equal(result.code, 'DOCKER_SECCOMP_DENIED');
+});
+
 test('accepts the secure user namespace baseline only when all cases pass', () => {
   const result = classifySandboxCapability(evidence({
     namespaces: Object.fromEntries(['user', 'pid', 'network', 'mount', 'combined'].map((name) => [name, { ok: true }])),

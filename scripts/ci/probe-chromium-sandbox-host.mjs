@@ -46,7 +46,7 @@ export async function probeChromiumSandboxHost() {
       user: 'war',
       privileged: false,
       networkMode: 'bridge',
-      noNewPrivileges: true,
+      noNewPrivileges: false,
       seccomp: 'docker-default',
       appArmor: 'war-browser-agent',
       addedCapabilities: [],
@@ -64,16 +64,17 @@ export async function probeChromiumSandboxHost() {
 export function classifySandboxCapability(evidence) {
   const { host = {}, runtime = {}, namespaces = {}, chromium = {} } = evidence || {};
   const fail = (code, reason) => ({ code, supported: false, reason });
+  const exactChromiumProfile = String(runtime.appArmorProfile || '').startsWith('war-browser-agent');
   if (chromium.forbiddenFlagsPresent) return fail('CHROMIUM_CONFIG_INVALID', 'Forbidden Chromium sandbox flags are configured.');
   if (host.containerized && !namespaces.combined?.ok) return fail('RUNNER_NESTING_UNSUPPORTED', 'The outer runner is containerized and blocks the combined namespace operation.');
   if (host.unprivilegedUsernsClone === 0 || host.maxUserNamespaces === 0) return fail('HOST_USERNS_RESTRICTED', 'Host user namespaces are disabled.');
-  if (host.appArmorAvailable && host.appArmorRestrictUnprivilegedUserns === 1 && !namespaces.user?.ok) {
+  if (host.appArmorAvailable && host.appArmorRestrictUnprivilegedUserns === 1 && !namespaces.user?.ok && !exactChromiumProfile) {
     return fail('HOST_APPARMOR_DENIED', 'Host AppArmor user-namespace restriction blocks the non-root runtime.');
   }
-  if (runtime.noNewPrivileges && chromium.signals?.noNewPrivilegesConflict) {
-    return fail('NO_NEW_PRIVILEGES_CONFLICT', 'Chromium attempted the SUID helper while no-new-privileges was active.');
+  if (runtime.noNewPrivileges && (chromium.signals?.noNewPrivilegesConflict || chromium.signals?.execDenied)) {
+    return fail('NO_NEW_PRIVILEGES_CONFLICT', 'No-new-privileges blocked the measured Chromium sandbox boundary.');
   }
-  if (!namespaces.user?.ok && runtime.seccompMode === 2 && host.unprivilegedUsernsClone !== 0) {
+  if (runtime.seccompMode === 2 && host.unprivilegedUsernsClone !== 0 && (chromium.signals?.namespaceFailure || (!exactChromiumProfile && !namespaces.user?.ok))) {
     return fail('DOCKER_SECCOMP_DENIED', 'Docker seccomp is the remaining measured policy layer for user namespace creation.');
   }
   if (!namespaces.user?.ok && runtime.suidHelper?.present && !runtime.suidHelper.valid) {
@@ -165,6 +166,7 @@ async function runChromiumCase() {
     signals: {
       operationNotPermitted: /Operation not permitted|EPERM/i.test(combined),
       namespaceFailure: /namespace/i.test(combined),
+      execDenied: /exec: .*Operation not permitted/i.test(combined),
       noUsableSandbox: /No usable sandbox/i.test(combined),
       noNewPrivilegesConflict: /no.new.priv|PR_SET_NO_NEW_PRIVS/i.test(combined),
       suidHelperFailure: /setuid sandbox|SUID sandbox/i.test(combined),
@@ -176,7 +178,6 @@ function dockerRun(extraArgs, timeout = 15000) {
   return command('docker', [
     'run', '--rm',
     '--user', 'war',
-    '--security-opt', 'no-new-privileges:true',
     '--security-opt', 'apparmor=war-browser-agent',
     '--network', 'bridge',
     ...extraArgs,

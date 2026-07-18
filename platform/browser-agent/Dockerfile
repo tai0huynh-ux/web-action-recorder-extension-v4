@@ -27,7 +27,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       chromium \
-      chromium-sandbox \
       dumb-init \
       fonts-liberation \
       fonts-noto-color-emoji \
@@ -37,6 +36,10 @@ RUN apt-get update \
       x11-utils \
       xvfb \
     && rm -rf /var/lib/apt/lists/*
+
+RUN find / -xdev -type f \( -perm /4000 -o -perm /2000 \) -exec chmod a-s {} + \
+    && test ! -e /usr/lib/chromium/chrome-sandbox \
+    && test -z "$(find / -xdev -type f \( -perm /4000 -o -perm /2000 \) -print -quit)"
 
 WORKDIR /app
 
