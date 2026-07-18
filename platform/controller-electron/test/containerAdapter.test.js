@@ -33,6 +33,7 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(run.args.includes('--user') && run.args.includes('war'), true);
   assert.equal(run.args.includes('no-new-privileges:true'), false);
   assert.equal(run.args.includes('apparmor=war-browser-agent'), true);
+  assert.equal(run.args.includes('seccomp=C:/war/security/chromium-userns-seccomp.json'), true);
   assert.equal(run.args.some((arg) => String(arg).includes('/var/run/docker.sock')), false);
   assert.equal(run.args.some((arg) => String(arg).includes(credential)), false);
   assert.deepEqual(run.args.filter((arg, index) => run.args[index - 1] === '-e'), [
@@ -81,7 +82,7 @@ test('managed Docker adapter uses bounded SSH Docker commands', async () => {
     execFileImpl: async (file, args) => {
       calls.push({ file, args });
       if (args[4]?.includes("'{{.State.Status}}'")) return { stdout: 'running\n', stderr: '' };
-      return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
+      return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
     },
   });
 
@@ -101,7 +102,7 @@ test('managed SSH Docker creation streams the credential separately from safe en
     execFileImpl: async (file, args) => {
       execCalls.push({ file, args });
       if (args[4]?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args[4]?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
+      if (args[4]?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
@@ -142,6 +143,9 @@ function managedConfig(runtime) {
       sshTarget: runtime === 'ssh-docker' ? 'operator@agent.example' : undefined,
       timeoutMs: 1000,
       hostLabel: runtime,
+      seccompProfilePath: runtime === 'ssh-docker'
+        ? '/etc/war/security/chromium-userns-seccomp.json'
+        : 'C:/war/security/chromium-userns-seccomp.json',
     },
   };
 }
@@ -168,7 +172,7 @@ function safeInspection(overrides = {}) {
     HostConfig: {
       Privileged: false,
       NetworkMode: 'bridge',
-      SecurityOpt: ['apparmor=war-browser-agent'],
+      SecurityOpt: ['apparmor=war-browser-agent', 'seccomp=C:/war/security/chromium-userns-seccomp.json'],
       Binds: ['war-agent-one-data:/data'],
       PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
     },
@@ -179,6 +183,10 @@ function safeInspection(overrides = {}) {
     Config: { ...base.Config, ...(overrides.Config || {}) },
     HostConfig: { ...base.HostConfig, ...(overrides.HostConfig || {}) },
   };
+}
+
+function remoteSecurityOptions() {
+  return { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', 'seccomp=/etc/war/security/chromium-userns-seccomp.json'] } };
 }
 
 function fakeSpawn(calls) {

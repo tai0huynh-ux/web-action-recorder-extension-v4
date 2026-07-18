@@ -15,6 +15,8 @@ test('release file allowlists keep controller package scoped to runtime files', 
   assert(controllerFiles.includes('src/graph.js'));
   assert(controllerFiles.includes('src/shared.js'));
   assert(controllerFiles.includes('platform/diagnostics/src/redaction.js'));
+  assert(controllerFiles.includes('platform/container/security/chromium-userns-seccomp.json'));
+  assert(controllerFiles.includes('platform/container/security/war-browser-agent.apparmor'));
   assert(controllerFiles.every((file) => !file.includes('/test/') && !file.includes('/integration/')));
   assert(controllerFiles.every((file) => !file.startsWith('artifacts/') && !file.startsWith('docs/')));
 });
@@ -23,6 +25,7 @@ test('electron builder package includes shared runtime diagnostics', () => {
   const config = fs.readFileSync(new URL('../release/electron-builder.config.cjs', import.meta.url), 'utf8');
   assert.match(config, /platform\/diagnostics\/src\/\*\*/);
   assert.match(config, /platform\/input-parser\/src\/\*\*/);
+  assert.match(config, /platform\/container\/security\/\*\*/);
   assert.match(config, /src\/graph\.js/);
   assert.match(config, /src\/shared\.js/);
 });
@@ -36,6 +39,7 @@ test('release file allowlists separate sidecar extension and browser agent packa
   assert(browserAgentFiles.includes('native-host/install.js'));
   assert(browserAgentFiles.includes('platform/protocol/src/schemaValidator.js'));
   assert(browserAgentFiles.includes('platform/diagnostics/src/redaction.js'));
+  assert(browserAgentFiles.includes('platform/container/security/chromium-userns-seccomp.json'));
   assert(browserAgentFiles.includes('platform/workflow-core/src/workflowMetadata.js'));
   assert(browserAgentFiles.includes('platform/browser-agent/src/terminalOutbox.js'));
   assert(browserAgentFiles.every((file) => !file.includes(`${path.sep}test${path.sep}`)));

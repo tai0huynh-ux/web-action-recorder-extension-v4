@@ -38,6 +38,7 @@ export class DockerContainerAdapter {
         '--restart', 'unless-stopped',
         '--user', 'war',
         '--security-opt', 'apparmor=war-browser-agent',
+        '--security-opt', `seccomp=${this.seccompProfilePath()}`,
         '--network', 'bridge',
         '-p', `127.0.0.1::${CONTROL_PORT}`,
         '-v', `${volume}:/data`,
@@ -109,6 +110,17 @@ export class DockerContainerAdapter {
     return `wss://${host}:${port}/v1/agent-session`;
   }
 
+  seccompProfilePath() {
+    const value = this.config.seccompProfilePath;
+    if (typeof value !== 'string' || value.length < 2 || value.length > 512 || /[\r\n]/.test(value)) {
+      throw new Error('Managed container seccomp profile path is invalid');
+    }
+    if (this.config.runtime === 'ssh-docker' && !/^\/[A-Za-z0-9._/-]+$/.test(value)) {
+      throw new Error('Managed SSH container seccomp profile path must be absolute');
+    }
+    return value;
+  }
+
   async runtime(name, volume) {
     return this.inspectRuntime(name, volume, { approvedImage: this.config.image || DEFAULT_IMAGE });
   }
@@ -157,6 +169,7 @@ export class DockerContainerAdapter {
       && host.Privileged === false
       && host.NetworkMode !== 'host'
       && securityOptions.includes('apparmor=war-browser-agent')
+      && securityOptions.includes(`seccomp=${this.seccompProfilePath()}`)
       && binds.some((bind) => bind === `${volume}:/data`)
       && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))
       && portBindings.length > 0

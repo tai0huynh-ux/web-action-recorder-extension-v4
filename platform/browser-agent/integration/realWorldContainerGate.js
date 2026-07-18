@@ -18,6 +18,7 @@ import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 import { redactDiagnostic } from '../../diagnostics/src/redaction.js';
 
 const IMAGE = 'war-browser-agent:phase1';
+const SECCOMP_PROFILE = path.resolve('platform/container/security/chromium-userns-seccomp.json');
 const QUERY = 'hom nay that vui';
 const ARTIFACT_DIR = path.resolve('artifacts/container-real-world');
 const DEVICE_ID = 'container-real-world-device';
@@ -79,6 +80,7 @@ export async function runRealWorldContainerGate() {
       '--shm-size', '1g',
       '--user', 'war',
       '--security-opt', 'apparmor=war-browser-agent',
+      '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
       '--network', 'bridge',
       '-p', '127.0.0.1::3766',
       '--add-host', 'host.docker.internal:host-gateway',

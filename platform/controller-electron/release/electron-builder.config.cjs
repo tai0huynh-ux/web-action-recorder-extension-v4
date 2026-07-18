@@ -31,6 +31,7 @@ module.exports = {
     'platform/controller-core/src/**/*',
     'platform/controller-wss/src/**/*',
     'platform/diagnostics/src/**/*',
+    'platform/container/security/**/*',
     'platform/input-parser/src/**/*',
     'platform/protocol/src/**/*',
     'platform/workflow-core/src/**/*',

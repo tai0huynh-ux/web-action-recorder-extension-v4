@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 const execFileP = promisify(execFile);
 const IMAGE = process.env.WAR_SANDBOX_PROBE_IMAGE || 'war-browser-agent:phase1';
 const ARTIFACT = path.resolve('artifacts/container-real-world/sandbox-host-capability.json');
+const SECCOMP_PROFILE = path.resolve('platform/container/security/chromium-userns-seccomp.json');
 const NAMESPACE_CASES = Object.freeze({
   user: ['--user', '--map-root-user', '/bin/true'],
   pid: ['--user', '--map-root-user', '--pid', '--fork', '/bin/true'],
@@ -47,7 +48,7 @@ export async function probeChromiumSandboxHost() {
       privileged: false,
       networkMode: 'bridge',
       noNewPrivileges: false,
-      seccomp: 'docker-default',
+      seccomp: 'chromium-userns-seccomp',
       appArmor: 'war-browser-agent',
       addedCapabilities: [],
       dockerSocketMounted: false,
@@ -179,6 +180,7 @@ function dockerRun(extraArgs, timeout = 15000) {
     'run', '--rm',
     '--user', 'war',
     '--security-opt', 'apparmor=war-browser-agent',
+    '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
     '--network', 'bridge',
     ...extraArgs,
   ], timeout);

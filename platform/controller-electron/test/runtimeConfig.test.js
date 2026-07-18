@@ -95,11 +95,13 @@ test('public runtime config redacts managed container paths and target details',
       WAR_CONTAINER_RUNTIME: 'ssh-docker',
       WAR_CONTAINER_SSH_TARGET: 'root@192.0.2.20',
       WAR_CONTAINER_CONTROLLER_CA_PATH: ca,
+      WAR_CONTAINER_SECCOMP_PROFILE_PATH: '/etc/war/security/chromium-userns-seccomp.json',
     },
   });
   const dto = toPublicRuntimeConfig(config);
   assert.equal(dto.containers.enabled, true);
   assert.equal(dto.containers.controllerCa, 'ca.pem');
+  assert.equal(dto.containers.seccompProfile, 'chromium-userns-seccomp.json');
   assert.equal(JSON.stringify(dto).includes('root@192.0.2.20'), false);
   assert.equal(JSON.stringify(dto).includes(dir), false);
 });

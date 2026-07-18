@@ -1,2 +1,4 @@
 Dockerfile text eol=lf
 *.sh text eol=lf
+platform/container/security/*.json text eol=lf
+platform/container/security/*.apparmor text eol=lf

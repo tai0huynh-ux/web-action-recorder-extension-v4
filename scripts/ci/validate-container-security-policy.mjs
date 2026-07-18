@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const root = process.cwd();
 const profilePath = path.join(root, 'platform', 'container', 'security', 'war-browser-agent.apparmor');
@@ -8,12 +9,15 @@ const adapterPath = path.join(root, 'platform', 'controller-electron', 'src', 'c
 const gatePath = path.join(root, 'platform', 'browser-agent', 'integration', 'realWorldContainerGate.js');
 const probePath = path.join(root, 'scripts', 'ci', 'probe-chromium-sandbox-host.mjs');
 const dockerfilePath = path.join(root, 'platform', 'browser-agent', 'Dockerfile');
+const seccompPath = path.join(root, 'platform', 'container', 'security', 'chromium-userns-seccomp.json');
 const findings = [];
 
 const profile = fs.readFileSync(profilePath, 'utf8');
 const workflow = fs.readFileSync(workflowPath, 'utf8');
 const runtimes = [adapterPath, gatePath, probePath].map((file) => fs.readFileSync(file, 'utf8'));
 const dockerfile = fs.readFileSync(dockerfilePath, 'utf8');
+const seccompText = fs.readFileSync(seccompPath, 'utf8');
+const seccomp = JSON.parse(seccompText);
 
 assert((profile.match(/^\s*userns,\s*$/gm) || []).length === 1, 'AppArmor profile must contain exactly one userns rule');
 assert(profile.includes('/usr/lib/chromium/chromium cx -> chromium,'), 'AppArmor userns transition must target the exact Chromium binary');
@@ -25,12 +29,21 @@ assert(workflow.includes('sudo apparmor_parser -r -W'), 'workflow must load the 
 assert(workflow.includes('sudo apparmor_parser -R'), 'workflow must unload the temporary AppArmor profile');
 for (const runtime of runtimes) {
   assert(runtime.includes("apparmor=war-browser-agent"), 'runtime must select the reviewed AppArmor profile');
+  assert(runtime.includes('seccomp='), 'runtime must select the reviewed seccomp profile');
   assert(!runtime.includes('apparmor=unconfined'), 'runtime must not disable AppArmor');
   assert(!runtime.includes('no-new-privileges:true'), 'exact AppArmor userns transition must not be blocked by no-new-privileges');
 }
 assert(!/^\s*chromium-sandbox\s*\\?\s*$/m.test(dockerfile), 'userns-only image must not install the Chromium SUID helper package');
 assert(dockerfile.includes('test ! -e /usr/lib/chromium/chrome-sandbox'), 'image build must verify the Chromium SUID helper is absent');
 assert(dockerfile.includes('-exec chmod a-s {} +'), 'userns-only image must strip all SUID and SGID file bits');
+assert(crypto.createHash('sha256').update(seccompText).digest('hex') === 'e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d', 'Chromium seccomp profile hash changed without review');
+assert(seccomp.defaultAction === 'SCMP_ACT_ERRNO', 'Chromium seccomp profile must retain the Docker default deny action');
+const chromiumRules = seccomp.syscalls.filter((rule) => String(rule.comment || '').startsWith('Allow Chromium'));
+assert(chromiumRules.length === 4, 'Chromium seccomp profile must add exactly four reviewed rules');
+assert(chromiumRules.every((rule) => rule.action === 'SCMP_ACT_ALLOW' && rule.args?.length === 1 && rule.args[0].op === 'SCMP_CMP_MASKED_EQ' && rule.args[0].value === 0x7e020000), 'Chromium seccomp additions must use the reviewed namespace mask');
+assert(JSON.stringify(chromiumRules.filter((rule) => rule.names[0] === 'clone').map((rule) => rule.args[0].valueTwo).sort((a, b) => a - b)) === JSON.stringify([0x10000000, 0x20000000, 0x70000000]), 'Chromium clone namespace combinations changed');
+assert(chromiumRules.some((rule) => rule.names[0] === 'unshare' && rule.args[0].valueTwo === 0x10000000), 'Chromium user namespace unshare rule is missing');
+assert(chromiumRules.every((rule) => ['clone', 'unshare'].includes(rule.names[0])), 'Chromium seccomp additions must not allow unrelated syscalls');
 
 if (findings.length) {
   console.error(findings.join('\n'));

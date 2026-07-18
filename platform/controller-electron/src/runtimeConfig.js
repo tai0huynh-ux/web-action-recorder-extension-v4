@@ -21,6 +21,7 @@ export function resolveElectronRuntimeConfig({
   const containerSshTarget = env.WAR_CONTAINER_SSH_TARGET || '';
   const containerControllerHost = env.WAR_CONTAINER_CONTROLLER_HOST || '';
   const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
+  const containerSeccompProfilePath = env.WAR_CONTAINER_SECCOMP_PROFILE_PATH || '';
   const containerImage = env.WAR_CONTAINER_IMAGE || 'war-browser-agent:phase1';
   const wssRequested = env.WAR_CONTROLLER_WSS_ENABLED === '1' || Boolean(certPath || keyPath);
   const errors = [];
@@ -39,6 +40,9 @@ export function resolveElectronRuntimeConfig({
   if (containerRuntime === 'ssh-docker' && !containerSshTarget) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_TARGET');
   if (containerRuntime !== 'disabled' && !wssRequested) errors.push('Managed containers require WSS Controller configuration');
   if (containerRuntime === 'local-docker' && containerControllerCaPath && !isReadable(fs, containerControllerCaPath)) errors.push('Container Controller CA file is not readable');
+  if (containerRuntime !== 'disabled' && !containerSeccompProfilePath) errors.push('Managed containers require WAR_CONTAINER_SECCOMP_PROFILE_PATH');
+  if (containerRuntime === 'local-docker' && containerSeccompProfilePath && !isReadable(fs, containerSeccompProfilePath)) errors.push('Container seccomp profile is not readable');
+  if (containerRuntime === 'ssh-docker' && containerSeccompProfilePath && !/^\/[A-Za-z0-9._/-]+$/.test(containerSeccompProfilePath)) errors.push('SSH container seccomp profile path must be absolute');
 
   const wssEnabled = wssRequested && errors.length === 0;
   const containersEnabled = containerRuntime !== 'disabled' && errors.length === 0;
@@ -66,6 +70,7 @@ export function resolveElectronRuntimeConfig({
       sshTarget: containerSshTarget || null,
       controllerHost: containerControllerHost || null,
       controllerCaPath: containerControllerCaPath || null,
+      seccompProfilePath: containerSeccompProfilePath || null,
       image: containerImage,
       timeoutMs: 120000,
       hostLabel: containerRuntime === 'ssh-docker' ? 'ssh-docker' : 'local-docker',
@@ -95,6 +100,7 @@ export function toPublicRuntimeConfig(config) {
       host: config.containers?.hostLabel || null,
       sshConfigured: Boolean(config.containers?.sshTarget),
       controllerCa: config.containers?.controllerCaPath ? nodePath.basename(config.containers.controllerCaPath) : null,
+      seccompProfile: config.containers?.seccompProfilePath ? nodePath.basename(config.containers.seccompProfilePath) : null,
     },
   });
 }

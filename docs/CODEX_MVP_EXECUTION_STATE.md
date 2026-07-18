@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; the exact Chromium AppArmor profile loaded successfully, and the next checkpoint removes the measured no-new-privileges transition conflict while eliminating the SUID helper from the userns-only image.
+Phase 9D managed-container Docker verification; AppArmor and the userns-only image are verified, and the remaining measured blocker is Docker default seccomp denying Chromium namespace syscalls.
 
 Last green commit:
-c60288fddc5c3b1a85e6570c2c33a5bda28710c3
+c4d9eeecc1443f5d0400b5d34a333158024e47c7
 
 HEAD:
-c60288fddc5c3b1a85e6570c2c33a5bda28710c3 plus the userns-only transition repair pending commit.
+c4d9eeecc1443f5d0400b5d34a333158024e47c7 plus the constrained seccomp repair pending commit.
 
 origin/main:
-c60288fddc5c3b1a85e6570c2c33a5bda28710c3
+c4d9eeecc1443f5d0400b5d34a333158024e47c7
 
 Working tree:
-Modified only to remove the SUID helper, permit the exact AppArmor userns transition, update capability classification/tests, and record execution state.
+Modified only for the pinned Docker-default-derived seccomp profile, exact runtime wiring, integrity/policy tests, release inclusion, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29652018736` at `c60288f` proved the root-owned `war-browser-agent` profile loads in enforce mode, but `no-new-privileges` blocks the exact transition to its Chromium userns child profile (`exec` exit 126). The image must be userns-only before removing that conflicting runtime option.
+- GitHub Container Real World Gate `29652248884` at `c4d9eee` proved the exact AppArmor transition succeeds, the SUID helper is absent, and Chromium reaches its namespace probe before reporting `No usable sandbox`; the capability probe classified the remaining layer as `DOCKER_SECCOMP_DENIED`.
 
 Next exact action:
-Commit and push the userns-only transition repair, rerun the capability probe and real-world gate, then constrain Docker seccomp only if Chromium reaches the namespace creation boundary.
+Commit and push the constrained seccomp profile, rerun the capability probe and real-world gate, and reject the profile if any unrelated syscall or namespace flag is required.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
