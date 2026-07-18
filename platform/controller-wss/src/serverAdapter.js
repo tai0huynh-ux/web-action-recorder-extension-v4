@@ -36,6 +36,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
     connection.on?.('message', async (message) => {
       const response = await this.handleMessage(message, state, credential, () => connection.close?.());
       if (response) connection.send?.(JSON.stringify(response));
+      if (!state.session && response?.payload?.ok === false) connection.close?.();
     });
     return cleanup;
   }
@@ -49,6 +50,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
       if (envelope.protocolVersion !== PROTOCOL_VERSION) throw publicError('protocol_version_rejected', 'Protocol version rejected', 426);
       if (envelope.type === 'agent.hello') {
         state.session = await this.sessionManager.authenticateHello(envelope, { credential });
+        state.connection?.markAuthenticated?.();
         this.sessionManager.attachClose(state.session.deviceId, state.session.generation, close);
         this.registerActiveConnection(state.session, state.connection || null);
         return this.response(envelope, { ok: true, session: state.session, replay: await this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });

@@ -44,8 +44,22 @@ test('controller WSS adapter registers only authenticated active connections', a
   await tick();
   const session = core.sessions.getPublicSession('dev-a');
   const result = adapter.sendDispatch('dev-a', session.generation, dispatchPayload());
+  assert.equal(unauthenticated.authenticated, true);
   assert.deepEqual(result, { delivered: true, deviceId: 'dev-a', generation: session.generation });
   assert.equal(JSON.parse(unauthenticated.sent.at(-1)).type, 'execution.dispatch');
+});
+
+test('controller WSS adapter closes a connection after pre-authentication failure', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const connection = new FakeConnection();
+  adapter.accept(connection, { credential: 'wrong-credential' });
+
+  connection.emit('message', JSON.stringify(agentHello()));
+  await tick();
+
+  assert.equal(connection.closed, true);
+  assert.equal(connection.authenticated, false);
 });
 
 test('controller WSS adapter replaces same-device connections and ignores stale close', async () => {
@@ -200,6 +214,23 @@ test('runtime WSS wrapper accepts configured path with Authorization and rejects
   }
 });
 
+test('runtime WSS wrapper caps connections and closes clients that miss the hello deadline', async () => {
+  const server = http.createServer();
+  const adapter = { accept() {} };
+  const runtime = new ControllerWssRuntimeServer({ server, adapter, maxConnections: 1, authenticationTimeoutMs: 100 });
+  await listen(server);
+  try {
+    const { port } = server.address();
+    const first = await connect(`ws://127.0.0.1:${port}/v1/agent-session`, { Authorization: 'Bearer credential-a' });
+    await assert.rejects(() => connect(`ws://127.0.0.1:${port}/v1/agent-session`, { Authorization: 'Bearer credential-b' }));
+    await waitForClose(first);
+    assert.equal(runtime.connections.size, 0);
+  } finally {
+    runtime.shutdown();
+    await close(server);
+  }
+});
+
 class FakeConnection extends EventEmitter {
   constructor() {
     super();
@@ -207,6 +238,7 @@ class FakeConnection extends EventEmitter {
     this.closed = false;
     this.open = true;
     this.failSend = false;
+    this.authenticated = false;
   }
 
   send(message) {
@@ -222,6 +254,10 @@ class FakeConnection extends EventEmitter {
     this.closed = true;
     this.open = false;
     this.emit('close');
+  }
+
+  markAuthenticated() {
+    this.authenticated = true;
   }
 }
 
@@ -366,4 +402,9 @@ function connect(url, headers) {
     socket.on('close', () => resolve(socket));
     socket.on('error', reject);
   });
+}
+
+function waitForClose(socket) {
+  if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();
+  return new Promise((resolve) => socket.once('close', resolve));
 }

@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; managed-container deletion revocation is repaired locally.
+Phase 9D security review is in progress; WSS pre-authentication resource controls are repaired locally.
 
 Last green commit:
-110cdf31d8c32fdbf8600212821eb4ec66626fef
+ee6253254d2ec8f44e4912c68f7c9efd96b78832
 
 HEAD:
-110cdf31d8c32fdbf8600212821eb4ec66626fef with the intended managed-container deletion revocation repair uncommitted.
+ee6253254d2ec8f44e4912c68f7c9efd96b78832 with the intended WSS resource-control repair uncommitted.
 
 origin/main:
-110cdf31d8c32fdbf8600212821eb4ec66626fef
+ee6253254d2ec8f44e4912c68f7c9efd96b78832
 
 Working tree:
-Modified only for the focused managed-container deletion revocation repair, regression tests, and this execution-state update.
+Modified only for the focused WSS connection-cap/authentication-timeout repair, regression tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container session credentials no longer appear in process argv after checkpoint `110cdf31d8c32fdbf8600212821eb4ec66626fef`. Main-agent review also confirmed that deletion left pairing credentials active and suppressed Docker cleanup failures; the local repair revokes the device, closes its authoritative session, propagates cleanup failure, and refuses to report registry deletion when runtime cleanup fails.
+In progress. Managed-container credential transport and deletion security blockers are fixed through `ee6253254d2ec8f44e4912c68f7c9efd96b78832`. Main-agent verification confirmed unbounded pre-authentication WSS sockets and missing hello deadlines; the local repair adds a bounded connection registry, authentication timeout, authenticated-state promotion, and close-on-pre-authentication-error behavior.
 
 Release gate:
 Phase 9B local release integrity, packaged Controller, and release gate pass after lockfile reinstall. Phase 9 final release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push the managed-container deletion revocation repair, then continue independent verification of the remaining Phase 9D findings.
+Validate, commit, and push the WSS resource-control repair, then continue independent verification of workflow hash and terminal exact-once findings.
 
 Remaining MVP work:
 - Phase 9C through Phase 9F.

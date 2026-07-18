@@ -2,19 +2,25 @@ import { EventEmitter } from 'node:events';
 import { WebSocketServer } from 'ws';
 
 const DEFAULT_PATH = '/v1/agent-session';
+const DEFAULT_MAX_CONNECTIONS = 256;
+const DEFAULT_AUTHENTICATION_TIMEOUT_MS = 10000;
 
 export class ControllerWssRuntimeServer {
   constructor({
     server,
     adapter,
     path = DEFAULT_PATH,
-    maxPayloadBytes = 1024 * 1024
+    maxPayloadBytes = 1024 * 1024,
+    maxConnections = DEFAULT_MAX_CONNECTIONS,
+    authenticationTimeoutMs = DEFAULT_AUTHENTICATION_TIMEOUT_MS,
   } = {}) {
     if (!server) throw new Error('Controller WSS runtime requires an HTTP or HTTPS server');
     if (!adapter) throw new Error('Controller WSS runtime requires an adapter');
     this.server = server;
     this.adapter = adapter;
     this.path = path;
+    this.maxConnections = maxConnections;
+    this.authenticationTimeoutMs = authenticationTimeoutMs;
     this.closed = false;
     this.connections = new Set();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
@@ -25,10 +31,11 @@ export class ControllerWssRuntimeServer {
   handleUpgrade(request, socket, head) {
     if (this.closed) return rejectUpgrade(socket, 503);
     if (new URL(request.url, 'http://127.0.0.1').pathname !== this.path) return rejectUpgrade(socket, 404);
+    if (this.connections.size >= this.maxConnections) return rejectUpgrade(socket, 503);
     const parsed = parseAuthorization(request.headers.authorization);
     if (!parsed.ok) return rejectUpgrade(socket, 401);
     this.wss.handleUpgrade(request, socket, head, (ws) => {
-      const connection = new WsConnection(ws);
+      const connection = new WsConnection(ws, this.authenticationTimeoutMs);
       this.connections.add(connection);
       connection.on('close', () => this.connections.delete(connection));
       this.adapter.accept(connection, { credential: parsed.credential });
@@ -55,12 +62,15 @@ export function parseAuthorization(header) {
 }
 
 class WsConnection extends EventEmitter {
-  constructor(ws) {
+  constructor(ws, authenticationTimeoutMs) {
     super();
     this.ws = ws;
+    this.authenticated = false;
+    this.authenticationTimer = setTimeout(() => this.close(), authenticationTimeoutMs);
+    this.authenticationTimer.unref?.();
     ws.on('message', (message) => this.emit('message', normalizeMessage(message)));
-    ws.on('close', () => this.emit('close'));
-    ws.on('error', () => this.emit('close'));
+    ws.on('close', () => this.handleClose());
+    ws.on('error', () => this.handleClose());
   }
 
   send(message) {
@@ -71,13 +81,24 @@ class WsConnection extends EventEmitter {
     return this.ws.readyState === 1;
   }
 
+  markAuthenticated() {
+    this.authenticated = true;
+    clearTimeout(this.authenticationTimer);
+  }
+
   close() {
+    clearTimeout(this.authenticationTimer);
     this.ws.close();
+  }
+
+  handleClose() {
+    clearTimeout(this.authenticationTimer);
+    this.emit('close');
   }
 }
 
 function rejectUpgrade(socket, statusCode) {
-  const label = statusCode === 404 ? 'Not Found' : 'Unauthorized';
+  const label = statusCode === 404 ? 'Not Found' : statusCode === 503 ? 'Service Unavailable' : 'Unauthorized';
   socket.write(`HTTP/1.1 ${statusCode} ${label}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   socket.destroy();
 }
