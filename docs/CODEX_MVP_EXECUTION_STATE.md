@@ -1,10 +1,53 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 8 - Workspace and UX Integration
+Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 8 complete. Workspace UX, packaged GUI, local regression, release gates, CI, and the Docker-backed container real-world gate are green.
+Phase 9A GitHub Actions Node 24 migration is locally green and awaiting commit, push, and all three workflow gates.
+
+Last green commit:
+2e4deafc78499fa8993fd8f901d857d2216f8021
+
+HEAD:
+2e4deafc78499fa8993fd8f901d857d2216f8021 with the intended Phase 9A checkpoint uncommitted.
+
+origin/main:
+2e4deafc78499fa8993fd8f901d857d2216f8021
+
+Working tree:
+Modified only for the Phase 9A workflow and workflow-policy checkpoint.
+
+Phase 8 result:
+PHASE_8_COMPLETE.
+
+Phase 9 completed checkpoints:
+- Phase 9A local validation: official Node 24 action releases pinned by immutable SHA, checkout credentials disabled, hidden artifact files excluded, and workflow policy regression coverage added.
+
+Node 24 Actions migration:
+Local `check:ci`, workflow policy test, `check`, and `test:all` pass. GitHub execution is pending.
+
+node_modules tracking:
+110 installed dependency files remain tracked until Phase 9B.
+
+Security review:
+Pending Phase 9D read-only subagent review and main-agent verification.
+
+Release gate:
+Phase 8 release gate is green; Phase 9 final release gate has not started.
+
+Final acceptance:
+Phase 10 has not started.
+
+Known blockers:
+- None.
+
+Next exact action:
+Commit and push Phase 9A, then run CI, Container Real World Gate, and Windows Release Gate on the exact commit and verify that Node.js 20 action warnings are absent.
+
+Remaining MVP work:
+- Phase 9B through Phase 9F.
+- Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
