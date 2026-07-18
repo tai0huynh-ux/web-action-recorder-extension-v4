@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; exact-head run `29653358667` proved the active Chromium sandbox and full product path, leaving only Docker inspect's inline seccomp JSON representation to verify without persisting it.
+Phase 9D remaining security review after managed-container Chromium sandbox acceptance.
 
 Last green commit:
-8e5adceadfef204f643293d7204b27bb7834e196
+995233b21f89a3376bf2631a5f69e91329cbdbd4
 
 HEAD:
-74a88713c5f9e22e1595e907b385ecb75a419d41 plus canonical measured-seccomp verification pending commit.
+995233b21f89a3376bf2631a5f69e91329cbdbd4
 
 origin/main:
-74a88713c5f9e22e1595e907b385ecb75a419d41
+995233b21f89a3376bf2631a5f69e91329cbdbd4
 
 Working tree:
-Modified only to verify Docker's measured inline seccomp policy by canonical hash, keep artifact evidence category-only, add managed-runtime regression coverage, and update this execution state.
+Clean before this accepted-state documentation update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29653358667` at `74a8871` classified the host `USERNS_SANDBOX_CAPABLE`; Chromium authoritatively reported SUID false and user/PID/network/seccomp-BPF/TSYNC plus overall sandbox true. The full product path passed. The sole failed assertion was path-based seccomp comparison because Docker inspect returns the loaded policy JSON, not its source path.
+- No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29653528313` passed at exact SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 
 Next exact action:
-Commit and push canonical measured-seccomp verification, rerun the exact-head gate, and require every sandbox, runtime, product, and cleanup assertion to pass with sanitized evidence only.
+Complete the unresolved Phase 9D security review, then finalize Phase 9 documentation and exact-head regression/workflow acceptance.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
