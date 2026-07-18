@@ -108,14 +108,39 @@ async function importJsonFile({ dialog, fs, path, validator, label }) {
   });
   if (selection.canceled || selection.filePaths?.length !== 1) return { canceled: true };
   const filePath = selection.filePaths[0];
-  const stat = await fs.promises.stat(filePath);
-  if (stat.isSymbolicLink?.()) throw codedError('IMPORT_REJECTED', `${label} import rejected`);
-  if (!stat.isFile?.()) throw codedError('IMPORT_REJECTED', `${label} import rejected`);
-  if (stat.size > MAX_IMPORT_BYTES) throw codedError('IMPORT_TOO_LARGE', `${label} import is too large`);
-  const parsed = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+  const before = await fs.promises.lstat(filePath);
+  if (before.isSymbolicLink?.() || !before.isFile?.()) throw codedError('IMPORT_REJECTED', `${label} import rejected`);
+  const handle = await fs.promises.open(filePath, 'r');
+  let source;
+  try {
+    const opened = await handle.stat();
+    const after = await fs.promises.lstat(filePath);
+    if (after.isSymbolicLink?.() || !after.isFile?.() || !sameFile(opened, after)) throw codedError('IMPORT_REJECTED', `${label} import rejected`);
+    if (opened.size > MAX_IMPORT_BYTES) throw codedError('IMPORT_TOO_LARGE', `${label} import is too large`);
+    source = await readBounded(handle, MAX_IMPORT_BYTES);
+  } finally {
+    await handle.close();
+  }
+  const parsed = JSON.parse(source);
   const validation = validator(parsed);
   if (!validation.ok) throw codedError('IMPORT_INVALID', `${label} is invalid`, validation.errors);
   return { canceled: false, name: basename(filePath), value: parsed };
+}
+
+async function readBounded(handle, maxBytes) {
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+    if (!bytesRead) break;
+    offset += bytesRead;
+  }
+  if (offset > maxBytes) throw codedError('IMPORT_TOO_LARGE', 'Import file is too large');
+  return buffer.subarray(0, offset).toString('utf8');
+}
+
+function sameFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function sanitizeInvalidation(event = {}) {

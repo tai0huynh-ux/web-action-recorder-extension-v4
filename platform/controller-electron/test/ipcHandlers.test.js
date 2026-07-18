@@ -72,6 +72,47 @@ test('IPC handlers support import dialog cancellation without filesystem access'
   assert.deepEqual(result, { ok: true, data: { canceled: true } });
 });
 
+test('IPC import rejects symlinks and file swaps before reading from the opened handle', async () => {
+  const window = trustedWindow();
+  const application = fakeApplication();
+  const dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: ['workflow.json'] }) };
+
+  const symlinkIpc = fakeIpcMain();
+  registerControllerIpcHandlers({
+    ipcMain: symlinkIpc,
+    mainWindow: window,
+    application,
+    dialog,
+    fs: { promises: { lstat: async () => fileStat({ symbolicLink: true }) } },
+    path: {}
+  });
+  const symlink = await symlinkIpc.handlers.get(IPC_CHANNELS.dialog.importWorkflow)(trustedEvent(window));
+  assert.equal(symlink.ok, false);
+  assert.equal(symlink.error.code, 'IMPORT_REJECTED');
+
+  const swappedIpc = fakeIpcMain();
+  let lstatCount = 0;
+  const handle = fakeFileHandle(fileStat({ ino: 2 }), '{}');
+  registerControllerIpcHandlers({
+    ipcMain: swappedIpc,
+    mainWindow: window,
+    application,
+    dialog,
+    fs: {
+      promises: {
+        lstat: async () => fileStat({ ino: lstatCount++ === 0 ? 1 : 3 }),
+        open: async () => handle
+      }
+    },
+    path: {}
+  });
+  const swapped = await swappedIpc.handlers.get(IPC_CHANNELS.dialog.importWorkflow)(trustedEvent(window));
+  assert.equal(swapped.ok, false);
+  assert.equal(swapped.error.code, 'IMPORT_REJECTED');
+  assert.equal(handle.closed, true);
+  assert.equal(handle.readCalls, 0);
+});
+
 test('IPC handlers forward sanitized invalidation payloads only', () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();
@@ -89,6 +130,26 @@ function fakeIpcMain() {
     handlers: new Map(),
     handle(channel, handler) { this.handlers.set(channel, handler); },
     removeHandler(channel) { this.handlers.delete(channel); },
+  };
+}
+
+function fileStat({ ino = 1, dev = 1, size = 2, symbolicLink = false } = {}) {
+  return { ino, dev, size, isFile: () => !symbolicLink, isSymbolicLink: () => symbolicLink };
+}
+
+function fakeFileHandle(stat, source) {
+  const bytes = Buffer.from(source);
+  return {
+    closed: false,
+    readCalls: 0,
+    async stat() { return stat; },
+    async read(buffer, offset, length, position) {
+      this.readCalls += 1;
+      const chunk = bytes.subarray(position, position + length);
+      chunk.copy(buffer, offset);
+      return { bytesRead: chunk.length };
+    },
+    async close() { this.closed = true; }
   };
 }
 
