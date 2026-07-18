@@ -51,7 +51,7 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     nativeBridgeRequestTimeoutMs: readInt(env.WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS, 10000, 1000, 300000, 'WAR_AGENT_SOCKET_REQUEST_TIMEOUT_MS'),
     nativeBridgeMaxConnections: readInt(env.WAR_AGENT_SOCKET_MAX_CONNECTIONS, 8, 1, 128, 'WAR_AGENT_SOCKET_MAX_CONNECTIONS'),
     controllerWssUrl: readOptionalString(env.WAR_CONTROLLER_WSS_URL),
-    controllerSessionCredential: readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL),
+    controllerSessionCredential: readControllerCredential(env, cwd),
     managedDeviceId: readOptionalString(env.WAR_MANAGED_DEVICE_ID),
     controllerReconnectMinMs: readInt(env.WAR_CONTROLLER_RECONNECT_MIN_MS, 500, 100, 60000, 'WAR_CONTROLLER_RECONNECT_MIN_MS'),
     controllerReconnectMaxMs: readInt(env.WAR_CONTROLLER_RECONNECT_MAX_MS, 30000, 500, 300000, 'WAR_CONTROLLER_RECONNECT_MAX_MS'),
@@ -127,6 +127,35 @@ function readString(value, fallback) {
 
 function readOptionalString(value) {
   return value === undefined || value === '' ? undefined : String(value);
+}
+
+function readControllerCredential(env, cwd) {
+  const inline = readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL);
+  const fileValue = readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL_FILE);
+  if (inline && fileValue) throw new AgentError('invalid_config', 'Controller credential must use one source');
+  if (!fileValue) return inline;
+  const filePath = resolvePath(fileValue, cwd);
+  let handle;
+  try {
+    const before = fs.lstatSync(filePath);
+    if (!before.isFile() || before.isSymbolicLink() || before.size < 1 || before.size > 4096) {
+      throw new AgentError('invalid_config', 'Controller credential file is invalid');
+    }
+    if (process.platform !== 'win32' && (before.mode & 0o077) !== 0) {
+      throw new AgentError('invalid_config', 'Controller credential file permissions are too broad');
+    }
+    handle = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const opened = fs.fstatSync(handle);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) {
+      throw new AgentError('invalid_config', 'Controller credential file changed during read');
+    }
+    return fs.readFileSync(handle, 'utf8').trim();
+  } catch (error) {
+    if (error instanceof AgentError) throw error;
+    throw new AgentError('invalid_config', 'Controller credential file is not readable');
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
+  }
 }
 
 function readList(value) {

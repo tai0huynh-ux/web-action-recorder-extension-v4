@@ -39,7 +39,7 @@ export async function runContainerSmoke({ keepArtifact = true } = {}) {
       '-e', 'WAR_AGENT_ALLOW_REMOTE=1',
       '-e', `WAR_AGENT_TOKEN=${token}`,
       '-e', `WAR_AGENT_ALLOW=${allow}`,
-      '-e', 'WAR_BROWSER_NO_SANDBOX=1',
+      '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
       IMAGE
     ]);
@@ -138,7 +138,7 @@ export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'pha
       '-e', 'WAR_AGENT_ALLOW_REMOTE=1',
       '-e', `WAR_AGENT_TOKEN=${token}`,
       '-e', `WAR_AGENT_ALLOW=${allow}`,
-      '-e', 'WAR_BROWSER_NO_SANDBOX=1',
+      '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
       IMAGE
     ]);
@@ -253,7 +253,7 @@ export async function runTabSoak({ iterations = 100 } = {}) {
       '-e', 'WAR_AGENT_ALLOW_REMOTE=1',
       '-e', `WAR_AGENT_TOKEN=${token}`,
       '-e', `WAR_AGENT_ALLOW=${allow}`,
-      '-e', 'WAR_BROWSER_NO_SANDBOX=1',
+      '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
       IMAGE
     ]);

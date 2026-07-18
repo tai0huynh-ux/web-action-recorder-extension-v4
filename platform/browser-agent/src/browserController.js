@@ -45,6 +45,7 @@ export class BrowserController {
       locale: this.config.locale,
       timezoneId: this.config.timezone,
       downloadsPath: this.config.paths.downloadsDir,
+      env: browserEnvironment(process.env),
       args
     });
     for (const page of this.context.pages()) this.registerPage(page);
@@ -357,6 +358,10 @@ export class BrowserController {
       await page?.close().catch(() => {});
     }
   }
+}
+
+export function browserEnvironment(env) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/(credential|password|secret|token)/i.test(key)));
 }
 
 export function assertSafeHttpUrl(rawUrl) {

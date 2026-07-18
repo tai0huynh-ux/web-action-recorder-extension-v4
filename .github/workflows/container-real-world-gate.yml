@@ -38,8 +38,6 @@ jobs:
       - name: Build Browser Agent image
         run: npm run container:browser-agent:build
       - name: Run real-world container gate
-        env:
-          WAR_BROWSER_NO_SANDBOX: "1"
         run: npm run test:container-real-world
       - name: Upload sanitized evidence
         if: always()

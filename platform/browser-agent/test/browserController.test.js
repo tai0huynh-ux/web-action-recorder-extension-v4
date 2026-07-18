@@ -4,7 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { BrowserController } from '../src/browserController.js';
+import { BrowserController, browserEnvironment } from '../src/browserController.js';
+
+test('Chromium child environment excludes credential-like values', () => {
+  assert.deepEqual(browserEnvironment({
+    PATH: '/usr/bin',
+    DISPLAY: ':99',
+    WAR_CONTROLLER_SESSION_CREDENTIAL: 'credential-value',
+    API_TOKEN: 'token-value',
+    NODE_EXTRA_CA_CERTS: '/run/war/controller-ca.pem',
+  }), {
+    PATH: '/usr/bin',
+    DISPLAY: ':99',
+    NODE_EXTRA_CA_CERTS: '/run/war/controller-ca.pem',
+  });
+});
 
 test('two tabs with the same URL get different target IDs', async () => {
   const controller = fakeController();

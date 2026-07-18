@@ -87,7 +87,7 @@ export async function runRealWorldContainerGate() {
       '-e', 'WAR_CONTROLLER_RECONNECT_MIN_MS=250',
       '-e', 'WAR_NATIVE_HOST_PATH=/usr/local/bin/war-native-host',
       '-e', 'NODE_EXTRA_CA_CERTS=/data/controller-ca.crt',
-      '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '1'}`,
+      '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${dataDir}:/data`,
       IMAGE
     ]);
@@ -400,7 +400,7 @@ async function writeEvidence(result) {
   await fs.writeFile(path.join(ARTIFACT_DIR, 'container-runtime.json'), `${JSON.stringify({
     image: IMAGE,
     localDocker: true,
-    noSandbox: process.env.WAR_BROWSER_NO_SANDBOX || '1'
+    noSandbox: process.env.WAR_BROWSER_NO_SANDBOX || '0'
   }, null, 2)}\n`);
   await fs.writeFile(path.join(ARTIFACT_DIR, 'real-world-container-results.json'), `${JSON.stringify(sanitizeResult(result), null, 2)}\n`);
   await fs.writeFile(path.join(ARTIFACT_DIR, 'REAL_WORLD_CONTAINER_REPORT.md'), reportMarkdown(result));

@@ -2,114 +2,126 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDockerContainerAdapter } from '../src/containerAdapter.js';
 
-test('managed Docker adapter creates non-privileged Agent containers without exposing Docker socket', async () => {
-  const calls = [];
+const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
+
+test('managed Docker adapter isolates credentials and verifies the approved runtime', async () => {
+  const execCalls = [];
+  const spawnCalls = [];
   const adapter = createDockerContainerAdapter({
-    config: {
-      wss: { enabled: true, host: '192.0.2.10', port: 47651 },
-      containers: { enabled: true, runtime: 'local-docker', timeoutMs: 1000, hostLabel: 'local-docker' },
-    },
+    config: managedConfig('local-docker'),
     execFileImpl: async (file, args, options) => {
-      calls.push({ file, args, options });
-      if (args[0] === 'port') return { stdout: '127.0.0.1:49000\n', stderr: '' };
+      execCalls.push({ file, args, options });
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
+    spawnImpl: fakeSpawn(spawnCalls),
   });
 
-  const result = await adapter.create({
-    id: 'container-1',
-    name: 'Agent One',
-    image: 'war-browser-agent:phase1',
-    deviceId: 'managed-device-1',
-    runtime: { dockerName: 'war-agent-one' },
-    provisioning: { credential: 'c'.repeat(43) },
-  });
+  const credential = 'c'.repeat(43);
+  const result = await adapter.create(container({ credential }));
 
-  const run = calls.find((call) => call.args[0] === 'run');
+  const credentialWrite = spawnCalls[0];
+  assert.equal(credentialWrite.file, 'docker');
+  assert.ok(credentialWrite.args.includes('--entrypoint'));
+  assert.equal(credentialWrite.args.join(' ').includes(credential), false);
+  assert.equal(credentialWrite.child.input, `${credential}\n`);
+
+  const run = execCalls.find((call) => call.args[0] === 'run');
   assert.equal(run.file, 'docker');
   assert.equal(run.args.includes('--privileged'), false);
+  assert.equal(run.args.includes('--user') && run.args.includes('war'), true);
+  assert.equal(run.args.includes('no-new-privileges:true'), true);
   assert.equal(run.args.some((arg) => String(arg).includes('/var/run/docker.sock')), false);
-  assert.equal(run.args.some((arg) => String(arg).includes('managed-device-1')), false);
-  assert.equal(run.args.some((arg) => String(arg).includes('c'.repeat(20))), false);
+  assert.equal(run.args.some((arg) => String(arg).includes(credential)), false);
   assert.deepEqual(run.args.filter((arg, index) => run.args[index - 1] === '-e'), [
     'WAR_MANAGED_DEVICE_ID',
-    'WAR_CONTROLLER_SESSION_CREDENTIAL',
+    'WAR_CONTROLLER_SESSION_CREDENTIAL_FILE',
     'WAR_CONTROLLER_WSS_URL',
-    'WAR_BROWSER_NO_SANDBOX',
   ]);
-  assert.equal(run.options.env.WAR_MANAGED_DEVICE_ID, 'managed-device-1');
-  assert.equal(run.options.env.WAR_CONTROLLER_SESSION_CREDENTIAL, 'c'.repeat(43));
+  assert.equal(run.options.env.WAR_CONTROLLER_SESSION_CREDENTIAL, undefined);
+  assert.equal(run.options.env.WAR_CONTROLLER_SESSION_CREDENTIAL_FILE, '/data/device/controller-session.credential');
+  assert.equal(run.options.env.WAR_BROWSER_NO_SANDBOX, undefined);
   assert.equal(JSON.stringify(result).includes('cccc'), false);
   assert.equal(result.runtime.privileged, false);
+  assert.equal(result.runtime.nonRootUser, 'war');
+  assert.equal(result.runtime.networkMode, 'bridge');
   assert.equal(result.runtime.controlPort, 49000);
+});
+
+test('managed Docker adapter rejects renderer-selected images', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async () => ({ stdout: '', stderr: '' }),
+  });
+
+  await assert.rejects(() => adapter.create(container({ image: 'unreviewed/image:latest' })), /not approved/);
+});
+
+test('managed Docker adapter rejects unsafe measured runtime state', async () => {
+  const spawnCalls = [];
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection({ HostConfig: { Privileged: true } }))}\n`, stderr: '' };
+      return { stdout: '', stderr: '' };
+    },
+    spawnImpl: fakeSpawn(spawnCalls),
+  });
+
+  await assert.rejects(() => adapter.create(container()), /security policy failed/);
 });
 
 test('managed Docker adapter uses bounded SSH Docker commands', async () => {
   const calls = [];
   const adapter = createDockerContainerAdapter({
-    config: {
-      wss: { enabled: true, host: '192.0.2.10', port: 47651 },
-      containers: { enabled: true, runtime: 'ssh-docker', sshTarget: 'root@192.0.2.20', timeoutMs: 1000, hostLabel: 'ssh-docker' },
-    },
+    config: managedConfig('ssh-docker'),
     execFileImpl: async (file, args) => {
       calls.push({ file, args });
-      return { stdout: 'running\n', stderr: '' };
+      if (args[4]?.includes("'{{.State.Status}}'")) return { stdout: 'running\n', stderr: '' };
+      return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
     },
   });
 
   await adapter.status({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } });
 
   assert.equal(calls[0].file, 'ssh');
-  assert.deepEqual(calls[0].args.slice(0, 4), ['-F', 'NUL', 'root@192.0.2.20', '--']);
+  assert.deepEqual(calls[0].args.slice(0, 4), ['-F', 'NUL', 'operator@agent.example', '--']);
   assert.ok(calls[0].args[4].includes("'docker' 'inspect'"));
   assert.equal(calls[0].args[4].includes(';'), false);
 });
 
-test('managed SSH Docker creation sends credentials through stdin instead of argv', async () => {
+test('managed SSH Docker creation streams the credential separately from safe environment', async () => {
   const execCalls = [];
   const spawnCalls = [];
   const adapter = createDockerContainerAdapter({
-    config: {
-      wss: { enabled: true, host: '192.0.2.10', port: 47651 },
-      containers: { enabled: true, runtime: 'ssh-docker', sshTarget: 'root@192.0.2.20', timeoutMs: 1000, hostLabel: 'ssh-docker' },
-    },
+    config: managedConfig('ssh-docker'),
     execFileImpl: async (file, args) => {
       execCalls.push({ file, args });
-      if (args[4]?.includes("'docker' 'port'")) return { stdout: '127.0.0.1:49000\n', stderr: '' };
+      if (args[4]?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[4]?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
-    spawnImpl: (file, args, options) => {
-      const child = fakeChildProcess();
-      spawnCalls.push({ file, args, options, child });
-      queueMicrotask(() => child.emit('close', 0));
-      return child;
-    },
+    spawnImpl: fakeSpawn(spawnCalls),
   });
 
-  await adapter.create({
-    id: 'container-1',
-    image: 'war-browser-agent:phase1',
-    deviceId: 'managed-device-1',
-    runtime: { dockerName: 'war-agent-one' },
-    provisioning: { credential: 'c'.repeat(43) },
-  });
+  const credential = 'c'.repeat(43);
+  await adapter.create(container({ credential }));
 
-  assert.equal(spawnCalls.length, 1);
-  assert.equal(spawnCalls[0].file, 'ssh');
-  assert.equal(spawnCalls[0].args.join(' ').includes('managed-device-1'), false);
-  assert.equal(spawnCalls[0].args.join(' ').includes('c'.repeat(20)), false);
-  assert.ok(spawnCalls[0].args.at(-1).includes("'--env-file' '/dev/stdin'"));
-  assert.match(spawnCalls[0].child.input, /^WAR_MANAGED_DEVICE_ID=managed-device-1$/m);
-  assert.match(spawnCalls[0].child.input, /^WAR_CONTROLLER_SESSION_CREDENTIAL=c{43}$/m);
-  assert.equal(execCalls.some((call) => call.args.join(' ').includes('c'.repeat(20))), false);
+  assert.equal(spawnCalls.length, 2);
+  assert.equal(spawnCalls[0].child.input, `${credential}\n`);
+  assert.ok(spawnCalls[0].args.at(-1).includes("'--entrypoint' '/bin/sh'"));
+  assert.equal(spawnCalls[1].child.input.includes(credential), false);
+  assert.match(spawnCalls[1].child.input, /^WAR_MANAGED_DEVICE_ID=managed-device-1$/m);
+  assert.match(spawnCalls[1].child.input, /^WAR_CONTROLLER_SESSION_CREDENTIAL_FILE=\/data\/device\/controller-session\.credential$/m);
+  assert.equal(spawnCalls.flatMap((call) => call.args).join(' ').includes(credential), false);
+  assert.equal(execCalls.some((call) => call.args.join(' ').includes(credential)), false);
 });
 
 test('managed Docker deletion propagates runtime cleanup failure', async () => {
   const adapter = createDockerContainerAdapter({
-    config: {
-      wss: { enabled: true, host: '127.0.0.1', port: 47651 },
-      containers: { enabled: true, runtime: 'local-docker', timeoutMs: 1000, hostLabel: 'local-docker' },
-    },
+    config: managedConfig('local-docker'),
     execFileImpl: async (_file, args) => {
       if (args[0] === 'rm') throw new Error('runtime cleanup failed');
       return { stdout: '', stderr: '' };
@@ -118,6 +130,64 @@ test('managed Docker deletion propagates runtime cleanup failure', async () => {
 
   await assert.rejects(() => adapter.delete({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } }), /cleanup failed/);
 });
+
+function managedConfig(runtime) {
+  return {
+    wss: { enabled: true, host: 'controller.example', port: 47651 },
+    containers: {
+      enabled: true,
+      runtime,
+      image: 'war-browser-agent:phase1',
+      sshTarget: runtime === 'ssh-docker' ? 'operator@agent.example' : undefined,
+      timeoutMs: 1000,
+      hostLabel: runtime,
+    },
+  };
+}
+
+function container({ credential = 'c'.repeat(43), image = 'war-browser-agent:phase1' } = {}) {
+  return {
+    id: 'container-1',
+    name: 'Agent One',
+    image,
+    deviceId: 'managed-device-1',
+    runtime: { dockerName: 'war-agent-one' },
+    provisioning: { credential },
+  };
+}
+
+function safeInspection(overrides = {}) {
+  const base = {
+    Image: IMAGE_ID,
+    Config: {
+      User: 'war',
+      Image: 'war-browser-agent:phase1',
+      Labels: { 'managed-by': 'war-controller' },
+    },
+    HostConfig: {
+      Privileged: false,
+      NetworkMode: 'bridge',
+      SecurityOpt: ['no-new-privileges:true'],
+      Binds: ['war-agent-one-data:/data'],
+      PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    Config: { ...base.Config, ...(overrides.Config || {}) },
+    HostConfig: { ...base.HostConfig, ...(overrides.HostConfig || {}) },
+  };
+}
+
+function fakeSpawn(calls) {
+  return (file, args, options) => {
+    const child = fakeChildProcess();
+    calls.push({ file, args, options, child });
+    queueMicrotask(() => child.emit('close', 0));
+    return child;
+  };
+}
 
 function fakeChildProcess() {
   const listeners = new Map();

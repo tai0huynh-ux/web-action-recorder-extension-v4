@@ -13,7 +13,7 @@ services:
       WAR_AGENT_ALLOW: ${WAR_AGENT_ALLOW:-172.17.0.1}
       WAR_BROWSER_HEADLESS: "false"
       WAR_AUTO_START_BROWSER: "1"
-      WAR_BROWSER_NO_SANDBOX: ${WAR_BROWSER_NO_SANDBOX:-1}
+      WAR_BROWSER_NO_SANDBOX: ${WAR_BROWSER_NO_SANDBOX:-0}
     volumes:
       - browser-agent-data:/data
     ports:

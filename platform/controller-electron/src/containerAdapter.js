@@ -5,6 +5,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_IMAGE = 'war-browser-agent:phase1';
 const CONTROL_PORT = '3766';
 const MANAGED_LABEL = 'war-controller';
+const CREDENTIAL_PATH = '/data/device/controller-session.credential';
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 
 export function createDockerContainerAdapter({ config, execFileImpl = execFileAsync, spawnImpl = spawn } = {}) {
@@ -24,25 +25,32 @@ export class DockerContainerAdapter {
   async create(container) {
     const name = dockerName(container);
     const volume = dataVolume(name);
+    const approvedImage = this.approvedImage(container);
+    const approvedImageId = await this.imageId(approvedImage);
     await this.docker(['volume', 'create', volume]);
     try {
+      await this.writeCredential(volume, approvedImage, container.provisioning?.credential);
       const environment = this.environment(container);
       await this.dockerRun([
         'run', '-d',
         '--name', name,
         '--label', `managed-by=${MANAGED_LABEL}`,
         '--restart', 'unless-stopped',
+        '--user', 'war',
+        '--security-opt', 'no-new-privileges:true',
+        '--network', 'bridge',
         '-p', `127.0.0.1::${CONTROL_PORT}`,
         '-v', `${volume}:/data`,
         '--add-host', 'host.docker.internal:host-gateway',
         ...environment.mountArgs,
-        image(container),
+        approvedImage,
       ], environment.entries);
+      const runtime = await this.inspectRuntime(name, volume, { approvedImage, approvedImageId });
+      return { runtime, status: 'running' };
     } catch (error) {
       await this.docker(['volume', 'rm', '-f', volume]).catch(() => {});
       throw error;
     }
-    return { runtime: await this.runtime(name, volume), status: 'running' };
   }
 
   async start(container) {
@@ -79,9 +87,8 @@ export class DockerContainerAdapter {
   environment(container) {
     const entries = [
       ['WAR_MANAGED_DEVICE_ID', container.deviceId],
-      ['WAR_CONTROLLER_SESSION_CREDENTIAL', container.provisioning?.credential],
+      ['WAR_CONTROLLER_SESSION_CREDENTIAL_FILE', CREDENTIAL_PATH],
       ['WAR_CONTROLLER_WSS_URL', this.controllerWssUrl()],
-      ['WAR_BROWSER_NO_SANDBOX', '1'],
     ];
     if (this.config.controllerCaPath) {
       entries.push(['NODE_EXTRA_CA_CERTS', '/run/war/controller-ca.pem']);
@@ -103,14 +110,67 @@ export class DockerContainerAdapter {
   }
 
   async runtime(name, volume) {
-    const port = await this.docker(['port', name, `${CONTROL_PORT}/tcp`]).catch(() => ({ stdout: '' }));
+    return this.inspectRuntime(name, volume, { approvedImage: this.config.image || DEFAULT_IMAGE });
+  }
+
+  approvedImage(container) {
+    const approved = this.config.image || DEFAULT_IMAGE;
+    if (container?.image && container.image !== approved) throw new Error('Managed container image is not approved');
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(approved)) throw new Error('Invalid approved Docker image');
+    return approved;
+  }
+
+  async imageId(approvedImage) {
+    const result = await this.docker(['image', 'inspect', '--format', '{{.Id}}', approvedImage]);
+    const id = result.stdout.trim();
+    if (!/^sha256:[a-f0-9]{64}$/.test(id)) throw new Error('Approved Docker image ID is invalid');
+    return id;
+  }
+
+  async writeCredential(volume, approvedImage, credential) {
+    if (typeof credential !== 'string' || credential.length < 24 || /[\r\n]/.test(credential)) {
+      throw new Error('Managed container credential is invalid');
+    }
+    const args = [
+      'run', '--rm', '-i', '--user', 'war',
+      '-v', `${volume}:/data`,
+      '--entrypoint', '/bin/sh', approvedImage,
+      '-c', `umask 077; mkdir -p /data/device; cat > ${CREDENTIAL_PATH}`,
+    ];
+    await this.dockerWithInput(args, `${credential}\n`);
+  }
+
+  async inspectRuntime(name, volume, { approvedImage, approvedImageId } = {}) {
+    const result = await this.docker(['inspect', '--format', '{{json .}}', name]);
+    let inspection;
+    try {
+      inspection = JSON.parse(result.stdout.trim());
+    } catch {
+      throw new Error('Managed container inspect response is invalid');
+    }
+    const host = inspection.HostConfig || {};
+    const config = inspection.Config || {};
+    const binds = Array.isArray(host.Binds) ? host.Binds : [];
+    const portBindings = host.PortBindings?.[`${CONTROL_PORT}/tcp`] || [];
+    const safe = config.User === 'war'
+      && host.Privileged === false
+      && host.NetworkMode !== 'host'
+      && Array.isArray(host.SecurityOpt) && host.SecurityOpt.includes('no-new-privileges:true')
+      && binds.some((bind) => bind === `${volume}:/data`)
+      && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))
+      && portBindings.length > 0
+      && portBindings.every((binding) => binding.HostIp === '127.0.0.1')
+      && config.Labels?.['managed-by'] === MANAGED_LABEL
+      && (!approvedImage || config.Image === approvedImage)
+      && (!approvedImageId || inspection.Image === approvedImageId);
+    if (!safe) throw new Error('Managed container runtime security policy failed');
     return {
       dockerName: name,
       dataVolume: volume,
-      networkMode: 'bridge',
-      nonRootUser: 'war',
-      privileged: false,
-      controlPort: parsePort(port.stdout),
+      networkMode: host.NetworkMode,
+      nonRootUser: config.User,
+      privileged: host.Privileged,
+      controlPort: parsePortBinding(portBindings),
       host: this.config.hostLabel,
     };
   }
@@ -159,6 +219,19 @@ export class DockerContainerAdapter {
     }
     throw new Error('Unsupported container runtime');
   }
+
+  dockerWithInput(args, input) {
+    if (this.config.runtime === 'local-docker') {
+      return spawnWithInput(this.spawn, 'docker', args, { input, timeoutMs: this.config.timeoutMs });
+    }
+    if (this.config.runtime === 'ssh-docker') {
+      return spawnWithInput(this.spawn, 'ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...args])], {
+        input,
+        timeoutMs: this.config.timeoutMs,
+      });
+    }
+    throw new Error('Unsupported container runtime');
+  }
 }
 
 function dockerName(container) {
@@ -171,12 +244,6 @@ function dataVolume(name) {
   return `${name}-data`;
 }
 
-function image(container) {
-  const value = container?.image || DEFAULT_IMAGE;
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/.test(value)) throw new Error('Invalid Docker image');
-  return value;
-}
-
 function mapDockerStatus(status) {
   if (status === 'running') return 'running';
   if (['created', 'restarting'].includes(status)) return 'starting';
@@ -187,6 +254,16 @@ function mapDockerStatus(status) {
 function parsePort(value) {
   const match = String(value || '').match(/:(\d+)\s*$/);
   return match ? Number(match[1]) : null;
+}
+
+function parsePortBinding(bindings) {
+  const value = bindings[0]?.HostPort;
+  return /^\d+$/.test(String(value || '')) ? Number(value) : null;
+}
+
+function safeBind(bind, volume, controllerCaPath) {
+  if (bind === `${volume}:/data`) return true;
+  return Boolean(controllerCaPath && bind === `${controllerCaPath}:/run/war/controller-ca.pem:ro`);
 }
 
 function parsePercent(value) {

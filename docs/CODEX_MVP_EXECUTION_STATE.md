@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D final security repair loop; CDP shortcut modifier release is repaired and managed-container isolation is next.
+Phase 9D final security repair loop; managed-container credential, image, sandbox, and measured-runtime hardening is ready for Docker-backed verification.
 
 Last green commit:
-be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f
+dde835d17ffbbcfac2bf77f7848bd173b301e51a
 
 HEAD:
-be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f plus the focused CDP shortcut modifier-release repair pending commit.
+dde835d17ffbbcfac2bf77f7848bd173b301e51a plus the focused managed-container security repair pending commit.
 
 origin/main:
-be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f
+dde835d17ffbbcfac2bf77f7848bd173b301e51a
 
 Working tree:
-Modified only for the CDP shortcut modifier-release repair, focused regression coverage, and this execution-state update.
+Modified only for managed-container credential isolation, approved image/runtime enforcement, sandbox-default gates, focused regression coverage, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-Final read-only review found additional blockers. The first repair now tracks pressed CDP shortcut modifiers and releases them in failure paths; its focused regression proves a failed main key still emits modifier key-up and leaves no held state. Managed-container credential/image/runtime isolation remains next.
+Final read-only review found additional blockers. CDP modifier release is fixed in `dde835d`. The current repair streams the Agent credential into an Agent-only `0600` file, removes credential-like variables from Chromium children, rejects renderer-selected images, resolves and verifies the approved image ID, explicitly runs as `war`, removes forced no-sandbox defaults, and rejects Docker inspect state that violates the managed runtime policy.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- Managed-container credential isolation, approved image/runtime verification, terminal exactly-once persistence, execution-event value redaction, and origin private-state exclusion remain under repair.
+- Sandboxed Chromium in the real Browser Agent container still requires the exact-head GitHub Docker gate. Terminal exactly-once persistence, execution-event value redaction, and origin private-state exclusion remain under repair.
 
 Next exact action:
-Commit and push the CDP modifier-release checkpoint, then repair managed-container credential/image/runtime isolation.
+Commit and push the managed-container security checkpoint, then run the Container Real World Gate on its exact SHA.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

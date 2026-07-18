@@ -21,6 +21,7 @@ export function resolveElectronRuntimeConfig({
   const containerSshTarget = env.WAR_CONTAINER_SSH_TARGET || '';
   const containerControllerHost = env.WAR_CONTAINER_CONTROLLER_HOST || '';
   const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
+  const containerImage = env.WAR_CONTAINER_IMAGE || 'war-browser-agent:phase1';
   const wssRequested = env.WAR_CONTROLLER_WSS_ENABLED === '1' || Boolean(certPath || keyPath);
   const errors = [];
 
@@ -65,6 +66,7 @@ export function resolveElectronRuntimeConfig({
       sshTarget: containerSshTarget || null,
       controllerHost: containerControllerHost || null,
       controllerCaPath: containerControllerCaPath || null,
+      image: containerImage,
       timeoutMs: 120000,
       hostLabel: containerRuntime === 'ssh-docker' ? 'ssh-docker' : 'local-docker',
     },

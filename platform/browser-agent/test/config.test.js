@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { loadConfig, serializeConfig } from '../src/config.js';
 
 test('default bind is loopback', () => {
@@ -60,4 +63,27 @@ test('managed device id is accepted and serialized without controller credential
   const encoded = JSON.stringify(serializeConfig(config));
   assert.equal(config.managedDeviceId, 'managed-device-1');
   assert.equal(encoded.includes(credential), false);
+});
+
+test('controller session credential loads from a restrictive file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-controller-credential-'));
+  const filePath = path.join(dir, 'credential');
+  const credential = 'synthetic-controller-credential-12345';
+  fs.writeFileSync(filePath, `${credential}\n`, { mode: 0o600 });
+
+  const config = loadConfig({
+    WAR_CONTROLLER_WSS_URL: 'wss://controller.example/v1/agent-session',
+    WAR_CONTROLLER_SESSION_CREDENTIAL_FILE: filePath,
+  }, process.cwd());
+
+  assert.equal(config.controllerSessionCredential, credential);
+  assert.equal(JSON.stringify(serializeConfig(config)).includes(credential), false);
+});
+
+test('controller session rejects simultaneous inline and file credentials', () => {
+  assert.throws(() => loadConfig({
+    WAR_CONTROLLER_WSS_URL: 'wss://controller.example/v1/agent-session',
+    WAR_CONTROLLER_SESSION_CREDENTIAL: 'synthetic-controller-credential-12345',
+    WAR_CONTROLLER_SESSION_CREDENTIAL_FILE: 'credential-file',
+  }, process.cwd()), /one source/);
 });

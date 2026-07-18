@@ -17,6 +17,7 @@ import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 export async function main() {
   const packageJson = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
   const config = loadConfig();
+  delete process.env.WAR_CONTROLLER_SESSION_CREDENTIAL;
   ensureDataDirs(config);
   const identity = loadOrCreateDeviceIdentity(config.paths.deviceDir, () => new Date(), config.managedDeviceId);
   const log = createLogger({ deviceId: identity.deviceId });
