@@ -31,7 +31,7 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(run.file, 'docker');
   assert.equal(run.args.includes('--privileged'), false);
   assert.equal(run.args.includes('--user') && run.args.includes('war'), true);
-  assert.equal(run.args.includes('no-new-privileges:true'), true);
+  assert.equal(run.args.includes('no-new-privileges:true'), false);
   assert.equal(run.args.includes('apparmor=unconfined'), true);
   assert.equal(run.args.some((arg) => String(arg).includes('/var/run/docker.sock')), false);
   assert.equal(run.args.some((arg) => String(arg).includes(credential)), false);
@@ -168,7 +168,7 @@ function safeInspection(overrides = {}) {
     HostConfig: {
       Privileged: false,
       NetworkMode: 'bridge',
-      SecurityOpt: ['no-new-privileges:true', 'apparmor=unconfined'],
+      SecurityOpt: ['apparmor=unconfined'],
       Binds: ['war-agent-one-data:/data'],
       PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
     },

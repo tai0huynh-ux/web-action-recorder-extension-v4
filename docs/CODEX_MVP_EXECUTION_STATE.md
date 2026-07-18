@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; evidence shows Ubuntu AppArmor denied Chromium namespace creation, so a bounded outer AppArmor exception is being tested while Chromium sandboxing remains enabled.
+Phase 9D managed-container Docker verification; the final evidence-backed attempt permits Chromium's setuid sandbox helper while the main container process remains non-root and non-privileged.
 
 Last green commit:
-22aa358e347708ad45d7e67a65ee77093b60e002
+9f45aeaefa79cf5cc27944f137fe1c4113d3a093
 
 HEAD:
-22aa358e347708ad45d7e67a65ee77093b60e002 plus the evidence-backed AppArmor namespace repair pending commit.
+9f45aeaefa79cf5cc27944f137fe1c4113d3a093 plus the final sandbox-helper policy repair pending commit.
 
 origin/main:
-22aa358e347708ad45d7e67a65ee77093b60e002
+9f45aeaefa79cf5cc27944f137fe1c4113d3a093
 
 Working tree:
-Modified only for the managed-container AppArmor namespace policy, matching real-world gate coverage, focused tests, and this execution-state update.
+Modified only to remove the demonstrated `no-new-privileges` conflict from the sandboxed managed/gate runtime, update focused tests, and record execution state.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29635723096` at `22aa358` proved Chromium failed because the Ubuntu AppArmor profile denied namespace creation. The next run must prove that `apparmor=unconfined` permits Chromium's own sandbox while the container remains non-root, non-privileged, no-new-privileges, bridge-only, and loopback-published.
+- GitHub Container Real World Gate `29635841096` at `9f45aea` proved `PR_SET_NO_NEW_PRIVS` disabled Chromium's setuid sandbox helper. The final attempt removes only that conflicting flag while retaining user `war`, `privileged=false`, AppArmor namespace allowance, bridge networking, loopback publication, and the mount/image policy.
 
 Next exact action:
-Commit and push the AppArmor namespace repair and rerun the exact-head Container Real World Gate.
+Commit and push the final sandbox-helper policy repair and rerun the exact-head Container Real World Gate. Stop code churn if the same startup failure remains.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
