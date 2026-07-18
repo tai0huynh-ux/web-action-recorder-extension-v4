@@ -38,6 +38,7 @@ export class DockerContainerAdapter {
         '--restart', 'unless-stopped',
         '--user', 'war',
         '--security-opt', 'no-new-privileges:true',
+        '--security-opt', 'apparmor=unconfined',
         '--network', 'bridge',
         '-p', `127.0.0.1::${CONTROL_PORT}`,
         '-v', `${volume}:/data`,
@@ -151,11 +152,13 @@ export class DockerContainerAdapter {
     const host = inspection.HostConfig || {};
     const config = inspection.Config || {};
     const binds = Array.isArray(host.Binds) ? host.Binds : [];
+    const securityOptions = Array.isArray(host.SecurityOpt) ? host.SecurityOpt : [];
     const portBindings = host.PortBindings?.[`${CONTROL_PORT}/tcp`] || [];
     const safe = config.User === 'war'
       && host.Privileged === false
       && host.NetworkMode !== 'host'
-      && Array.isArray(host.SecurityOpt) && host.SecurityOpt.includes('no-new-privileges:true')
+      && securityOptions.some((option) => option === 'no-new-privileges' || option === 'no-new-privileges:true')
+      && securityOptions.includes('apparmor=unconfined')
       && binds.some((bind) => bind === `${volume}:/data`)
       && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))
       && portBindings.length > 0

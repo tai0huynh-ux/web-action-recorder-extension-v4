@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; the first sandbox-default run failed health startup and sanitized startup diagnostics are being added before the next evidence-backed attempt.
+Phase 9D managed-container Docker verification; evidence shows Ubuntu AppArmor denied Chromium namespace creation, so a bounded outer AppArmor exception is being tested while Chromium sandboxing remains enabled.
 
 Last green commit:
-342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5
+22aa358e347708ad45d7e67a65ee77093b60e002
 
 HEAD:
-342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5 plus sanitized container-startup failure diagnostics pending commit.
+22aa358e347708ad45d7e67a65ee77093b60e002 plus the evidence-backed AppArmor namespace repair pending commit.
 
 origin/main:
-342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5
+22aa358e347708ad45d7e67a65ee77093b60e002
 
 Working tree:
-Modified only for sanitized real-world container startup diagnostics and this execution-state update.
+Modified only for the managed-container AppArmor namespace policy, matching real-world gate coverage, focused tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29635590644` at `342a1cd` timed out waiting for health with sandbox enabled. Existing sanitized evidence did not include the Agent startup cause, so one diagnostic-only gate repair is required before changing runtime policy.
+- GitHub Container Real World Gate `29635723096` at `22aa358` proved Chromium failed because the Ubuntu AppArmor profile denied namespace creation. The next run must prove that `apparmor=unconfined` permits Chromium's own sandbox while the container remains non-root, non-privileged, no-new-privileges, bridge-only, and loopback-published.
 
 Next exact action:
-Commit and push sanitized startup diagnostics, rerun the Container Real World Gate, and repair only the demonstrated sandbox startup cause.
+Commit and push the AppArmor namespace repair and rerun the exact-head Container Real World Gate.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
