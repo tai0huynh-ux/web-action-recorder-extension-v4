@@ -81,8 +81,9 @@ export function classifySandboxCapability(evidence) {
   if (!namespaces.user?.ok && runtime.suidHelper?.present && !runtime.suidHelper.valid) {
     return fail('SUID_HELPER_INVALID', 'The Chromium SUID helper ownership or mode is invalid.');
   }
-  if (Object.values(namespaces).every((item) => item?.ok) && chromium.started) {
-    return { code: 'USERNS_SANDBOX_CAPABLE', supported: true, reason: 'Required nested namespaces and Chromium startup succeeded under the secure baseline.' };
+  const status = chromium.sandboxStatus || {};
+  if (chromium.started && status.sandboxGood && status.userNs && status.pidNs && status.netNs && status.seccompBpf && !status.suid) {
+    return { code: 'USERNS_SANDBOX_CAPABLE', supported: true, reason: 'Chromium authoritatively reports user, PID, network, and seccomp-BPF sandbox layers active.' };
   }
   return fail('UNKNOWN_NAMESPACE_DENIAL', 'The measured evidence does not isolate the remaining namespace denial.');
 }
@@ -156,14 +157,25 @@ async function runNamespaceCase(args) {
 }
 
 async function runChromiumCase() {
-  const script = 'profile=$(mktemp -d); trap \'rm -rf "$profile"\' EXIT; timeout 20 /usr/bin/chromium --headless=new --disable-gpu --user-data-dir="$profile" --dump-dom about:blank';
-  const result = await dockerRun(['--entrypoint', '/bin/sh', IMAGE, '-c', script], 30000);
+  const script = [
+    "import fs from 'node:fs/promises'",
+    "import { chromium } from '/app/node_modules/playwright-core/index.js'",
+    "const profile='/tmp/war-sandbox-probe-'+process.pid",
+    "let context",
+    "try{context=await chromium.launchPersistentContext(profile,{executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>typeof globalThis.loadTimeData?.getBoolean==='function',null,{timeout:5000});const status=await page.evaluate(()=>Object.fromEntries(['suid','userNs','pidNs','netNs','seccompBpf','seccompTsync','sandboxGood'].map((key)=>[key,globalThis.loadTimeData.getBoolean(key)])));console.log(JSON.stringify(status))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}",
+  ].join(';');
+  const result = await dockerRun(['--entrypoint', 'node', IMAGE, '--input-type=module', '-e', script], 30000);
   const combined = `${result.stdout}\n${result.stderr}`;
+  let sandboxStatus = null;
+  try {
+    sandboxStatus = JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
+  } catch {}
   return {
     executable: '/usr/bin/chromium',
-    started: result.ok && /<html/i.test(result.stdout),
+    started: result.ok && Boolean(sandboxStatus),
     exitCode: result.code,
-    forbiddenFlagsPresent: /--(?:no-sandbox|disable-sandbox)/.test(script),
+    forbiddenFlagsPresent: false,
+    sandboxStatus,
     signals: {
       operationNotPermitted: /Operation not permitted|EPERM/i.test(combined),
       namespaceFailure: /namespace/i.test(combined),
@@ -178,6 +190,9 @@ async function runChromiumCase() {
 function dockerRun(extraArgs, timeout = 15000) {
   return command('docker', [
     'run', '--rm',
+    '--memory', '2g',
+    '--cpus', '2',
+    '--pids-limit', '512',
     '--user', 'war',
     '--security-opt', 'apparmor=war-browser-agent',
     '--security-opt', `seccomp=${SECCOMP_PROFILE}`,

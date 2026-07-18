@@ -46,6 +46,7 @@ const SUPPORTED_TYPES = new Set([
   'input.shortcut',
   'browser.focusWindow',
   'browser.openInternalPage',
+  'browser.getSandboxStatus',
   'input.stopAll',
   'input.getState'
 ]);
@@ -146,6 +147,8 @@ export class ControlDispatcher {
         return await this.controller.closeTab(payload.targetId);
       case 'browser.openInternalPage':
         return { tab: await this.controller.openInternalPage(payload.page) };
+      case 'browser.getSandboxStatus':
+        return await this.controller.getSandboxStatus();
       case 'browser.focusWindow':
       case 'input.mouseMove':
       case 'input.mouseDown':

@@ -144,6 +144,31 @@ export class BrowserController {
     return this.describePage(page, true);
   }
 
+  async getSandboxStatus() {
+    this.assertRunning();
+    let page;
+    try {
+      page = await this.context.newPage();
+      await page.goto('chrome://sandbox/', { waitUntil: 'domcontentloaded', timeout: 5000 });
+      await page.waitForFunction(() => typeof globalThis.loadTimeData?.getBoolean === 'function', null, { timeout: 5000 });
+      const status = await page.evaluate(() => Object.fromEntries([
+        'suid',
+        'userNs',
+        'pidNs',
+        'netNs',
+        'seccompBpf',
+        'seccompTsync',
+        'sandboxGood',
+      ].map((key) => [key, globalThis.loadTimeData.getBoolean(key)])));
+      if (!status || Object.values(status).some((value) => typeof value !== 'boolean')) {
+        throw new AgentError('sandbox_status_unavailable', 'Chromium sandbox status is unavailable', 503);
+      }
+      return { source: 'chrome://sandbox', ...status };
+    } finally {
+      await page?.close().catch(() => {});
+    }
+  }
+
   resolveInternalPage(pageName) {
     const extensionId = this.extensionStatus.extensionId;
     const allowed = {

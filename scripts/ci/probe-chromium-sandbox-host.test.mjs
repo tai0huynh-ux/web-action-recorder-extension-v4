@@ -44,15 +44,19 @@ test('classifies Chromium namespace denial behind the exact AppArmor profile as 
   assert.equal(result.code, 'DOCKER_SECCOMP_DENIED');
 });
 
-test('accepts the secure user namespace baseline only when all cases pass', () => {
+test('accepts the secure user namespace baseline only from authoritative Chromium status', () => {
   const result = classifySandboxCapability(evidence({
-    namespaces: Object.fromEntries(['user', 'pid', 'network', 'mount', 'combined'].map((name) => [name, { ok: true }])),
-    chromium: { started: true, signals: {} },
+    namespaces: Object.fromEntries(['user', 'pid', 'network', 'mount', 'combined'].map((name) => [name, { ok: false }])),
+    chromium: {
+      started: true,
+      signals: {},
+      sandboxStatus: { suid: false, userNs: true, pidNs: true, netNs: true, seccompBpf: true, sandboxGood: true },
+    },
   }));
   assert.deepEqual(result, {
     code: 'USERNS_SANDBOX_CAPABLE',
     supported: true,
-    reason: 'Required nested namespaces and Chromium startup succeeded under the secure baseline.',
+    reason: 'Chromium authoritatively reports user, PID, network, and seccomp-BPF sandbox layers active.',
   });
 });
 

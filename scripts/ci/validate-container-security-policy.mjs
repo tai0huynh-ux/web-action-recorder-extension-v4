@@ -10,6 +10,7 @@ const gatePath = path.join(root, 'platform', 'browser-agent', 'integration', 're
 const probePath = path.join(root, 'scripts', 'ci', 'probe-chromium-sandbox-host.mjs');
 const dockerfilePath = path.join(root, 'platform', 'browser-agent', 'Dockerfile');
 const seccompPath = path.join(root, 'platform', 'container', 'security', 'chromium-userns-seccomp.json');
+const browserControllerPath = path.join(root, 'platform', 'browser-agent', 'src', 'browserController.js');
 const findings = [];
 
 const profile = fs.readFileSync(profilePath, 'utf8');
@@ -18,6 +19,7 @@ const runtimes = [adapterPath, gatePath, probePath].map((file) => fs.readFileSyn
 const dockerfile = fs.readFileSync(dockerfilePath, 'utf8');
 const seccompText = fs.readFileSync(seccompPath, 'utf8');
 const seccomp = JSON.parse(seccompText);
+const browserController = fs.readFileSync(browserControllerPath, 'utf8');
 
 assert((profile.match(/^\s*userns,\s*$/gm) || []).length === 1, 'AppArmor profile must contain exactly one userns rule');
 assert(profile.includes('/usr/lib/chromium/chromium cx -> chromium,'), 'AppArmor userns transition must target the exact Chromium binary');
@@ -30,6 +32,9 @@ assert(workflow.includes('sudo apparmor_parser -R'), 'workflow must unload the t
 for (const runtime of runtimes) {
   assert(runtime.includes("apparmor=war-browser-agent"), 'runtime must select the reviewed AppArmor profile');
   assert(runtime.includes('seccomp='), 'runtime must select the reviewed seccomp profile');
+  assert(runtime.includes("'--memory', '2g'"), 'runtime must bound container memory');
+  assert(runtime.includes("'--cpus', '2'"), 'runtime must bound container CPU');
+  assert(runtime.includes("'--pids-limit', '512'"), 'runtime must bound container PIDs');
   assert(!runtime.includes('apparmor=unconfined'), 'runtime must not disable AppArmor');
   assert(!runtime.includes('no-new-privileges:true'), 'exact AppArmor userns transition must not be blocked by no-new-privileges');
 }
@@ -44,6 +49,8 @@ assert(chromiumRules.every((rule) => rule.action === 'SCMP_ACT_ALLOW' && rule.ar
 assert(JSON.stringify(chromiumRules.filter((rule) => rule.names[0] === 'clone').map((rule) => rule.args[0].valueTwo).sort((a, b) => a - b)) === JSON.stringify([0x10000000, 0x20000000, 0x70000000]), 'Chromium clone namespace combinations changed');
 assert(chromiumRules.some((rule) => rule.names[0] === 'unshare' && rule.args[0].valueTwo === 0x10000000), 'Chromium user namespace unshare rule is missing');
 assert(chromiumRules.every((rule) => ['clone', 'unshare'].includes(rule.names[0])), 'Chromium seccomp additions must not allow unrelated syscalls');
+assert(browserController.includes("page.goto('chrome://sandbox/'"), 'Browser Agent must query Chromium sandbox status from chrome://sandbox');
+assert(browserController.includes('globalThis.loadTimeData.getBoolean'), 'Browser Agent must use Chromium WebUI sandbox booleans');
 
 if (findings.length) {
   console.error(findings.join('\n'));

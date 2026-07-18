@@ -36,6 +36,9 @@ export class DockerContainerAdapter {
         '--name', name,
         '--label', `managed-by=${MANAGED_LABEL}`,
         '--restart', 'unless-stopped',
+        '--memory', '2g',
+        '--cpus', '2',
+        '--pids-limit', '512',
         '--user', 'war',
         '--security-opt', 'apparmor=war-browser-agent',
         '--security-opt', `seccomp=${this.seccompProfilePath()}`,
@@ -170,6 +173,9 @@ export class DockerContainerAdapter {
       && host.NetworkMode !== 'host'
       && securityOptions.includes('apparmor=war-browser-agent')
       && securityOptions.includes(`seccomp=${this.seccompProfilePath()}`)
+      && host.Memory === 2 * 1024 * 1024 * 1024
+      && host.NanoCpus === 2_000_000_000
+      && host.PidsLimit === 512
       && binds.some((bind) => bind === `${volume}:/data`)
       && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))
       && portBindings.length > 0
@@ -184,6 +190,9 @@ export class DockerContainerAdapter {
       networkMode: host.NetworkMode,
       nonRootUser: config.User,
       privileged: host.Privileged,
+      memoryBytes: host.Memory,
+      nanoCpus: host.NanoCpus,
+      pidsLimit: host.PidsLimit,
       controlPort: parsePortBinding(portBindings),
       host: this.config.hostLabel,
     };

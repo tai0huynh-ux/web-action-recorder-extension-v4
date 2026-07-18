@@ -78,6 +78,9 @@ export async function runRealWorldContainerGate() {
       '-d',
       '--name', container,
       '--shm-size', '1g',
+      '--memory', '2g',
+      '--cpus', '2',
+      '--pids-limit', '512',
       '--user', 'war',
       '--security-opt', 'apparmor=war-browser-agent',
       '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
@@ -101,6 +104,10 @@ export async function runRealWorldContainerGate() {
 
     const baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
+    const containerSecurity = await containerSecurityEvidence(container);
+    const chromiumSandbox = (await control(baseUrl, health.deviceId, 'browser.getSandboxStatus', {}, token)).result;
+    result.containerSecurity = containerSecurity;
+    result.chromiumSandbox = chromiumSandbox;
     const readyState = await agentState(baseUrl, token).catch((error) => ({ error: sanitize(error.message) }));
     recordEvent(events, 'browser_agent_health_ready', {
       browserState: health.browserState,
@@ -111,6 +118,24 @@ export async function runRealWorldContainerGate() {
     result.assertions.browserAgentContainer = true;
     result.assertions.realChromium = health.browserState === 'running' || health.browserState === 'degraded';
     result.assertions.mv3Extension = Boolean(health.extensionLoaded);
+    Object.assign(result.assertions, {
+      containerNonRoot: containerSecurity.nonRoot,
+      containerNotPrivileged: !containerSecurity.privileged,
+      containerBridgeNetwork: containerSecurity.networkMode === 'bridge',
+      containerPrivatePidNamespace: !containerSecurity.hostPid,
+      containerNoDockerSocket: !containerSecurity.dockerSocketMounted,
+      containerNoHostHome: !containerSecurity.hostHomeMounted,
+      containerNoAddedCapabilities: containerSecurity.addedCapabilities.length === 0,
+      containerResourcesBounded: containerSecurity.resourcesBounded,
+      appArmorEnforced: containerSecurity.appArmor === 'war-browser-agent',
+      constrainedSeccompApplied: containerSecurity.seccompProfile === SECCOMP_PROFILE,
+      chromiumSandboxGood: chromiumSandbox.sandboxGood === true,
+      chromiumUserNamespace: chromiumSandbox.userNs === true,
+      chromiumPidNamespace: chromiumSandbox.pidNs === true,
+      chromiumNetworkNamespace: chromiumSandbox.netNs === true,
+      chromiumSeccompBpf: chromiumSandbox.seccompBpf === true,
+      chromiumSuidSandboxAbsent: chromiumSandbox.suid === false,
+    });
     await waitFor(() => controller.core.sessions.getPublicSession(DEVICE_ID), 45000, 'agent WSS session');
     recordEvent(events, 'device_authenticated', controller.core.sessions.getPublicSession(DEVICE_ID));
     result.assertions.tlsWss = true;
@@ -485,6 +510,26 @@ async function dockerBridgeGateway() {
 async function isContainerRunning(container) {
   const result = await docker(['inspect', '-f', '{{.State.Running}}', container]).catch(() => ({ stdout: 'false' }));
   return result.stdout.trim() === 'true';
+}
+
+async function containerSecurityEvidence(container) {
+  const inspection = JSON.parse((await docker(['inspect', '--format', '{{json .}}', container])).stdout.trim());
+  const host = inspection.HostConfig || {};
+  const config = inspection.Config || {};
+  const binds = Array.isArray(host.Binds) ? host.Binds : [];
+  const securityOptions = Array.isArray(host.SecurityOpt) ? host.SecurityOpt : [];
+  return {
+    nonRoot: config.User === 'war',
+    privileged: host.Privileged === true,
+    networkMode: host.NetworkMode || null,
+    hostPid: host.PidMode === 'host',
+    dockerSocketMounted: binds.some((bind) => /\/var\/run\/docker\.sock(?::|$)/.test(bind)),
+    hostHomeMounted: binds.some((bind) => /(?:^|[\\/])home[\\/]|Users[\\/]/i.test(String(bind).split(':')[0])),
+    addedCapabilities: Array.isArray(host.CapAdd) ? host.CapAdd : [],
+    appArmor: securityOptions.find((option) => option.startsWith('apparmor='))?.slice('apparmor='.length) || null,
+    seccompProfile: securityOptions.find((option) => option.startsWith('seccomp='))?.slice('seccomp='.length) || null,
+    resourcesBounded: host.Memory === 2 * 1024 * 1024 * 1024 && host.NanoCpus === 2_000_000_000 && host.PidsLimit === 512,
+  };
 }
 
 async function containerFailureDiagnostics(container) {

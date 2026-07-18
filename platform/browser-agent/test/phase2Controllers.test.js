@@ -217,6 +217,26 @@ test('phase2 internal pages allow extensions', async () => {
   assert.equal(tab.url, 'chrome://extensions/');
 });
 
+test('phase2 sandbox status returns only authoritative Chromium booleans', async () => {
+  const controller = fakeBrowserController();
+  controller.context.newPage = async () => ({
+    goto: async (url) => assert.equal(url, 'chrome://sandbox/'),
+    waitForFunction: async () => {},
+    evaluate: async () => ({ suid: false, userNs: true, pidNs: true, netNs: true, seccompBpf: true, seccompTsync: true, sandboxGood: true }),
+    close: async () => {},
+  });
+  assert.deepEqual(await controller.getSandboxStatus(), {
+    source: 'chrome://sandbox',
+    suid: false,
+    userNs: true,
+    pidNs: true,
+    netNs: true,
+    seccompBpf: true,
+    seccompTsync: true,
+    sandboxGood: true,
+  });
+});
+
 test('phase2 internal pages block crash URL', async () => {
   const controller = fakeBrowserController();
   await assert.rejects(() => controller.openInternalPage('crash'), /not allowed/);

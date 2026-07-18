@@ -34,6 +34,9 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(run.args.includes('no-new-privileges:true'), false);
   assert.equal(run.args.includes('apparmor=war-browser-agent'), true);
   assert.equal(run.args.includes('seccomp=C:/war/security/chromium-userns-seccomp.json'), true);
+  assert.equal(run.args.includes('--memory') && run.args.includes('2g'), true);
+  assert.equal(run.args.includes('--cpus') && run.args.includes('2'), true);
+  assert.equal(run.args.includes('--pids-limit') && run.args.includes('512'), true);
   assert.equal(run.args.some((arg) => String(arg).includes('/var/run/docker.sock')), false);
   assert.equal(run.args.some((arg) => String(arg).includes(credential)), false);
   assert.deepEqual(run.args.filter((arg, index) => run.args[index - 1] === '-e'), [
@@ -172,6 +175,9 @@ function safeInspection(overrides = {}) {
     HostConfig: {
       Privileged: false,
       NetworkMode: 'bridge',
+      Memory: 2 * 1024 * 1024 * 1024,
+      NanoCpus: 2_000_000_000,
+      PidsLimit: 512,
       SecurityOpt: ['apparmor=war-browser-agent', 'seccomp=C:/war/security/chromium-userns-seccomp.json'],
       Binds: ['war-agent-one-data:/data'],
       PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },

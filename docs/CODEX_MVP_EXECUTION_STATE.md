@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; AppArmor and the userns-only image are verified, and the remaining measured blocker is Docker default seccomp denying Chromium namespace syscalls.
+Phase 9D managed-container Docker verification; the constrained AppArmor and seccomp runtime passed the product gate, and authoritative Chromium sandbox plus bounded-runtime proof is pending.
 
 Last green commit:
-c4d9eeecc1443f5d0400b5d34a333158024e47c7
+8e5adceadfef204f643293d7204b27bb7834e196
 
 HEAD:
-c4d9eeecc1443f5d0400b5d34a333158024e47c7 plus the constrained seccomp repair pending commit.
+8e5adceadfef204f643293d7204b27bb7834e196 plus authoritative sandbox/runtime proof pending commit.
 
 origin/main:
-c4d9eeecc1443f5d0400b5d34a333158024e47c7
+8e5adceadfef204f643293d7204b27bb7834e196
 
 Working tree:
-Modified only for the pinned Docker-default-derived seccomp profile, exact runtime wiring, integrity/policy tests, release inclusion, and this execution-state update.
+Modified only for authoritative `chrome://sandbox` status, bounded Docker resources, runtime policy assertions, focused tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29652248884` at `c4d9eee` proved the exact AppArmor transition succeeds, the SUID helper is absent, and Chromium reaches its namespace probe before reporting `No usable sandbox`; the capability probe classified the remaining layer as `DOCKER_SECCOMP_DENIED`.
+- GitHub Container Real World Gate `29652632420` at `8e5adce` passed the complete container product path under `war-browser-agent` AppArmor plus the constrained seccomp profile. Acceptance still requires Chromium's own `ZygoteHost` sandbox flags and bounded Docker runtime facts in sanitized evidence.
 
 Next exact action:
-Commit and push the constrained seccomp profile, rerun the capability probe and real-world gate, and reject the profile if any unrelated syscall or namespace flag is required.
+Commit and push authoritative sandbox/runtime proof, rerun the exact-head gate, and require `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
