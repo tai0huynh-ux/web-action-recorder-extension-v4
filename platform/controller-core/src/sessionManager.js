@@ -145,11 +145,12 @@ export class SessionManager {
   async receiveExecutionEvent(envelope) {
     const validation = validateEnvelope(envelope, { expectedTypes: ['agent.execution.event', 'execution.event', 'execution.result', 'execution.cancelled'] });
     if (!validation.ok) throw domainError(ERROR_CODES.INVALID_TARGET, 'Invalid execution envelope', 400, validation.errors);
+    if (Date.parse(envelope.deadline) <= Date.parse(this.now())) throw domainError(ERROR_CODES.JOB_EXPIRED, 'Execution event deadline expired', 408);
     const session = this.requireSession(envelope.deviceId, sessionGeneration(envelope));
     const command = this.core.jobs.getCommand(envelope.jobId || envelope.payload.jobId);
     if (command.deviceId !== session.deviceId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Stale session event rejected', 409);
     if (envelope.sessionId !== session.sessionId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Stale session event rejected', 409);
-    const event = await this.core.events.appendEvent({ ...envelope.payload, deviceId: session.deviceId, jobId: command.id });
+    const event = await this.core.events.appendEvent({ ...envelope.payload, deviceId: session.deviceId, jobId: command.id, idempotencyKey: envelope.idempotencyKey });
     if ((envelope.type === 'agent.execution.event' || envelope.type === 'execution.event') && envelope.payload.eventType === 'job_started' && companionToUnifiedStatus(command.status) === 'dispatched') {
       await this.core.jobs.acknowledge(session.deviceId, command.id, command.leaseId);
     }

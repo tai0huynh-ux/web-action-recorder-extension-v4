@@ -204,6 +204,28 @@ test('wrong protocol version and malformed envelope are rejected by session vali
   await assert.rejects(() => core.sessions.authenticateHello({ protocolVersion: PROTOCOL_VERSION, type: 'agent.hello', payload: {} }, { credential: 'cred-a' }), /Invalid AgentHello/);
 });
 
+test('execution events reject expired deadlines and persistently deduplicate idempotency keys', async () => {
+  const core = await fixtureCore();
+  const session = await pairAndConnect(core, 'dev-a', 'cred-a');
+  await core.workflows.putRevision(revision());
+  const dispatched = await core.sessions.dispatch(dispatchArgs(session, { idempotencyKey: 'event-security-dispatch' }));
+  const jobId = dispatched.dispatch.jobId;
+  const started = executionEvent(session, jobId, 'job_started');
+  const first = await core.sessions.receiveExecutionEvent(started);
+  const duplicate = await core.sessions.receiveExecutionEvent(started);
+  assert.equal(first.sequence, duplicate.sequence);
+  assert.equal(core.events.listByJob(jobId).filter((event) => event.eventType === 'job_started').length, 1);
+
+  await assert.rejects(
+    () => core.sessions.receiveExecutionEvent({ ...executionEvent(session, jobId, 'progress'), idempotencyKey: started.idempotencyKey }),
+    /idempotency key conflict/
+  );
+  await assert.rejects(
+    () => core.sessions.receiveExecutionEvent({ ...executionEvent(session, jobId, 'progress'), deadline: '2026-07-15T23:59:59.000Z' }),
+    /deadline expired/
+  );
+});
+
 test('secret digest comparison uses timingSafeEqual and handles malformed credentials safely', async () => {
   const core = await pairedCore();
   assert.throws(() => core.pairing.verifyCredential('dev-a', ''), /rejected/i);

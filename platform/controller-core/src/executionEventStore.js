@@ -12,6 +12,13 @@ export class ExecutionEventStore {
   appendEvent(event, { auditOnly = false } = {}) {
     return this.store.update((state) => {
       const job = state.commands.find((item) => item.id === event.jobId);
+      const existingByKey = event.idempotencyKey
+        ? state.executionEvents.find((item) => item.jobId === event.jobId && item.idempotencyKey === event.idempotencyKey)
+        : null;
+      if (existingByKey) {
+        if (existingByKey.eventType !== event.eventType) throw domainError(ERROR_CODES.INVALID_TARGET, 'Execution event idempotency key conflict', 409);
+        return structuredClone(existingByKey);
+      }
       if (job && TERMINAL_STATUSES.has(normalizeStatus(job.status)) && !auditOnly) {
         if (!isTerminalAcknowledgement(job.status, event.eventType)) {
           throw domainError(ERROR_CODES.JOB_TERMINAL, 'Cannot append execution event after terminal state', 409);

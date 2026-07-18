@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; origin request identifier collision handling is repaired locally.
+Phase 9D security review is in progress; inbound WSS deadline and persistent idempotency enforcement are repaired locally.
 
 Last green commit:
-1cdc6352494c723479762bcd01e01b93ac2024b6
+cd0e146b640b938a4b8218cb81806fcc3e715617
 
 HEAD:
-1cdc6352494c723479762bcd01e01b93ac2024b6 with the intended origin request-ID collision repair uncommitted.
+cd0e146b640b938a4b8218cb81806fcc3e715617 with the intended inbound execution deadline/idempotency repair uncommitted.
 
 origin/main:
-1cdc6352494c723479762bcd01e01b93ac2024b6
+cd0e146b640b938a4b8218cb81806fcc3e715617
 
 Working tree:
-Modified only for the focused WSS origin request-ID collision repair, regression test, and this execution-state update.
+Modified only for the focused inbound execution deadline/idempotency repair, regression test, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container, WSS resource controls, workflow hash integrity, and durable terminal acknowledgement are fixed through `1cdc6352494c723479762bcd01e01b93ac2024b6`. Main-agent verification confirmed that same-millisecond or injected origin request IDs could overwrite a pending request. The local repair uses cryptographically unique default IDs and fails closed before any pending-request overwrite.
+In progress. Managed-container, WSS resource controls, workflow hash integrity, durable terminal acknowledgement, and origin request collision handling are fixed through `cd0e146b640b938a4b8218cb81806fcc3e715617`. Main-agent verification confirmed inbound execution events accepted expired deadlines and could append duplicate non-terminal events. The local repair rejects expired events and persists bounded idempotency keys with conflict detection in the Controller event store.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push origin request-ID collision handling, then continue the remaining medium security findings.
+Validate, commit, and push inbound execution deadline/idempotency enforcement, then continue the remaining medium security findings.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
