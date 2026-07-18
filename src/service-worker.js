@@ -6,6 +6,7 @@ const MAX_REPORTED_CONTROLLER_JOBS = 512;
 const runtime = { running: new Map(), reportedControllerJobs: new Set(), reportedControllerJobOrder: [] };
 let nativeBridgeClient = null;
 let nativeBridgePollInFlight = false;
+let controllerTerminalOutboxMutation = Promise.resolve();
 
 initializeRuntime().catch(() => {});
 
@@ -14,11 +15,12 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 async function initializeRuntime({ configureSidePanel = false } = {}) {
-  const data = await chrome.storage.local.get([STORAGE_KEYS.profiles, STORAGE_KEYS.activeProfileId, STORAGE_KEYS.settings]);
+  const data = await chrome.storage.local.get([STORAGE_KEYS.profiles, STORAGE_KEYS.activeProfileId, STORAGE_KEYS.settings, STORAGE_KEYS.controllerTerminalOutbox]);
   const updates = {};
   if (!Array.isArray(data[STORAGE_KEYS.profiles])) updates[STORAGE_KEYS.profiles] = [SAMPLE_PROFILE];
   if (!data[STORAGE_KEYS.activeProfileId]) updates[STORAGE_KEYS.activeProfileId] = SAMPLE_PROFILE.id;
   if (!data[STORAGE_KEYS.settings]) updates[STORAGE_KEYS.settings] = DEFAULT_SETTINGS;
+  if (!Array.isArray(data[STORAGE_KEYS.controllerTerminalOutbox])) updates[STORAGE_KEYS.controllerTerminalOutbox] = [];
   if (Object.keys(updates).length) await chrome.storage.local.set(updates);
   if (configureSidePanel) chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
   await configureCompanionPolling();
@@ -461,6 +463,7 @@ async function pollNativeBridge() {
     const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
     if (!settings.nativeBridgeEnabled) return;
     const client = getNativeBridgeClient(settings.nativeHostName);
+    await flushControllerTerminalOutbox(client);
     for (let i = 0; i < 4; i += 1) {
       const response = await client.request('bridge.health.request', {}, {
         correlationId: uid('bridge-poll'),
@@ -543,12 +546,8 @@ async function sendNativeExecutionEvent({ jobId, eventType, message, idempotency
 
 async function sendNativeExecutionResult(controllerJob, result, eventType = null) {
   if (!controllerJob?.jobId) return { ok: false, error: 'missing_job_id' };
-  markControllerJobReported(controllerJob.jobId);
-  const { [STORAGE_KEYS.settings]: raw } = await chrome.storage.local.get(STORAGE_KEYS.settings);
-  const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
-  const client = getNativeBridgeClient(settings.nativeHostName);
   const succeeded = eventType ? eventType === 'job_succeeded' : result?.ok !== false;
-  return client.request('execution.result', {
+  return sendDurableNativeTerminal('execution.result', {
     jobId: controllerJob.jobId,
     eventType: eventType || (succeeded ? 'job_succeeded' : 'job_failed'),
     sentAt: new Date().toISOString(),
@@ -562,11 +561,7 @@ async function sendNativeExecutionResult(controllerJob, result, eventType = null
 
 async function sendNativeExecutionCancelled({ jobId, idempotencyKey }) {
   if (!jobId) return { ok: false, error: 'missing_job_id' };
-  markControllerJobReported(jobId);
-  const { [STORAGE_KEYS.settings]: raw } = await chrome.storage.local.get(STORAGE_KEYS.settings);
-  const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
-  const client = getNativeBridgeClient(settings.nativeHostName);
-  return client.request('execution.cancelled', {
+  return sendDurableNativeTerminal('execution.cancelled', {
     jobId,
     eventType: 'job_cancelled',
     sentAt: new Date().toISOString()
@@ -575,6 +570,53 @@ async function sendNativeExecutionCancelled({ jobId, idempotencyKey }) {
     deadline: new Date(Date.now() + 30000).toISOString(),
     idempotencyKey: idempotencyKey || `${jobId}-cancelled`
   });
+}
+
+async function sendDurableNativeTerminal(type, payload, options, { persist = true, client = null } = {}) {
+  const entry = { type, payload, options };
+  if (persist) await putControllerTerminalOutbox(entry);
+  const { [STORAGE_KEYS.settings]: raw } = await chrome.storage.local.get(STORAGE_KEYS.settings);
+  const settings = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  const bridgeClient = client || getNativeBridgeClient(settings.nativeHostName);
+  const response = await bridgeClient.request(type, payload, options);
+  if (response?.payload?.durableAccepted !== true) throw new Error('Agent did not durably accept terminal result.');
+  await removeControllerTerminalOutbox(options.idempotencyKey);
+  markControllerJobReported(options.jobId);
+  return response;
+}
+
+async function flushControllerTerminalOutbox(client) {
+  await controllerTerminalOutboxMutation;
+  const data = await chrome.storage.local.get(STORAGE_KEYS.controllerTerminalOutbox);
+  const entries = Array.isArray(data[STORAGE_KEYS.controllerTerminalOutbox]) ? data[STORAGE_KEYS.controllerTerminalOutbox] : [];
+  for (const entry of entries) {
+    await sendDurableNativeTerminal(entry.type, entry.payload, entry.options, { persist: false, client });
+  }
+}
+
+async function putControllerTerminalOutbox(entry) {
+  if (new TextEncoder().encode(JSON.stringify(entry)).byteLength > 256 * 1024) throw new Error('Terminal result is too large to persist.');
+  return mutateControllerTerminalOutbox((entries) => {
+    const next = entries.filter((item) => item?.options?.idempotencyKey !== entry.options.idempotencyKey);
+    next.push(entry);
+    return next.slice(-MAX_REPORTED_CONTROLLER_JOBS);
+  });
+}
+
+async function removeControllerTerminalOutbox(idempotencyKey) {
+  return mutateControllerTerminalOutbox((entries) => entries.filter((item) => item?.options?.idempotencyKey !== idempotencyKey));
+}
+
+function mutateControllerTerminalOutbox(mutator) {
+  const operation = controllerTerminalOutboxMutation.then(async () => {
+    const data = await chrome.storage.local.get(STORAGE_KEYS.controllerTerminalOutbox);
+    const entries = Array.isArray(data[STORAGE_KEYS.controllerTerminalOutbox]) ? data[STORAGE_KEYS.controllerTerminalOutbox] : [];
+    const next = mutator(entries);
+    if (new TextEncoder().encode(JSON.stringify(next)).byteLength > 5 * 1024 * 1024) throw new Error('Terminal outbox storage limit exceeded.');
+    await chrome.storage.local.set({ [STORAGE_KEYS.controllerTerminalOutbox]: next });
+  });
+  controllerTerminalOutboxMutation = operation.catch(() => {});
+  return operation;
 }
 
 function sanitizeExecutionResult(result) {

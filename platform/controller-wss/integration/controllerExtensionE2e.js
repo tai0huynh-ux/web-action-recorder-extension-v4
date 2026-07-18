@@ -13,6 +13,7 @@ import { ControllerWssRuntimeServer } from '../src/wssServer.js';
 import { ControllerSessionClient } from '../../browser-agent/src/controllerSessionClient.js';
 import { createWorkflowRegistry } from '../../browser-agent/src/workflowRegistry.js';
 import { NativeBridgeHandler } from '../../browser-agent/src/nativeBridgeHandler.js';
+import { TerminalOutbox } from '../../browser-agent/src/terminalOutbox.js';
 import { LocalSocketServer } from '../../browser-agent/src/localSocketServer.js';
 import { createWorkflowRevisionFromExtensionProfile } from '../../workflow-core/src/workflowMetadata.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
@@ -71,6 +72,7 @@ export async function runControllerExtensionE2e() {
       workflowRegistryMaxPayloadBytes: 1024 * 1024
     });
     agentRegistry.putRevision(workflow);
+    const terminalOutbox = new TerminalOutbox({ filePath: path.join(root, 'agent-terminal-outbox.json') });
 
     controllerSession = new ControllerSessionClient({
       url: controller.url,
@@ -84,24 +86,17 @@ export async function runControllerExtensionE2e() {
     const nativeBridge = new NativeBridgeHandler({
       identity: { deviceId: 'dev-e2e' },
       registry: agentRegistry,
+      terminalOutbox,
       version: '0.1.0',
       supervisor: { getState: () => ({ browserState: 'running', extensionLoaded: true }) },
       onExecutionEnvelope: (envelope) => {
-        const event = envelope.payload || {};
-        const forwarded = envelope.type === 'execution.cancelled'
-          ? controllerSession.sendExecutionCancelled({ jobId: envelope.jobId || event.jobId, idempotencyKey: envelope.idempotencyKey })
-          : controllerSession.sendExecutionEvent({
-              jobId: envelope.jobId || event.jobId,
-              eventType: event.eventType,
-              message: event.message,
-              result: event.result,
-              idempotencyKey: envelope.idempotencyKey
-            });
-        Promise.resolve(forwarded).catch(() => {});
+        const terminal = envelope.type === 'execution.result' || envelope.type === 'execution.cancelled';
+        return controllerSession.sendExecutionEnvelope(envelope, { expectResponse: terminal });
       }
     });
     controllerSession.on('dispatch', (dispatch) => nativeBridge.enqueueDispatch(dispatch));
     controllerSession.on('cancel', (cancel) => nativeBridge.enqueueCancel(cancel));
+    controllerSession.on('authenticated', () => nativeBridge.flushTerminalOutbox().catch(() => {}));
     socketServer = new LocalSocketServer({
       socketPath,
       handler: (message) => nativeBridge.handle(message)

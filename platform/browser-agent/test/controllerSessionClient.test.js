@@ -170,6 +170,58 @@ test('controller session tracks session, emits cancel, and sends execution event
   assert.equal(sent.payload.eventType, 'job_started');
 });
 
+test('terminal execution send waits for correlated Controller acknowledgement', async () => {
+  const scheduler = fakeScheduler();
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler,
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const authenticated = [];
+  client.on('authenticated', (session) => authenticated.push(session));
+  client.start();
+  socket.emit('open');
+  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
+  const pending = client.sendExecutionEvent({ jobId: 'job-1', eventType: 'job_succeeded', result: { ok: true } });
+  const sent = JSON.parse(socket.sent.at(-1));
+  assert.equal(client.pending.size, 1);
+  socket.emit('message', JSON.stringify({ correlationId: sent.messageId, payload: { ok: true } }));
+  const response = await pending;
+  assert.equal(response.payload.ok, true);
+  assert.equal(client.pending.size, 0);
+  assert.equal(authenticated.length, 1);
+});
+
+test('replayed terminal envelope receives a fresh transport timestamp and deadline', () => {
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler: fakeScheduler(),
+    now: () => '2026-07-16T01:00:00.000Z'
+  });
+  client.start();
+  socket.emit('open');
+  client.sendExecutionEnvelope({
+    type: 'execution.result',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    deadline: '2026-07-16T00:00:30.000Z',
+    jobId: 'job-1',
+    idempotencyKey: 'job-1-succeeded',
+    payload: { jobId: 'job-1', eventType: 'job_succeeded', sentAt: '2026-07-16T00:00:00.000Z', result: { ok: true } }
+  });
+  const sent = JSON.parse(socket.sent.at(-1));
+  assert.equal(sent.sentAt, '2026-07-16T01:00:00.000Z');
+  assert.equal(sent.deadline, '2026-07-16T01:00:30.000Z');
+  assert.equal(sent.payload.sentAt, '2026-07-16T00:00:00.000Z');
+});
+
 test('controller session handles origin sync requests and sends correlated responses', () => {
   const scheduler = fakeScheduler();
   const socket = new FakeSocket();

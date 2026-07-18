@@ -5,10 +5,11 @@ const MAX_PENDING_DOWNLINK = 128;
 const MAX_COMPLETED_JOBS = 1024;
 
 export class NativeBridgeHandler extends EventEmitter {
-  constructor({ identity, registry, version, supervisor, dispatcher, log = () => {}, now = () => new Date().toISOString(), onExecutionEnvelope = null } = {}) {
+  constructor({ identity, registry, terminalOutbox = null, version, supervisor, dispatcher, log = () => {}, now = () => new Date().toISOString(), onExecutionEnvelope = null } = {}) {
     super();
     this.identity = identity;
     this.registry = registry;
+    this.terminalOutbox = terminalOutbox;
     this.version = version;
     this.supervisor = supervisor;
     this.dispatcher = dispatcher;
@@ -83,15 +84,48 @@ export class NativeBridgeHandler extends EventEmitter {
     return this.response(envelope, revision ? { ok: true, type: 'workflow.get.result', revision } : { ok: false, error: { code: 'workflow_not_found' } });
   }
 
-  handleExecutionEvent(envelope) {
+  async handleExecutionEvent(envelope) {
     if (envelope.jobId) this.jobs.set(envelope.jobId, { updatedAt: this.now(), envelope });
-    this.onExecutionEnvelope?.(envelope);
-    this.emit('execution', envelope);
-    if (envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') {
+    const terminal = envelope.type === 'execution.result' || envelope.type === 'execution.cancelled';
+    const outboxEntry = terminal ? this.terminalOutbox?.put(envelope) : null;
+    if (terminal) {
       this.rememberCompletedJob(envelope.jobId);
       this.activeJobs.delete(envelope.jobId);
     }
-    return this.response(envelope, { ok: true, accepted: true });
+    let controllerAcknowledged = false;
+    try {
+      const response = await this.onExecutionEnvelope?.(envelope);
+      controllerAcknowledged = response?.payload?.ok === true;
+      if (controllerAcknowledged && outboxEntry) this.terminalOutbox.acknowledge(outboxEntry.key);
+    } catch (error) {
+      this.log('warn', 'nativeBridge', 'controller_execution_event_forward_failed', { jobId: envelope.jobId, message: error.message });
+    }
+    this.emit('execution', envelope);
+    return this.response(envelope, {
+      ok: true,
+      accepted: true,
+      ...(terminal ? { durableAccepted: Boolean(outboxEntry), controllerAcknowledged } : {})
+    });
+  }
+
+  async flushTerminalOutbox() {
+    if (!this.terminalOutbox || !this.onExecutionEnvelope || this.flushingTerminalOutbox) return { acknowledged: 0, pending: this.terminalOutbox?.list().length || 0 };
+    this.flushingTerminalOutbox = true;
+    let acknowledged = 0;
+    try {
+      for (const entry of this.terminalOutbox.list()) {
+        try {
+          const response = await this.onExecutionEnvelope(entry.envelope);
+          if (response?.payload?.ok === true && this.terminalOutbox.acknowledge(entry.key)) acknowledged += 1;
+        } catch (error) {
+          this.log('warn', 'nativeBridge', 'terminal_outbox_flush_failed', { jobId: entry.jobId, message: error.message });
+          break;
+        }
+      }
+      return { acknowledged, pending: this.terminalOutbox.list().length };
+    } finally {
+      this.flushingTerminalOutbox = false;
+    }
   }
 
   rememberCompletedJob(jobId) {
@@ -106,7 +140,7 @@ export class NativeBridgeHandler extends EventEmitter {
 
   enqueueDispatch(dispatch) {
     if (!dispatch?.jobId) throw new Error('Dispatch payload is missing jobId.');
-    if (this.completedJobs.has(dispatch.jobId) || this.activeJobs.has(dispatch.jobId)) return { queued: false, duplicate: true };
+    if (this.completedJobs.has(dispatch.jobId) || this.terminalOutbox?.hasJob(dispatch.jobId) || this.activeJobs.has(dispatch.jobId)) return { queued: false, duplicate: true };
     if (this.pendingDownlink.length >= MAX_PENDING_DOWNLINK) throw new Error('Native bridge downlink queue is full.');
     if (dispatch.deadline && Date.parse(dispatch.deadline) <= Date.parse(this.now())) throw new Error('Dispatch deadline expired.');
     const revision = this.registry.getRevision(dispatch.workflowId, dispatch.workflowRevision);

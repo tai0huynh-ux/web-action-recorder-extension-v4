@@ -3,7 +3,8 @@ export const STORAGE_KEYS = {
   activeProfileId: 'war_active_profile_id',
   logs: 'war_logs',
   library: 'war_library',
-  settings: 'war_settings'
+  settings: 'war_settings',
+  controllerTerminalOutbox: 'war_controller_terminal_outbox'
 };
 
 export const PROFILE_SCHEMA_VERSION = 1;

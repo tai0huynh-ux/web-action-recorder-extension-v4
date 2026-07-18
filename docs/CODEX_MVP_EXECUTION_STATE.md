@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; workflow content-hash integrity is repaired locally.
+Phase 9D security review is in progress; durable terminal acknowledgement and replay are repaired locally.
 
 Last green commit:
-ec2b9e0001f2b8becd488125e3378f08f04b09be
+6097a86861f0bbc2b2472cac219f4352991b8ff4
 
 HEAD:
-ec2b9e0001f2b8becd488125e3378f08f04b09be with the intended workflow hash-integrity repair uncommitted.
+6097a86861f0bbc2b2472cac219f4352991b8ff4 with the intended terminal exact-once repair uncommitted.
 
 origin/main:
-ec2b9e0001f2b8becd488125e3378f08f04b09be
+6097a86861f0bbc2b2472cac219f4352991b8ff4
 
 Working tree:
-Modified only for the focused Controller/Agent workflow hash-integrity repair, runtime packaging updates, regression tests, and this execution-state update.
+Modified only for the focused Extension/Agent terminal outbox and Controller acknowledgement boundary, release/check wiring, regression tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,10 +33,10 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container and WSS blockers are fixed through `ec2b9e0001f2b8becd488125e3378f08f04b09be`. Main-agent verification confirmed that Controller and Agent registries trusted arbitrary SHA-shaped workflow hashes; the local repair recomputes canonical content hashes at both registry boundaries and regenerates the hash after origin sanitization changes payload content.
+In progress. Managed-container, WSS, and workflow hash-integrity blockers are fixed through `6097a86861f0bbc2b2472cac219f4352991b8ff4`. Main-agent verification confirmed that terminal results could be marked reported before native delivery and lost across Extension or Agent restart. The local repair adds a bounded Extension storage outbox, an Agent file outbox, fresh replay deadlines, Controller-correlated acknowledgement, and replay after authentication. Real Edge MV3 grouped-input and graph-revision execution pass through the repaired path.
 
 Release gate:
-Phase 9B local release integrity, packaged Controller, and release gate pass after lockfile reinstall. Phase 9 final release checkpoint remains pending.
+Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
 
 Final acceptance:
 Phase 10 has not started.
@@ -45,10 +45,10 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push workflow hash integrity, then repair the terminal exact-once acknowledgement and persistence boundary.
+Validate packaged release paths, commit, and push terminal exact-once, then continue the remaining medium security findings.
 
 Remaining MVP work:
-- Phase 9C through Phase 9F.
+- Phase 9D through Phase 9F.
 - Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
 
 Starting baseline for Phase 8:

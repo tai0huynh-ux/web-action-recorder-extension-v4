@@ -100,16 +100,22 @@ export class ControllerSessionClient extends EventEmitter {
       const pending = this.pending.get(key);
       this.scheduler.clearTimeout(pending.timer);
       this.pending.delete(key);
-      if (envelope.payload?.session) this.session = envelope.payload.session;
+      if (envelope.payload?.session) this.setSession(envelope.payload.session);
       pending.resolve(envelope);
       return;
     }
-    if (envelope.payload?.session) this.session = envelope.payload.session;
+    if (envelope.payload?.session) this.setSession(envelope.payload.session);
     if (envelope.type === 'execution.dispatch') this.emit('dispatch', envelope.payload);
     if (envelope.type === 'execution.cancel') this.emit('cancel', envelope.payload);
     if (envelope.type === 'origin.inventory.request') this.emit('originInventoryRequest', envelope);
     if (envelope.type === 'origin.workflow.get') this.emit('originWorkflowGet', envelope);
     if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
+  }
+
+  setSession(session) {
+    const changed = this.session?.sessionId !== session?.sessionId || this.session?.generation !== session?.generation;
+    this.session = session;
+    if (changed) this.emit('authenticated', session);
   }
 
   sendOriginResponse(request, payload) {
@@ -180,7 +186,7 @@ export class ControllerSessionClient extends EventEmitter {
 
   sendExecutionEvent({ jobId, eventType, message, result, idempotencyKey }) {
     const sentAt = this.now();
-    return this.send({
+    return this.sendExecutionEnvelope({
       protocolVersion: PROTOCOL_VERSION,
       messageId: id('execution'),
       type: eventType === 'job_succeeded' || eventType === 'job_failed' ? 'execution.result' : 'execution.event',
@@ -197,12 +203,12 @@ export class ControllerSessionClient extends EventEmitter {
         ...(message ? { message } : {}),
         ...(result !== undefined ? { result } : {})
       }
-    });
+    }, { expectResponse: eventType === 'job_succeeded' || eventType === 'job_failed' });
   }
 
   sendExecutionCancelled({ jobId, idempotencyKey }) {
     const sentAt = this.now();
-    return this.send({
+    return this.sendExecutionEnvelope({
       protocolVersion: PROTOCOL_VERSION,
       messageId: id('cancelled'),
       type: 'execution.cancelled',
@@ -217,7 +223,20 @@ export class ControllerSessionClient extends EventEmitter {
         eventType: 'job_cancelled',
         sentAt
       }
-    });
+    }, { expectResponse: true });
+  }
+
+  sendExecutionEnvelope(envelope, { expectResponse = false, timeoutMs = 5000 } = {}) {
+    const sentAt = this.now();
+    return this.send({
+      ...envelope,
+      protocolVersion: PROTOCOL_VERSION,
+      messageId: id('execution'),
+      sentAt,
+      deviceId: this.identity.deviceId,
+      sessionId: this.session?.sessionId,
+      deadline: new Date(Date.parse(sentAt) + 30000).toISOString()
+    }, { expectResponse, timeoutMs });
   }
 
   gracefulShutdown() {

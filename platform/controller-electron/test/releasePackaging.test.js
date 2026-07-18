@@ -37,5 +37,6 @@ test('release file allowlists separate sidecar extension and browser agent packa
   assert(browserAgentFiles.includes('platform/protocol/src/schemaValidator.js'));
   assert(browserAgentFiles.includes('platform/diagnostics/src/redaction.js'));
   assert(browserAgentFiles.includes('platform/workflow-core/src/workflowMetadata.js'));
+  assert(browserAgentFiles.includes('platform/browser-agent/src/terminalOutbox.js'));
   assert(browserAgentFiles.every((file) => !file.includes(`${path.sep}test${path.sep}`)));
 });

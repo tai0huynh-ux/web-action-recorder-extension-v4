@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { loadConfig, ensureDataDirs, serializeConfig } from './config.js';
 import { loadOrCreateDeviceIdentity } from './deviceIdentity.js';
 import { BrowserController } from './browserController.js';
@@ -10,6 +11,8 @@ import { createWorkflowRegistry } from './workflowRegistry.js';
 import { NativeBridgeHandler } from './nativeBridgeHandler.js';
 import { LocalSocketServer } from './localSocketServer.js';
 import { ControllerSessionClient } from './controllerSessionClient.js';
+import { TerminalOutbox } from './terminalOutbox.js';
+import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 
 export async function main() {
   const packageJson = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'));
@@ -27,31 +30,19 @@ export async function main() {
   const dispatcher = new ControlDispatcher({ supervisor, controller, deviceId: identity.deviceId, config, log });
   let controllerSession = null;
   const registry = createWorkflowRegistry(config, log);
+  const terminalOutbox = new TerminalOutbox({ filePath: path.join(config.dataDir, 'terminal-outbox.json'), log });
   const nativeBridge = new NativeBridgeHandler({
     identity,
     registry,
+    terminalOutbox,
     version: packageJson.version,
     supervisor,
     dispatcher,
     log,
     onExecutionEnvelope: (envelope) => {
-      if (!controllerSession) return;
-      const event = envelope.payload || {};
-      const sendResult = envelope.type === 'execution.cancelled'
-        ? controllerSession.sendExecutionCancelled({ jobId: envelope.jobId || event.jobId, idempotencyKey: envelope.idempotencyKey })
-        : controllerSession.sendExecutionEvent({
-            jobId: envelope.jobId || event.jobId,
-            eventType: event.eventType,
-            message: event.message,
-            result: event.result,
-            idempotencyKey: envelope.idempotencyKey
-          });
-      Promise.resolve(sendResult).catch((error) => {
-        log('warn', 'agent', 'controller_execution_event_forward_failed', {
-          jobId: envelope.jobId || event.jobId,
-          message: error.message
-        });
-      });
+      if (!controllerSession) throw new Error('Controller session is unavailable');
+      const terminal = envelope.type === 'execution.result' || envelope.type === 'execution.cancelled';
+      return controllerSession.sendExecutionEnvelope(envelope, { expectResponse: terminal });
     }
   });
   if (config.controllerWssUrl) {
@@ -72,17 +63,31 @@ export async function main() {
         nativeBridge.enqueueDispatch(dispatch);
       } catch (error) {
         log('warn', 'agent', 'controller_dispatch_rejected', { jobId: dispatch.jobId, message: error.message });
-        controllerSession.sendExecutionEvent({
+        const sentAt = new Date().toISOString();
+        nativeBridge.handle({
+          protocolVersion: PROTOCOL_VERSION,
+          messageId: `dispatch-rejected-${dispatch.jobId}`,
+          type: 'execution.result',
+          sentAt,
+          deadline: new Date(Date.parse(sentAt) + 30000).toISOString(),
+          deviceId: identity.deviceId,
           jobId: dispatch.jobId,
-          eventType: 'job_failed',
-          message: error.message,
-          result: { ok: false, error: 'dispatch_rejected' },
-          idempotencyKey: `${dispatch.jobId}-dispatch-rejected`
-        });
+          idempotencyKey: `${dispatch.jobId}-dispatch-rejected`,
+          payload: {
+            jobId: dispatch.jobId,
+            eventType: 'job_failed',
+            sentAt,
+            message: error.message,
+            result: { ok: false, error: 'dispatch_rejected' }
+          }
+        }).catch((forwardError) => log('warn', 'agent', 'dispatch_rejection_persist_failed', { jobId: dispatch.jobId, message: forwardError.message }));
       }
     });
     controllerSession.on('cancel', (cancel) => {
       nativeBridge.enqueueCancel(cancel);
+    });
+    controllerSession.on('authenticated', () => {
+      nativeBridge.flushTerminalOutbox().catch((error) => log('warn', 'agent', 'terminal_outbox_flush_failed', { message: error.message }));
     });
     controllerSession.on('originInventoryRequest', (request) => {
       const workflows = registry.listMetadata();

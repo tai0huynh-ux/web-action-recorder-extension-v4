@@ -6,6 +6,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { once } from 'node:events';
 import { WorkflowRegistry } from '../src/workflowRegistry.js';
+import { TerminalOutbox } from '../src/terminalOutbox.js';
 import { LocalSocketServer, prepareSocketPath } from '../src/localSocketServer.js';
 import { NativeBridgeHandler } from '../src/nativeBridgeHandler.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
@@ -157,9 +158,11 @@ test('native bridge forwards extension execution envelopes and deduplicates comp
   const forwarded = [];
   const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
   const stored = registry.putRevision(revisionFixture()).revision;
+  const terminalOutbox = new TerminalOutbox({ filePath: tempFile('terminal-outbox.json') });
   const handler = new NativeBridgeHandler({
     identity: { deviceId: 'device-1' },
     registry,
+    terminalOutbox,
     version: '0.1.0',
     supervisor: { getState: () => ({ browserState: 'running', extensionLoaded: true }) },
     onExecutionEnvelope: (envelope) => forwarded.push(envelope),
@@ -194,8 +197,60 @@ test('native bridge forwards extension execution envelopes and deduplicates comp
     idempotencyKey: 'dispatch-1'
   });
   assert.equal(result.payload.accepted, true);
+  assert.equal(result.payload.durableAccepted, true);
   assert.equal(forwarded.length, 1);
   assert.deepEqual(duplicate, { queued: false, duplicate: true });
+});
+
+test('terminal outbox survives restart and clears only after Controller acknowledgement', async () => {
+  const filePath = tempFile('terminal-outbox.json');
+  const firstOutbox = new TerminalOutbox({ filePath });
+  const envelopeValue = {
+    ...envelope('execution.result', {
+      eventType: 'job_succeeded',
+      jobId: 'job-restart',
+      sentAt: '2026-07-16T00:00:00.000Z',
+      result: { ok: true }
+    }),
+    jobId: 'job-restart',
+    idempotencyKey: 'job-restart-succeeded'
+  };
+  const failedHandler = new NativeBridgeHandler({
+    identity: { deviceId: 'device-1' },
+    registry: new WorkflowRegistry({ filePath: tempFile('registry.json') }),
+    terminalOutbox: firstOutbox,
+    onExecutionEnvelope: async () => { throw new Error('connection lost'); }
+  });
+
+  const accepted = await failedHandler.handle(envelopeValue);
+  assert.equal(accepted.payload.durableAccepted, true);
+  assert.equal(accepted.payload.controllerAcknowledged, false);
+  assert.equal(firstOutbox.list().length, 1);
+
+  const replayed = [];
+  const restartedOutbox = new TerminalOutbox({ filePath });
+  const restartedHandler = new NativeBridgeHandler({
+    identity: { deviceId: 'device-1' },
+    registry: new WorkflowRegistry({ filePath: tempFile('registry.json') }),
+    terminalOutbox: restartedOutbox,
+    onExecutionEnvelope: async (item) => {
+      replayed.push(item);
+      return { payload: { ok: true } };
+    }
+  });
+  const flushed = await restartedHandler.flushTerminalOutbox();
+  assert.equal(flushed.acknowledged, 1);
+  assert.equal(flushed.pending, 0);
+  assert.equal(replayed[0].idempotencyKey, 'job-restart-succeeded');
+});
+
+test('terminal outbox rejects oversized durable entries', () => {
+  const outbox = new TerminalOutbox({ filePath: tempFile('terminal-outbox.json'), maxEntryBytes: 256 });
+  assert.throws(() => outbox.put({
+    ...envelope('execution.result', { eventType: 'job_failed', result: { message: 'x'.repeat(512) } }),
+    jobId: 'job-large',
+    idempotencyKey: 'job-large-failed'
+  }), /too large/);
 });
 
 function revisionFixture(overrides = {}) {
