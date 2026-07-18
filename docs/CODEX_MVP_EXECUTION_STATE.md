@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; inbound WSS deadline and persistent idempotency enforcement are repaired locally.
+Phase 9D security review is in progress; grouped dispatch duplicate-target validation and partial-delivery consistency are repaired locally.
 
 Last green commit:
-cd0e146b640b938a4b8218cb81806fcc3e715617
+038dbea3b9aea456567de50048678d59bbdcc079
 
 HEAD:
-cd0e146b640b938a4b8218cb81806fcc3e715617 with the intended inbound execution deadline/idempotency repair uncommitted.
+038dbea3b9aea456567de50048678d59bbdcc079 with the intended grouped dispatch validation repair uncommitted.
 
 origin/main:
-cd0e146b640b938a4b8218cb81806fcc3e715617
+038dbea3b9aea456567de50048678d59bbdcc079
 
 Working tree:
-Modified only for the focused inbound execution deadline/idempotency repair, regression test, and this execution-state update.
+Modified only for grouped dispatch duplicate-target validation, partial-delivery regression coverage, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container, WSS resource controls, workflow hash integrity, durable terminal acknowledgement, and origin request collision handling are fixed through `cd0e146b640b938a4b8218cb81806fcc3e715617`. Main-agent verification confirmed inbound execution events accepted expired deadlines and could append duplicate non-terminal events. The local repair rejects expired events and persists bounded idempotency keys with conflict detection in the Controller event store.
+In progress. Earlier blockers plus inbound execution deadline/idempotency enforcement are fixed through `038dbea3b9aea456567de50048678d59bbdcc079`. Main-agent verification confirmed duplicate grouped device IDs could map and dispatch the same target twice. The local repair rejects duplicate targets before persistence and verifies that partial WSS delivery still returns and preserves every authoritative job for normal reconnect replay.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push inbound execution deadline/idempotency enforcement, then continue the remaining medium security findings.
+Validate, commit, and push grouped dispatch hardening, then continue the remaining medium security findings.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

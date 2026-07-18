@@ -400,6 +400,7 @@ function validateGroupedInputRequest(payload) {
   if (!Array.isArray(payload.deviceIds) || payload.deviceIds.length === 0 || payload.deviceIds.length > 200 || payload.deviceIds.some((id) => typeof id !== 'string' || !id.trim())) {
     throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'At least one bounded deviceId is required');
   }
+  if (new Set(payload.deviceIds).size !== payload.deviceIds.length) throw codedError('DUPLICATE_GROUPED_DEVICE', 'Grouped input deviceIds must be unique');
   if (typeof payload.text !== 'string') throw codedError('INVALID_GROUPED_INPUT_PAYLOAD', 'Grouped input text is required');
   if (Buffer.byteLength(payload.text, 'utf8') > MAX_GROUPED_INPUT_BYTES) throw codedError('GROUPED_INPUT_TOO_LARGE', 'Grouped input exceeds maximum size');
   const mode = payload.mode || 'text';

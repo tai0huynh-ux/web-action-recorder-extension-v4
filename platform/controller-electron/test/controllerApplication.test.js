@@ -274,7 +274,28 @@ test('application grouped input reports parser, row, mode, and size errors befor
   assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x', mode: 'unknown' }), code('INVALID_GROUPED_INPUT_MODE'));
   assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x'.repeat(70 * 1024), mode: 'text' }), code('GROUPED_INPUT_TOO_LARGE'));
   assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a'], text: 'x|extra', mode: 'text' }), code('EXTRA_FIELD'));
+  assert.throws(() => app.previewGroupedInput({ workflowId: 'wf-1', revision: 1, deviceIds: ['dev-a', 'dev-a'], text: 'x', mode: 'text' }), code('DUPLICATE_GROUPED_DEVICE'));
   assert.equal(core.store.snapshot().commands.length, 0);
+});
+
+test('grouped input preserves every job when one transport delivery fails so Controller replay can recover it', async () => {
+  const core = await connectedCore();
+  await pairSecondDevice(core);
+  await core.workflows.putRevision(revision({ requiredInputs: [{ name: 'url', index: 0, required: true, sensitive: false, type: 'string' }] }));
+  const transport = fakeTransport({ failDispatchDeviceId: 'dev-b' });
+  const result = await application(core, transport).dispatchGroupedInput({
+    workflowId: 'wf-1',
+    revision: 1,
+    deviceIds: ['dev-a', 'dev-b'],
+    text: 'https://a.test\nhttps://b.test',
+    mode: 'table',
+  });
+
+  assert.equal(result.data.dispatched.length, 2);
+  assert.deepEqual(result.data.dispatched.map((item) => item.transport.delivered), [true, false]);
+  assert.equal(result.data.dispatched[1].transport.warningCode, 'WSS_SEND_FAILED');
+  assert.equal(core.store.snapshot().commands.length, 2);
+  assert.deepEqual(core.store.snapshot().commands.map((item) => item.deviceId).sort(), ['dev-a', 'dev-b']);
 });
 
 test('application grouped input broadcasts one row to multiple devices', async () => {
@@ -366,14 +387,14 @@ function application(core, transport) {
   });
 }
 
-function fakeTransport({ failDispatch = false, failCancel = false, originInventory = { workflows: [] }, originWorkflows = {} } = {}) {
+function fakeTransport({ failDispatch = false, failDispatchDeviceId = null, failCancel = false, originInventory = { workflows: [] }, originWorkflows = {} } = {}) {
   return {
     dispatches: [],
     cancels: [],
     originInventoryRequests: [],
     originWorkflowRequests: [],
     sendDispatch(deviceId, generation, dispatch) {
-      if (failDispatch) throw Object.assign(new Error('send failed'), { code: 'WSS_SEND_FAILED' });
+      if (failDispatch || deviceId === failDispatchDeviceId) throw Object.assign(new Error('send failed'), { code: 'WSS_SEND_FAILED' });
       this.dispatches.push({ deviceId, generation, dispatch });
       return { delivered: true, deviceId, generation };
     },
