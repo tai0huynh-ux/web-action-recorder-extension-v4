@@ -4,7 +4,7 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9F exact-head GitHub workflow acceptance after the Windows credential-file portability repair.
+Phase 10 clean packaged-product acceptance and soak; managed-container execution is blocked on the local host.
 
 Last green commit:
 9fa0c1af53921d7e887c71d3fa63da9854aebc73
@@ -50,19 +50,23 @@ Phase 9 local verification after documentation:
 - `npm.cmd audit`: PASS; 0 vulnerabilities.
 - `npm.cmd ls --depth=0`: PASS; only the approved top-level runtime packages are present.
 - Local Windows `test:container-real-world`: `BLOCKED_INFRASTRUCTURE` because Docker CLI is unavailable; the GitHub-hosted exact-SHA gate remains mandatory and is not replaced by this local result.
+- Phase 10 local WSS gate: PASS; TLS verification, replay, revocation, and cleanup passed on `9a0ee7563ad3ffe06ac1e99278cd431bbb462ef5`.
+- Phase 10 local Controller-to-Extension Edge E2E: PASS; real Browser Agent/Chromium/MV3, grouped input, graph edit, execution, cancel, replay, and cleanup passed.
+- Phase 10 local Electron smoke, packaged smoke, release integrity, and release gate: PASS.
+- Phase 10 local Browser Agent soak: `BLOCKED_INFRASTRUCTURE` with `spawn docker ENOENT`; no soak success is claimed.
 
 Final acceptance:
-Phase 10 has not started.
+Phase 10 is partially verified and blocked. Packaged Controller, secure WSS/TLS, Edge Controller-to-Extension E2E, Electron smoke, package integrity, packaged smoke, and release gate pass on `9a0ee7563ad3ffe06ac1e99278cd431bbb462ef5`. Managed-container active-sandbox execution and the required soak matrix cannot run on this Windows host because Docker CLI is unavailable.
 
 Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29654213429` passed at exact SHA `9fa0c1af53921d7e887c71d3fa63da9854aebc73` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 - The Windows credential-file regression is repaired with a platform-aware identity comparison that retains strict type, symlink, size, and POSIX permission checks; CI and Windows full tests now pass.
+- Phase 10 managed-container and soak commands are blocked locally by `spawn docker ENOENT`; this is infrastructure absence, not a product failure. A reviewed disposable Linux Docker host is required to run the remaining acceptance matrix.
 
 Next exact action:
-Commit and push this execution-state update, then rerun CI, Container Real World Gate, and Windows Release Gate on the documentation SHA. Accept Phase 9 only if all three execute and pass again.
+Run the remaining Phase 10 product path and soak matrix on a reviewed disposable Linux Docker host, then record the exact evidence and final decision.
 
 Remaining MVP work:
-- Phase 9F exact-head verification and workflow acceptance.
 - Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
 
 Starting baseline for Phase 8:
