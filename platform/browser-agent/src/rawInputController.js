@@ -209,9 +209,29 @@ export class RawInputController {
     const parts = shortcut.split('+').map((key) => PLAYWRIGHT_MODIFIERS[key] || key);
     const main = parts.at(-1);
     const modifiers = parts.slice(0, -1);
-    for (const key of modifiers) await page.keyboard.down(key);
-    await page.keyboard.press(main);
-    for (const key of modifiers.reverse()) await page.keyboard.up(key);
+    const pressed = [];
+    let operationError;
+    try {
+      for (const key of modifiers) {
+        await page.keyboard.down(key);
+        pressed.push(key);
+        this.heldKeys.add(key);
+      }
+      await page.keyboard.press(main);
+    } catch (error) {
+      operationError = error;
+    }
+    let releaseError;
+    for (const key of pressed.reverse()) {
+      try {
+        await page.keyboard.up(key);
+        this.heldKeys.delete(key);
+      } catch (error) {
+        releaseError ||= error;
+      }
+    }
+    if (operationError) throw operationError;
+    if (releaseError) throw releaseError;
     return { shortcut };
   }
 

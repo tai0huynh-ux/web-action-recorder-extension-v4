@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; Browser Agent Docker base images are digest-pinned locally.
+Phase 9D final security repair loop; CDP shortcut modifier release is repaired and managed-container isolation is next.
 
 Last green commit:
-dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9
+be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f
 
 HEAD:
-dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9 with the intended Docker base-image digest pin uncommitted.
+be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f plus the focused CDP shortcut modifier-release repair pending commit.
 
 origin/main:
-dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9
+be5fa98f7a60d5ce08479d52dcd8a7ae834bb67f
 
 Working tree:
-Modified only for immutable Browser Agent Docker base-image pinning, policy regression coverage, and this execution-state update.
+Modified only for the CDP shortcut modifier-release repair, focused regression coverage, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Earlier blockers plus Electron import hardening are fixed through `dfdb069e9c59a1b62fb5e808f9584b1e72ec3cd9`. The official Docker Registry manifest-list digest for `node:22-bookworm-slim` was verified on 2026-07-18 and is pinned for both Browser Agent build stages; regression coverage rejects mutable Docker base tags.
+Final read-only review found additional blockers. The first repair now tracks pressed CDP shortcut modifiers and releases them in failure paths; its focused regression proves a failed main key still emits modifier key-up and leaves no held state. Managed-container credential/image/runtime isolation remains next.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- None.
+- Managed-container credential isolation, approved image/runtime verification, terminal exactly-once persistence, execution-event value redaction, and origin private-state exclusion remain under repair.
 
 Next exact action:
-Validate release policy, commit, push, and run the Container Real World Gate for the exact Docker-pin commit.
+Commit and push the CDP modifier-release checkpoint, then repair managed-container credential/image/runtime isolation.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

@@ -129,6 +129,22 @@ test('phase2 raw input shortcut validation allows only typed shortcuts', () => {
   assert.throws(() => validateShortcut(['CTRL', 'ALT', 'DELETE']), /shortcut/);
 });
 
+test('phase2 CDP shortcut releases pressed modifiers when the main key fails', async () => {
+  const raw = makeRaw();
+  const calls = [];
+  raw.page.keyboard.down = async (key) => calls.push(`down:${key}`);
+  raw.page.keyboard.press = async (key) => {
+    calls.push(`press:${key}`);
+    throw new Error('main key failed');
+  };
+  raw.page.keyboard.up = async (key) => calls.push(`up:${key}`);
+
+  await assert.rejects(() => raw.execute('input.shortcut', { space: 'viewport', keys: ['CTRL', 'A'] }), /main key failed/);
+
+  assert.deepEqual(calls, ['down:Control', 'press:A', 'up:Control']);
+  assert.deepEqual(raw.getState().heldKeys, []);
+});
+
 test('phase2 raw input tracks held keys', async () => {
   const raw = makeRaw();
   await raw.execute('input.keyDown', { space: 'viewport', key: 'A' });
