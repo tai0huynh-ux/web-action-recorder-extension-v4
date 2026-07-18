@@ -1,6 +1,8 @@
 artifacts/
 dist/
 release/
+node_modules/
+**/node_modules/
 *.blockmap
 *.pfx
 *.p12

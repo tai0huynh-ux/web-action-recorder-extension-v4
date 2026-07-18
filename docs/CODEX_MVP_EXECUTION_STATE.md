@@ -4,37 +4,38 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9A GitHub Actions Node 24 migration is locally green and awaiting commit, push, and all three workflow gates.
+Phase 9B installed-dependency hygiene is locally green and awaiting commit and push.
 
 Last green commit:
-2e4deafc78499fa8993fd8f901d857d2216f8021
+fd0a7b994054db72529bb6cb7c12702e79137494
 
 HEAD:
-2e4deafc78499fa8993fd8f901d857d2216f8021 with the intended Phase 9A checkpoint uncommitted.
+fd0a7b994054db72529bb6cb7c12702e79137494 with the intended Phase 9B checkpoint uncommitted.
 
 origin/main:
-2e4deafc78499fa8993fd8f901d857d2216f8021
+fd0a7b994054db72529bb6cb7c12702e79137494
 
 Working tree:
-Modified only for the Phase 9A workflow and workflow-policy checkpoint.
+Modified only for the Phase 9B `.gitignore`, Git-index cleanup, and execution-state checkpoint.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
 
 Phase 9 completed checkpoints:
-- Phase 9A local validation: official Node 24 action releases pinned by immutable SHA, checkout credentials disabled, hidden artifact files excluded, and workflow policy regression coverage added.
+- Phase 9A complete: official Node 24 action releases pinned by immutable SHA, checkout credentials disabled, hidden artifact files excluded, policy regression coverage added, and all three GitHub workflows passed without Node.js 20 action warnings.
+- Phase 9B local validation: `node_modules` is ignored and removed from the Git index while the lockfile-restored local installation remains operational.
 
 Node 24 Actions migration:
-Local `check:ci`, workflow policy test, `check`, and `test:all` pass. GitHub execution is pending.
+PASS. CI `29632990127`, Container Real World Gate `29632995134`, and Windows Release Gate `29632996254` passed on `fd0a7b994054db72529bb6cb7c12702e79137494`; exact Node.js 20 action warning count is zero.
 
 node_modules tracking:
-110 installed dependency files remain tracked until Phase 9B.
+Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
 Pending Phase 9D read-only subagent review and main-agent verification.
 
 Release gate:
-Phase 8 release gate is green; Phase 9 final release gate has not started.
+Phase 9B local release integrity, packaged Controller, and release gate pass after lockfile reinstall. Phase 9 final release checkpoint remains pending.
 
 Final acceptance:
 Phase 10 has not started.
@@ -43,10 +44,10 @@ Known blockers:
 - None.
 
 Next exact action:
-Commit and push Phase 9A, then run CI, Container Real World Gate, and Windows Release Gate on the exact commit and verify that Node.js 20 action warnings are absent.
+Commit and push Phase 9B, verify `node_modules/**` remains untracked, then begin the Phase 9C repository hygiene audit and enforcement test.
 
 Remaining MVP work:
-- Phase 9B through Phase 9F.
+- Phase 9C through Phase 9F.
 - Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
 
 Starting baseline for Phase 8:
