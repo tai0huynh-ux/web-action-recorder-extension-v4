@@ -37,6 +37,11 @@ jobs:
         run: npm ci
       - name: Build Browser Agent image
         run: npm run container:browser-agent:build
+      - name: Load reviewed Chromium AppArmor profile
+        run: |
+          sudo install -d -o root -g root -m 0755 /etc/apparmor.d/containers
+          sudo install -o root -g root -m 0644 platform/container/security/war-browser-agent.apparmor /etc/apparmor.d/containers/war-browser-agent
+          sudo apparmor_parser -r -W /etc/apparmor.d/containers/war-browser-agent
       - name: Probe Chromium sandbox host capability
         run: npm run probe:chromium-sandbox-host
       - name: Run real-world container gate
@@ -52,3 +57,8 @@ jobs:
           path: |
             artifacts/container-real-world/**
             !artifacts/container-real-world/**/*.log
+      - name: Unload Chromium AppArmor profile
+        if: always()
+        run: |
+          sudo apparmor_parser -R /etc/apparmor.d/containers/war-browser-agent || true
+          sudo rm -f /etc/apparmor.d/containers/war-browser-agent

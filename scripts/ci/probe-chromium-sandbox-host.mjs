@@ -48,7 +48,7 @@ export async function probeChromiumSandboxHost() {
       networkMode: 'bridge',
       noNewPrivileges: true,
       seccomp: 'docker-default',
-      appArmor: 'docker-default',
+      appArmor: 'war-browser-agent',
       addedCapabilities: [],
       dockerSocketMounted: false,
       hostHomeMounted: false,
@@ -177,6 +177,7 @@ function dockerRun(extraArgs, timeout = 15000) {
     'run', '--rm',
     '--user', 'war',
     '--security-opt', 'no-new-privileges:true',
+    '--security-opt', 'apparmor=war-browser-agent',
     '--network', 'bridge',
     ...extraArgs,
   ], timeout);

@@ -61,6 +61,8 @@ assert(hasTrigger(container, 'workflow_dispatch'), 'container-real-world-gate.ym
 assert(workflowRuns(container, 'npm run container:browser-agent:build'), 'container workflow must build the Docker image');
 assert(workflowRuns(container, 'npm run probe:chromium-sandbox-host'), 'container workflow must probe the sandbox host');
 assert(workflowRuns(container, 'npm run test:container-real-world'), 'container workflow must run the real-world gate');
+assert(JSON.stringify(container).includes('apparmor_parser -r -W'), 'container workflow must load the reviewed AppArmor profile');
+assert(JSON.stringify(container).includes('apparmor_parser -R'), 'container workflow must unload the reviewed AppArmor profile');
 const sandboxJob = container.jobs?.controlled_search_copy;
 assert(sandboxJob?.['runs-on'] === 'ubuntu-24.04', 'container sandbox job must use the standard ubuntu-24.04 VM');
 assert(!Object.hasOwn(sandboxJob || {}, 'container'), 'container sandbox job must not run inside an outer job container');
