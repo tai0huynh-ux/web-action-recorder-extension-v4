@@ -4,26 +4,27 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9B installed-dependency hygiene is locally green and awaiting commit and push.
+Phase 9C repository hygiene enforcement is complete; Phase 9D security review is next.
 
 Last green commit:
-fd0a7b994054db72529bb6cb7c12702e79137494
+Phase 9C checkpoint containing this execution-state update.
 
 HEAD:
-fd0a7b994054db72529bb6cb7c12702e79137494 with the intended Phase 9B checkpoint uncommitted.
+Phase 9C checkpoint after commit and push synchronization.
 
 origin/main:
-fd0a7b994054db72529bb6cb7c12702e79137494
+Same Phase 9C checkpoint as HEAD after push synchronization.
 
 Working tree:
-Modified only for the Phase 9B `.gitignore`, Git-index cleanup, and execution-state checkpoint.
+Clean after the Phase 9C checkpoint is pushed.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
 
 Phase 9 completed checkpoints:
 - Phase 9A complete: official Node 24 action releases pinned by immutable SHA, checkout credentials disabled, hidden artifact files excluded, policy regression coverage added, and all three GitHub workflows passed without Node.js 20 action warnings.
-- Phase 9B local validation: `node_modules` is ignored and removed from the Git index while the lockfile-restored local installation remains operational.
+- Phase 9B complete: `node_modules` is ignored and removed from the Git index while the lockfile-restored local installation remains operational; commit `1e0deac17a6885011548a04eee791814c21e560d` is pushed and synchronized.
+- Phase 9C complete: tracked-path classification and repository hygiene enforcement cover installed dependencies, pilot artifacts, generated packages, browser profiles, runtime state, and private credential material. `build/icon.svg` is classified as `RELEASE_INPUT`; `profiles/sample-profile.json` is classified as a synthetic `TEST_FIXTURE`.
 
 Node 24 Actions migration:
 PASS. CI `29632990127`, Container Real World Gate `29632995134`, and Windows Release Gate `29632996254` passed on `fd0a7b994054db72529bb6cb7c12702e79137494`; exact Node.js 20 action warning count is zero.
@@ -44,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Commit and push Phase 9B, verify `node_modules/**` remains untracked, then begin the Phase 9C repository hygiene audit and enforcement test.
+Validate, commit, and push Phase 9C, then begin the required read-only Phase 9D security review.
 
 Remaining MVP work:
 - Phase 9C through Phase 9F.
