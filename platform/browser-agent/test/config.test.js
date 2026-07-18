@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, serializeConfig } from '../src/config.js';
+import { loadConfig, sameFileIdentity, serializeConfig } from '../src/config.js';
 
 test('default bind is loopback', () => {
   const config = loadConfig({}, process.cwd());
@@ -86,4 +86,10 @@ test('controller session rejects simultaneous inline and file credentials', () =
     WAR_CONTROLLER_SESSION_CREDENTIAL: 'synthetic-controller-credential-12345',
     WAR_CONTROLLER_SESSION_CREDENTIAL_FILE: 'credential-file',
   }, process.cwd()), /one source/);
+});
+
+test('controller credential identity comparison tolerates unavailable Windows metadata', () => {
+  assert.equal(sameFileIdentity({ dev: 0, ino: 42, size: 12 }, { dev: 9, ino: 42, size: 12 }, 'win32'), true);
+  assert.equal(sameFileIdentity({ dev: 9, ino: 42, size: 12 }, { dev: 9, ino: 43, size: 12 }, 'win32'), false);
+  assert.equal(sameFileIdentity({ dev: 9, ino: 42, size: 12 }, { dev: 10, ino: 42, size: 12 }, 'linux'), false);
 });

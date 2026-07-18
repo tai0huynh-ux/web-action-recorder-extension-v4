@@ -121,6 +121,17 @@ export function isLoopbackHost(host) {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1';
 }
 
+// Windows can report an unavailable file identity field for one of the two
+// metadata calls; only compare fields when both sides provide a value.
+export function sameFileIdentity(before, opened, platform = process.platform) {
+  if (before.size !== opened.size) return false;
+  if (platform !== 'win32') {
+    return before.dev === opened.dev && before.ino === opened.ino;
+  }
+  const comparable = (left, right) => left === 0 || right === 0 || left === right;
+  return comparable(before.dev, opened.dev) && comparable(before.ino, opened.ino);
+}
+
 function readString(value, fallback) {
   return value === undefined || value === '' ? fallback : String(value);
 }
@@ -146,7 +157,7 @@ function readControllerCredential(env, cwd) {
     }
     handle = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     const opened = fs.fstatSync(handle);
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) {
+    if (!opened.isFile() || !sameFileIdentity(before, opened)) {
       throw new AgentError('invalid_config', 'Controller credential file changed during read');
     }
     return fs.readFileSync(handle, 'utf8').trim();
