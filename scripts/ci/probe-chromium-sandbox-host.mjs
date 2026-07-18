@@ -160,8 +160,9 @@ async function runNamespaceCase(args) {
 async function runChromiumCase() {
   const script = [
     "import fs from 'node:fs/promises'",
-    "import { chromium } from '/app/node_modules/playwright-core/index.js'",
+    "import playwright from '/app/node_modules/playwright-core/index.js'",
     "import { parseSandboxStatusSnapshot } from '/app/platform/browser-agent/src/browserController.js'",
+    "const { chromium }=playwright",
     "const profile='/tmp/war-sandbox-probe-'+process.pid",
     "let context",
     "try{context=await chromium.launchPersistentContext(profile,{executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>document.querySelectorAll('#sandbox-status tr').length>=5&&Boolean(document.querySelector('#evaluation')?.textContent?.trim()),null,{timeout:5000});const snapshot=await page.evaluate(()=>({rows:Array.from(document.querySelectorAll('#sandbox-status tr'),(row)=>Array.from(row.querySelectorAll('td'),(cell)=>cell.textContent?.trim()||'')),evaluation:document.querySelector('#evaluation')?.textContent?.trim()||''}));console.log(JSON.stringify(parseSandboxStatusSnapshot(snapshot)))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}",

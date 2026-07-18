@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; exact-head run `29652969620` exposed that current Chromium keeps `loadTimeData` module-scoped, so authoritative rendered sandbox evidence is being repaired without weakening the runtime.
+Phase 9D managed-container Docker verification; exact-head run `29653205418` proved the fail-closed probe works and exposed an unsupported named ESM import from Playwright's CommonJS entrypoint before Chromium launch.
 
 Last green commit:
 8e5adceadfef204f643293d7204b27bb7834e196
 
 HEAD:
-6df2629e7cc725610175198daf93848e40f76753 plus the Chromium-rendered sandbox evidence repair pending commit.
+e62a5a5bfa5ca5ec79c225cbcdfb0ce62c32bf9a plus the CommonJS-compatible probe import pending commit.
 
 origin/main:
-6df2629e7cc725610175198daf93848e40f76753
+e62a5a5bfa5ca5ec79c225cbcdfb0ce62c32bf9a
 
 Working tree:
-Modified only to parse Chromium's rendered `chrome://sandbox` ZygoteHost table, fail an unsupported capability probe, add focused tests, and update this execution state.
+Modified only to correct the probe's Playwright CommonJS import, lock that import contract in the security validator, and update this execution state.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29652969620` at `6df2629` reached the secure runtime but timed out waiting for a nonexistent global `loadTimeData`; its probe artifact correctly remained unsupported. Chromium's current WebUI imports `loadTimeData` as an ES module and renders the authoritative ZygoteHost values into `#sandbox-status` and `#evaluation`.
+- GitHub Container Real World Gate `29652969620` at `6df2629` exposed the module-scoped Chromium WebUI data and led to the rendered ZygoteHost parser. Run `29653205418` at `e62a5a5` then failed closed before Chromium launch because the inline Node probe used a named import from Playwright's CommonJS file; local reproduction confirms default import plus destructuring is required.
 
 Next exact action:
-Commit and push the Chromium-rendered status parser plus fail-closed probe, rerun the exact-head gate, and require `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
+Commit and push the CommonJS-compatible probe import, rerun the exact-head gate, and require probe classification `USERNS_SANDBOX_CAPABLE` plus `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

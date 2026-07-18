@@ -53,6 +53,8 @@ assert(browserController.includes("page.goto('chrome://sandbox/'"), 'Browser Age
 assert(browserController.includes("document.querySelectorAll('#sandbox-status tr')"), 'Browser Agent must read the Chromium-rendered sandbox status table');
 assert(browserController.includes("document.querySelector('#evaluation')"), 'Browser Agent must read Chromium overall sandbox evaluation');
 assert(runtimes[2].includes('if (!report.classification.supported) process.exitCode = 1'), 'sandbox capability probe must fail CI when authoritative proof is unavailable');
+assert(runtimes[2].includes("import playwright from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must use the CommonJS-compatible Playwright import');
+assert(!runtimes[2].includes("import { chromium } from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must not use an unsupported named import from Playwright CommonJS');
 
 if (findings.length) {
   console.error(findings.join('\n'));
