@@ -182,6 +182,25 @@ test('controller WSS origin request resolves only authenticated matching Agent r
   assert.equal(response.payload.workflows[0].workflowId, 'wf-origin');
 });
 
+test('controller WSS refuses a duplicate pending origin request identifier without overwriting the first request', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions, id: () => 'fixed-request-id' });
+  const connection = new FakeConnection();
+  const state = { connection };
+  await adapter.handleMessage(JSON.stringify(agentHello()), state, 'cred-a', () => {});
+  const session = core.sessions.getPublicSession('dev-a');
+  const first = adapter.requestOriginInventory('dev-a', session.generation);
+  const firstHandled = first.catch((error) => error);
+
+  await assert.rejects(
+    adapter.requestOriginWorkflow('dev-a', session.generation, { workflowId: 'wf-a', revision: 1 }),
+    (error) => error.code === 'WSS_SEND_FAILED' && /collision/.test(error.message)
+  );
+  assert.equal(adapter.pendingRequests.size, 1);
+  adapter.shutdown();
+  await firstHandled;
+});
+
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
   assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
   assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });

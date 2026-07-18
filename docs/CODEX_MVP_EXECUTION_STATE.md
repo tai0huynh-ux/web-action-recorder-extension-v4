@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; durable terminal acknowledgement and replay are repaired locally.
+Phase 9D security review is in progress; origin request identifier collision handling is repaired locally.
 
 Last green commit:
-6097a86861f0bbc2b2472cac219f4352991b8ff4
+1cdc6352494c723479762bcd01e01b93ac2024b6
 
 HEAD:
-6097a86861f0bbc2b2472cac219f4352991b8ff4 with the intended terminal exact-once repair uncommitted.
+1cdc6352494c723479762bcd01e01b93ac2024b6 with the intended origin request-ID collision repair uncommitted.
 
 origin/main:
-6097a86861f0bbc2b2472cac219f4352991b8ff4
+1cdc6352494c723479762bcd01e01b93ac2024b6
 
 Working tree:
-Modified only for the focused Extension/Agent terminal outbox and Controller acknowledgement boundary, release/check wiring, regression tests, and this execution-state update.
+Modified only for the focused WSS origin request-ID collision repair, regression test, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container, WSS, and workflow hash-integrity blockers are fixed through `6097a86861f0bbc2b2472cac219f4352991b8ff4`. Main-agent verification confirmed that terminal results could be marked reported before native delivery and lost across Extension or Agent restart. The local repair adds a bounded Extension storage outbox, an Agent file outbox, fresh replay deadlines, Controller-correlated acknowledgement, and replay after authentication. Real Edge MV3 grouped-input and graph-revision execution pass through the repaired path.
+In progress. Managed-container, WSS resource controls, workflow hash integrity, and durable terminal acknowledgement are fixed through `1cdc6352494c723479762bcd01e01b93ac2024b6`. Main-agent verification confirmed that same-millisecond or injected origin request IDs could overwrite a pending request. The local repair uses cryptographically unique default IDs and fails closed before any pending-request overwrite.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate packaged release paths, commit, and push terminal exact-once, then continue the remaining medium security findings.
+Validate, commit, and push origin request-ID collision handling, then continue the remaining medium security findings.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

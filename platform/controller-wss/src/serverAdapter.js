@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import crypto from 'node:crypto';
 import { PROTOCOL_VERSION, validateEnvelope } from '../../protocol/src/protocolV2.js';
 import { ControllerCoreError } from '../../controller-core/src/errors.js';
 
@@ -9,7 +10,7 @@ const WSS_ERROR_STATUS = Object.freeze({
 });
 
 export class ControllerWssServerAdapter extends EventEmitter {
-  constructor({ sessionManager, maxPayloadBytes = 1024 * 1024, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${Date.now()}` } = {}) {
+  constructor({ sessionManager, maxPayloadBytes = 1024 * 1024, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` } = {}) {
     super();
     this.sessionManager = sessionManager;
     this.maxPayloadBytes = maxPayloadBytes;
@@ -125,6 +126,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
     const connection = this.requireActiveConnection(deviceId, generation);
     if (this.pendingRequests.size >= 64) return Promise.reject(wssError('WSS_SEND_FAILED', 'Agent request limit exceeded'));
     const messageId = envelope.messageId || this.id('controller-request');
+    if (this.pendingRequests.has(messageId)) return Promise.reject(wssError('WSS_SEND_FAILED', 'Agent request identifier collision'));
     const request = { protocolVersion: PROTOCOL_VERSION, sentAt: this.now(), ...envelope, messageId, deviceId };
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
