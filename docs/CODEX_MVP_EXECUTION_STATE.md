@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9F exact-head GitHub workflow acceptance after documentation and local regression closure.
+Phase 9F exact-head GitHub workflow acceptance after the Windows credential-file portability repair.
 
 Last green commit:
-53367234c0beb37aaf0eb91d9201d73d811f23fd
+9fa0c1af53921d7e887c71d3fa63da9854aebc73
 
 HEAD:
-53367234c0beb37aaf0eb91d9201d73d811f23fd plus exact-head workflow acceptance pending.
+9fa0c1af53921d7e887c71d3fa63da9854aebc73
 
 origin/main:
-53367234c0beb37aaf0eb91d9201d73d811f23fd
+9fa0c1af53921d7e887c71d3fa63da9854aebc73
 
 Working tree:
-Modified only for this exact-head verification state update.
+Clean before this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -27,7 +27,7 @@ Phase 9 completed checkpoints:
 - Phase 9C complete: tracked-path classification and repository hygiene enforcement cover installed dependencies, pilot artifacts, generated packages, browser profiles, runtime state, and private credential material. `build/icon.svg` is classified as `RELEASE_INPUT`; `profiles/sample-profile.json` is classified as a synthetic `TEST_FIXTURE`.
 
 Node 24 Actions migration:
-PASS. CI `29632990127`, Container Real World Gate `29632995134`, and Windows Release Gate `29632996254` passed on `fd0a7b994054db72529bb6cb7c12702e79137494`; exact Node.js 20 action warning count is zero.
+PASS. CI `29654204738`, Container Real World Gate `29654213429`, and Windows Release Gate `29654214558` passed on `9fa0c1af53921d7e887c71d3fa63da9854aebc73`; exact Node.js 20 action warning count is zero.
 
 node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
@@ -36,7 +36,7 @@ Security review:
 Phase 9D review is closed with Critical 0 and High 0. Focused code/test evidence covers Electron isolation and sender validation; pairing/session authority and revocation; offline replay, exactly-once, and durable terminal outbox; malformed/bounded WSS and Native Messaging; keyboard release and clipboard policy; managed Docker arguments/image/seccomp allowlisting; active Chromium sandbox; bounded origin/grouped/graph operations; diagnostic redaction; release allowlists; and minimum-permission immutable GitHub Actions. Accepted medium limitations are broad Extension host access, no generic high-risk action classifier, unsigned development packages without external signing material, and no public-Internet deployment.
 
 Release gate:
-Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass on the documentation SHA. Phase 9 final exact-HEAD workflow checkpoint remains pending.
+Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. The three exact-head workflows pass on `9fa0c1af53921d7e887c71d3fa63da9854aebc73`.
 
 Phase 9 local verification after documentation:
 - `npm.cmd ci`: PASS; 0 vulnerabilities. npm reported only upstream deprecation notices.
@@ -55,10 +55,11 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29653528313` passed at exact SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
+- No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29654213429` passed at exact SHA `9fa0c1af53921d7e887c71d3fa63da9854aebc73` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
+- The Windows credential-file regression is repaired with a platform-aware identity comparison that retains strict type, symlink, size, and POSIX permission checks; CI and Windows full tests now pass.
 
 Next exact action:
-Run CI, Container Real World Gate, and Windows Release Gate on exact SHA `53367234c0beb37aaf0eb91d9201d73d811f23fd`; accept Phase 9 only if all execute and pass.
+Commit and push this execution-state update, then rerun CI, Container Real World Gate, and Windows Release Gate on the documentation SHA. Accept Phase 9 only if all three execute and pass again.
 
 Remaining MVP work:
 - Phase 9F exact-head verification and workflow acceptance.
