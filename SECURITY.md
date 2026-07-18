@@ -140,18 +140,26 @@ Recommendation: use native messaging for local privileged companion communicatio
 
 ## Safe defaults checklist
 
-- [ ] External control disabled.
-- [ ] Companion binds localhost only.
-- [ ] Strong token generated before API use.
-- [ ] No `<all_urls>` install-time host permission.
-- [ ] Watcher globally disabled.
-- [ ] Imported profiles disabled.
-- [ ] Secret fields redacted in recorder, logs, storage, and exports.
-- [ ] High-risk actions require confirmation or explicit profile flag.
-- [ ] Active recording/running/watching indicator visible.
-- [ ] Emergency stop available.
-- [ ] Deny automation on browser/internal pages.
-- [ ] Audit logs enabled and bounded.
+- [x] External control disabled by default.
+- [x] Companion and Controller bind localhost by default; LAN requires explicit opt-in.
+- [x] Remote Browser Agent mode requires a token of at least 24 characters and an explicit IP allowlist.
+- [ ] The extension currently retains `<all_urls>` for recorder/runner coverage. This is an accepted medium limitation for the personal MVP, not a least-privilege claim.
+- [x] Watcher globally disabled by default.
+- [x] Sensitive Controller workflow inputs are rejected and secret-like diagnostic fields are redacted.
+- [ ] Generic high-risk action classification/confirmation is not implemented. This is an accepted medium limitation; use reviewed controlled workflows only.
+- [x] Active recording state and run stop control are visible in the Extension UI.
+- [x] Emergency stop/cancel paths are available and terminal input cleanup releases held keys/buttons.
+- [x] Arbitrary browser-internal navigation, arbitrary CDP, arbitrary JavaScript, and shell command control types are denied.
+- [x] Audit and execution-event stores are bounded.
+
+## Phase 9 managed-container security result
+
+- Critical findings: 0 open.
+- High findings: 0 open.
+- Electron renderer isolation, trusted sender validation, typed IPC, pairing authority, revocation, restart replay, exactly-once terminal handling, WSS bounds, Native Messaging validation, input release, clipboard policy, managed Docker allowlisting, diagnostic redaction, release allowlists, and immutable minimum-permission workflows have focused regression coverage.
+- Chromium uses the non-root user-namespace architecture with exact AppArmor transition and constrained seccomp policy. SUID is absent. GitHub run `29653528313` authoritatively reported all required sandbox layers active.
+- `no-new-privileges` is not set for this container because it blocks the reviewed AppArmor profile transition on Ubuntu 24.04; this exception does not add capabilities or disable AppArmor/seccomp.
+- Accepted medium limitations: broad extension host permission, no generic high-risk action classifier, unsigned development packages without external signing material, and no public-Internet deployment support.
 
 ## Non-goals / prohibited defaults
 

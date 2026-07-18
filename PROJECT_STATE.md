@@ -1,7 +1,7 @@
 # Project State - Web Action Recorder v4
 
-Updated: 2026-07-16
-Source of truth: `C:\Users\a\Documents\web-action-recorder-extension-v4`
+Updated: 2026-07-18
+Source of truth: the checked-out repository root.
 
 ## Current Status
 
@@ -9,13 +9,31 @@ Phase 1: Complete.
 
 Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed three consecutive Linux container performance runs.
 
-Current Gate: Container Real-World Gate: PASS.
+Current Gate: Active Chromium Sandbox and Container Real-World Gate: PASS.
 
-Current milestone: Container real-world execution hardening.
+Current milestone: Phase 9 documentation and exact-head regression acceptance.
 
-Next milestone: Physical two-machine LAN pilot.
+Next milestone: Phase 10 final clean MVP acceptance and soak.
 
-Controller dispatch now reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate now also passes with a real Browser Agent container, real Chromium, real MV3 Extension, TLS WSS Controller dispatch, Google search/copy workflow execution, result uplink, terminal replay protection, and cancel coverage. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+Controller dispatch reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate passes a controlled local search/copy workflow with the active Chromium user-namespace sandbox, TLS WSS dispatch, result uplink, terminal replay protection, cancel, and cleanup. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+
+## Phase 9 Active Chromium Sandbox Acceptance
+
+Updated: 2026-07-18
+
+Status: PASS on GitHub-hosted `ubuntu-24.04`. Final MVP acceptance remains pending Phase 10.
+
+- Exact accepted implementation SHA: `995233b21f89a3376bf2631a5f69e91329cbdbd4`.
+- Container Real World Gate run: `29653528313`.
+- Selected architecture: non-root Chromium user-namespace sandbox only; no SUID helper and no SUID/SGID file bits.
+- Host policy: root-owned `war-browser-agent` AppArmor profile transitions only `/usr/lib/chromium/chromium` to the child profile containing the sole `userns,` grant.
+- Runtime policy: pinned Docker-default-derived seccomp profile with only reviewed Chromium `clone`/`unshare` namespace masks; canonical measured policy hash is verified from Docker inspect.
+- Runtime bounds: 2 GiB memory, 2 CPUs, 512 PIDs, bridge network, private PID namespace, no Docker socket, no host home, no added capabilities, and `war` user.
+- Chromium authoritative status: SUID false; user, PID, network, seccomp-BPF, TSYNC, and overall sandbox true.
+- Probe classification: `USERNS_SANDBOX_CAPABLE`.
+- Product path: MV3, Native Messaging, authenticated WSS, dispatch, execution, clipboard, persisted terminal events, replay protection, cancel, and cleanup all passed.
+- Forbidden bypasses remain rejected: privileged mode, host network/PID, unconfined AppArmor/seccomp, broad capabilities, `--no-sandbox`, and `--disable-sandbox`.
+- Security review result for the listed Phase 9D controls: Critical 0, High 0. Accepted medium limitations are documented in `SECURITY.md` and `docs/MVP_ACCEPTANCE.md`.
 
 ## WAR v5 Phase 1 - Localized Three-Pane Controller Workspace
 
@@ -68,11 +86,11 @@ Next phase:
 
 - `PHASE_2_GROUPED_INPUT_MAPPING`
 
-## Container Real-World Gate
+## Historical Container Real-World Gate - 2026-07-17
 
 Updated: 2026-07-17
 
-Status: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
+Historical status: PASS. Historical decision: `READY_FOR_PHYSICAL_LAN_PILOT`. Superseded by the Phase 9 active-sandbox gate above.
 
 Baseline before changes:
 
@@ -345,7 +363,7 @@ Verification:
 
 Updated: 2026-07-16
 
-Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on Linux host `root@192.168.1.201`.
+Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on the reviewed Linux host.
 
 Baseline before changes:
 
@@ -400,7 +418,7 @@ Docs added:
 
 Updated: 2026-07-16
 
-Status: Complete. Windows local checks pass, and Linux/container verification passed on `root@192.168.1.201`.
+Status: Complete. Windows local checks pass, and Linux/container verification passed on the reviewed Linux host.
 
 Baseline:
 
@@ -487,7 +505,7 @@ Phase 0 Chromium Control Platform verification on 2026-07-14:
   - `npm.cmd run test:platform:workflow-core`: Pass, 3/3.
   - `npm.cmd run check`: Pass.
   - `npm.cmd run test:all`: Pass; extension tests 25/25 and platform tests 22/22.
-- `CHROMIUM_CONTROL_PLATFORM_CODEX_PLAN.md` was not present at the source root and was not found by exact filename under `C:\Users`; Phase 0 followed the user-provided checklist.
+- `CHROMIUM_CONTROL_PLATFORM_CODEX_PLAN.md` was not present at the source root; Phase 0 followed the user-provided checklist.
 - No Browser Agent, streaming, Windows app, Native Messaging, arbitrary JavaScript, remote shell, or public listener code was started.
 
 Manual MVP acceptance attempt on 2026-07-14:
@@ -582,7 +600,7 @@ Native X11 Gate results:
 
 Known deployment risk remains:
 
-- The Docker host rejects Chromium namespace sandboxing with `Operation not permitted`; the container gate uses explicit `WAR_BROWSER_NO_SANDBOX=1` and the Agent logs a warning. No `--no-sandbox` is silently added by default config.
+- Historical Phase 1 hosts rejected Chromium namespace sandboxing. That configuration is superseded for managed acceptance: the current gate requires the active user-namespace sandbox and rejects `WAR_BROWSER_NO_SANDBOX=1` as an acceptance path.
 
 Next milestone:
 
@@ -697,7 +715,7 @@ Updated: 2026-07-15
 
 Status: Complete.
 
-The Phase 1 real-container Gate was closed on Linux host `root@192.168.1.201`.
+The Phase 1 real-container Gate was closed on a reviewed Linux host.
 
 Environment:
 
@@ -708,7 +726,7 @@ Environment:
 
 Source sync:
 
-- Windows remains source of truth: `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`.
+- Windows remains the source-of-truth checkout.
 - Linux deployment path: `/opt/war/web-action-recorder-extension-v4`.
 - SHA-256 matched for package files, manifest, Dockerfile, compose file, and Browser Agent controller/supervisor.
 
@@ -750,7 +768,7 @@ Patches added during Gate closure:
 
 Known deployment risk:
 
-- The Docker host rejects Chromium namespace sandboxing with `Operation not permitted`; Phase 1 gate uses explicit `WAR_BROWSER_NO_SANDBOX=1` and logs a warning. No `--no-sandbox` is silently added by default config.
+- Historical Phase 1 evidence used explicit no-sandbox on an incapable host. It is not valid for current managed-container acceptance, which requires the reviewed AppArmor/seccomp userns architecture.
 
 Next step remains:
 

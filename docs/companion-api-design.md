@@ -14,7 +14,7 @@ Mặc định server chỉ bind `127.0.0.1:17373`.
 ## Mở cho LAN
 
 ```powershell
-node companion/server.js --host 0.0.0.0 --token 'token-it-nhat-24-ky-tu' --allow '192.168.1.20,192.168.1.21'
+node companion/server.js --host 0.0.0.0 --token '<strong-token-at-least-24-characters>' --allow '192.0.2.20,192.0.2.21'
 ```
 
 Trong Options của extension, bật Companion LAN, nhập URL máy companion và cùng token. Chỉ profile được đánh dấu `enabled` mới được chạy từ xa.

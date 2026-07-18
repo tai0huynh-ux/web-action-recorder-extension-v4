@@ -58,7 +58,7 @@ Supported environment variables:
 
 Remote bind requires all of: `WAR_AGENT_ALLOW_REMOTE=1`, a `WAR_AGENT_TOKEN` of at least 24 characters, and explicit `WAR_AGENT_ALLOW` IPs. Tokens are never logged.
 
-`WAR_BROWSER_NO_SANDBOX=1` is only allowed by explicit configuration. Prefer sandboxed mode; on this Phase 1 Docker gate, Chromium reported namespace `Operation not permitted`, so the smoke/Compose path uses explicit no-sandbox and the Agent emits a warning.
+`WAR_BROWSER_NO_SANDBOX=1` remains an explicit diagnostic compatibility switch, but it is forbidden for managed-container, release, or MVP acceptance. The accepted runtime uses the non-root Chromium user-namespace sandbox with the reviewed AppArmor and seccomp policies; verify it with `npm run probe:chromium-sandbox-host` and the Container Real World Gate.
 
 ## API
 

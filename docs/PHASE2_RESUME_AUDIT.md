@@ -6,9 +6,9 @@ Accessed: 2026-07-15T01:18:49+07:00
 
 Windows source of truth is:
 
-`C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`
+the historical source checkout
 
-The current Codex workspace at `C:\Users\a\Documents\extention + app remote linux chrome` only contained a `.git` directory and was not used as source.
+The alternate Codex workspace only contained a `.git` directory and was not used as source.
 
 Linux runtime source inspected:
 

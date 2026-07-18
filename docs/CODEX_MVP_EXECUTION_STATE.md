@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D remaining security review after managed-container Chromium sandbox acceptance.
+Phase 9F documentation finalization and exact-head full regression after Phase 9D security closure.
 
 Last green commit:
 995233b21f89a3376bf2631a5f69e91329cbdbd4
 
 HEAD:
-995233b21f89a3376bf2631a5f69e91329cbdbd4
+2ef8aef98a71fa9c5ad90b2d22d45a6748d6ca97 plus Phase 9 documentation updates pending commit.
 
 origin/main:
-995233b21f89a3376bf2631a5f69e91329cbdbd4
+2ef8aef98a71fa9c5ad90b2d22d45a6748d6ca97
 
 Working tree:
-Clean before this accepted-state documentation update.
+Modified only for Phase 9 security/sandbox/setup/acceptance/troubleshooting documentation and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-Final read-only review found additional blockers. CDP modifier release is fixed in `dde835d`. The current repair streams the Agent credential into an Agent-only `0600` file, removes credential-like variables from Chromium children, rejects renderer-selected images, resolves and verifies the approved image ID, explicitly runs as `war`, removes forced no-sandbox defaults, and rejects Docker inspect state that violates the managed runtime policy.
+Phase 9D review is closed with Critical 0 and High 0. Focused code/test evidence covers Electron isolation and sender validation; pairing/session authority and revocation; offline replay, exactly-once, and durable terminal outbox; malformed/bounded WSS and Native Messaging; keyboard release and clipboard policy; managed Docker arguments/image/seccomp allowlisting; active Chromium sandbox; bounded origin/grouped/graph operations; diagnostic redaction; release allowlists; and minimum-permission immutable GitHub Actions. Accepted medium limitations are broad Extension host access, no generic high-risk action classifier, unsigned development packages without external signing material, and no public-Internet deployment.
 
 Release gate:
 Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
@@ -45,10 +45,10 @@ Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29653528313` passed at exact SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 
 Next exact action:
-Complete the unresolved Phase 9D security review, then finalize Phase 9 documentation and exact-head regression/workflow acceptance.
+Commit the finalized Phase 9 documentation, run the complete local Phase 9 verification serially where required, and run all three GitHub workflows on the exact final Phase 9 SHA.
 
 Remaining MVP work:
-- Phase 9D through Phase 9F.
+- Phase 9F exact-head verification and workflow acceptance.
 - Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
 
 Starting baseline for Phase 8:

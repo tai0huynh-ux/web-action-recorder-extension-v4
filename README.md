@@ -18,19 +18,17 @@ npm.cmd run test:controller-electron:unit
 npm.cmd run test:controller-electron:smoke
 ```
 
-The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, devices, groups, workflow import, job dispatch/cancel, diagnostics, and the Vietnamese-first Workspace route.
+The Electron shell uses `war-controller://app/`, strict CSP, sandboxed/context-isolated renderer settings, a frozen preload API, sender-validated typed IPC, and plain HTML/CSS/ES modules. It supports pairing, managed containers, devices, groups, workflow import, origin synchronization, grouped input mapping/dispatch, action graph revision editing, job dispatch/cancel, diagnostics, and the Vietnamese-first Workspace route. Field picker backend work remains deferred.
 
-Workspace Phase 1 includes three panes: real machines/containers, draft input configuration, and a read-only action graph preview. Vietnamese is the default locale, English is the fallback, language changes do not require restart, and locale/panel layout settings persist through typed Controller IPC. Prototype-only controls are explicitly deferred: Add Container backend, field picker backend, grouped input execution, and origin synchronization are `NOT_IMPLEMENTED_PHASE_1`.
-
-Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. Container Real-World Gate: PASS in GitHub Actions run `29525195037`. Deterministic unsigned development packaging is available; production signing requires external certificate material.
+Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS on the local Edge MV3 path. The active Chromium user-namespace sandbox and full container product path passed GitHub Actions run `29653528313` at SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4`. Deterministic unsigned development packaging is available; production signing requires external certificate material.
 
 ## Container Real-World Gate
 
-Latest accepted run: GitHub Actions `29525195037`.
+Latest accepted sandbox run: GitHub Actions `29653528313`.
 
-The gate verifies a real Browser Agent container, real Chromium, MV3 Extension, Native Messaging, TLS WSS Controller dispatch, Google search/copy workflow execution, controlled fallback execution, result uplink, terminal replay protection, cancel path, and persisted execution events in order: `job_acknowledged`, `job_started`, `job_succeeded`.
+The gate verifies a non-root, resource-bounded Browser Agent container; exact AppArmor and constrained seccomp policies; Chromium's authoritative `chrome://sandbox` status; MV3 Extension; Native Messaging; TLS WSS Controller dispatch; controlled search/copy execution; result uplink; terminal replay protection; cancel; and cleanup. Chromium reported SUID false with user, PID, network, seccomp-BPF, TSYNC, and overall sandbox status true.
 
-Current decision: `READY_FOR_PHYSICAL_LAN_PILOT`. Physical two-machine LAN pilot remains `NOT_RUN_NO_PHYSICAL_MACHINES`; this repository does not claim personal LAN readiness from the container gate alone.
+Run the host probe with `npm.cmd run probe:chromium-sandbox-host` on a reviewed Linux Docker host. See `docs/PERSONAL_LAN_SETUP.md`, `docs/MVP_ACCEPTANCE.md`, and `docs/TROUBLESHOOTING.md`. Final personal-LAN readiness still requires Phase 10 acceptance and soak; the container gate alone is not that claim.
 
 ## Release Packaging
 
@@ -69,7 +67,7 @@ The gate starts a real Controller WSS runtime, real Browser Agent, real Edge/Chr
 1. Open `chrome://extensions` or the Edge equivalent.
 2. Enable Developer mode.
 3. Click Load unpacked.
-4. Select this folder: `C:\Users\a\Documents\web-action-recorder-extension-v4`.
+4. Select the repository root folder.
 5. Open a normal web page and click the extension icon.
 
 ## Developer Checks
@@ -82,8 +80,7 @@ npm test
 npm run test:all
 ```
 
-`npm test` runs dependency-free Node tests only. As of the current harness
-work, it reports 25 tests and does not launch Chrome or Edge.
+`npm test` runs the dependency-light extension/Companion Node tests and does not launch Chrome or Edge. Use the explicit Edge and packaged/controller gates for browser and desktop acceptance.
 
 ## Browser MV3 Regression Harness
 
@@ -182,7 +179,7 @@ For LAN opt-in:
 
 ```powershell
 $env:WAR_HOST='0.0.0.0'
-$env:WAR_ALLOW='127.0.0.1,192.168.1.10,192.168.1.11'
+$env:WAR_ALLOW='127.0.0.1,192.0.2.10,192.0.2.11'
 npm run companion
 ```
 
@@ -191,6 +188,8 @@ Each remotely controlled profile must be enabled in the extension before it can 
 ## Known MVP Limits
 
 - Public Internet control is out of scope; use trusted LAN or VPN/Tailscale.
-- Browser E2E/manual Chrome and Edge validation is still required before relying on this in production.
+- Production Authenticode signing requires external certificate material.
+- The extension still uses broad host access for its recorder/runner; review profiles and granted sites before personal use.
+- Generic high-risk action classification is not implemented; use controlled workflows and explicit operator review.
 - Navigation continuation targets the same tab; very complex tab chains need more hardening.
-- Secret typing is blocked unless a step explicitly opts in with `recordSecret`.
+- Controller-dispatched sensitive inputs are unsupported; extension-side secret typing remains blocked unless a step explicitly opts in with `recordSecret`.

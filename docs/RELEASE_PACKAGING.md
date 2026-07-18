@@ -91,6 +91,8 @@ After signing, release manifest generation verifies Windows executable signature
 
 The Browser Agent sidecar is separate from the Controller installer. It includes startup documentation and the Native Host JS runtime. Runtime configuration must come from environment or external config; no credentials, TLS private keys, state files, or generated shim executables are bundled.
 
+The sidecar includes the reviewed `war-browser-agent` AppArmor profile and constrained Chromium seccomp policy. Managed deployment must install the AppArmor profile as root-owned mode `0644`, use the exact seccomp policy, run as `war`, and retain the 2 GiB memory, 2 CPU, and 512 PID bounds. A package containing these files is not proof that the runtime applied them; run the host probe and real-world gate.
+
 On Windows, Native Host install/uninstall uses the browser-specific HKCU Native Messaging registry key and removes only the key for this host name.
 
 ## Known Limitations
@@ -98,7 +100,7 @@ On Windows, Native Host install/uninstall uses the browser-specific HKCU Native 
 - Auto-update is not implemented in this milestone.
 - Production Authenticode signing requires external certificate material.
 - The Browser Agent container image build remains separate from the Windows release bundle.
-- GitHub Actions Container Real-World Gate run `29525195037` passed Google search/copy and controlled fallback execution through the real Browser Agent container, real Chromium, MV3 Extension, Native Messaging, TLS WSS dispatch, and result uplink.
-- Real-world Google acceptance can still be blocked by CAPTCHA, consent, or network policy outside the accepted gate; use a controlled local fallback when that happens.
+- GitHub Actions Container Real-World Gate run `29653528313` passed the active user-namespace sandbox and controlled search/copy product path at SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4`.
+- The accepted gate uses a controlled local workflow and does not depend on Google or another public site.
 - Physical two-machine LAN pilot is not part of release packaging and remains `NOT_RUN_NO_PHYSICAL_MACHINES`.
 - Production signing remains `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL` until real signing material is supplied.

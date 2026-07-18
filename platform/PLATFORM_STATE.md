@@ -1,16 +1,30 @@
 # Chromium Control Platform State
 
-Updated: 2026-07-17
+Updated: 2026-07-18
 
 ## Phase
 
-Phase 1 - Browser Agent minimal container gate is complete on the Linux Docker host `root@192.168.1.201`.
+Phase 1 - Browser Agent minimal container gate is complete on a reviewed Linux Docker host.
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT`.
+Status: Active Chromium Sandbox and Container Real-World Gate: PASS. Final personal-LAN decision remains pending Phase 10.
 
-## Container Real-World Gate
+## Phase 9 Managed Chromium Sandbox
+
+- Accepted SHA: `995233b21f89a3376bf2631a5f69e91329cbdbd4`.
+- Accepted GitHub run: `29653528313` on `ubuntu-24.04`.
+- Architecture: non-root `war` user, user-namespace Chromium sandbox, SUID helper absent, all image SUID/SGID bits stripped.
+- AppArmor: root-owned `war-browser-agent`; exact `/usr/lib/chromium/chromium` transition; one child-profile `userns,` grant.
+- Seccomp: pinned Docker-default-derived policy; only reviewed Chromium namespace `clone` and `unshare` masks added; measured inline Docker policy verified by canonical hash.
+- Runtime: bridge network, private PID namespace, 2 GiB memory, 2 CPUs, 512 PIDs, no Docker socket, no host home, no added capabilities.
+- Chromium `chrome://sandbox`: `suid=false`, `userNs=true`, `pidNs=true`, `netNs=true`, `seccompBpf=true`, `seccompTsync=true`, `sandboxGood=true`.
+- Host probe: `npm run probe:chromium-sandbox-host`; accepted classification `USERNS_SANDBOX_CAPABLE`.
+- The gate rejects no-sandbox, unconfined, privileged, host network/PID, and broad capability configurations.
+
+Historical Phase 1/2 sections below describe older hosts and are retained as history. Any explicit `WAR_BROWSER_NO_SANDBOX=1` result in those sections is superseded and is not accepted by the current managed-container gate.
+
+## Historical Container Real-World Gate - 2026-07-17
 
 - GitHub Actions run `29525195037`: PASS, job `Controlled container search copy` completed in 1m05s.
 - Artifact: `artifacts/container-real-world-gate-29525195037-download/container-real-world-gate-29525195037/`.
@@ -23,7 +37,7 @@ Status: Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT
 - Failure evidence upload now runs with `if: always()` and includes sanitized timeline/result/event artifacts.
 - Physical two-machine LAN pilot: `NOT_RUN_NO_PHYSICAL_MACHINES`.
 - Production signing: `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
-- Current decision is only `READY_FOR_PHYSICAL_LAN_PILOT`; no personal LAN readiness claim is made.
+- Historical decision was `READY_FOR_PHYSICAL_LAN_PILOT`; current final readiness remains pending Phase 10.
 
 ## Production Packaging and Release Gate
 
@@ -76,7 +90,7 @@ Status: Container Real-World Gate: PASS. Decision: `READY_FOR_PHYSICAL_LAN_PILOT
 
 Source of truth remains the Windows repo:
 
-`C:\Users\a\Documents\web-action-recorder-extension-v4`
+the checked-out Windows source repository
 
 The historical Linux source was archived from Windows, excluding `node_modules`, `.git`, artifacts, profiles, temp files, and logs, then deployed to:
 
@@ -104,7 +118,7 @@ SHA-256 checks matched for:
 - Container Node.js: `v22.23.1`.
 - `playwright-core`: `1.61.1`.
 - Xvfb readiness is checked with `xdpyinfo` before Agent start.
-- `chromium-sandbox` is installed, but this Docker host rejects Chromium namespace sandboxing with `Operation not permitted`; smoke/Compose use explicit `WAR_BROWSER_NO_SANDBOX=1` and the Agent logs a warning.
+- Historical host note: this older Phase 1 host rejected namespaces and used an explicit diagnostic no-sandbox path. The current managed image removes the SUID helper and requires the reviewed userns policy.
 
 ## Implemented Fixes During Gate Closure
 
@@ -256,7 +270,7 @@ Security posture remains:
 
 ## Remaining Risk
 
-The Docker host does not permit Chromium sandbox namespaces. Phase 1 passes only with explicit `WAR_BROWSER_NO_SANDBOX=1` in the container gate. This is documented and logged as a deployment risk.
+Historical Phase 1 limitation only. Current acceptance requires the active user-namespace sandbox and classifies an incapable host as unsupported.
 
 ## Next Step
 
@@ -339,7 +353,7 @@ Verification:
 
 Updated: 2026-07-16
 
-Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on Linux host `root@192.168.1.201`.
+Status: Complete. Windows local unit/browser checks pass, and Docker/container acceptance passed on the reviewed Linux host.
 
 New platform modules:
 
@@ -394,7 +408,7 @@ Latest local verification:
 
 Updated: 2026-07-16
 
-Status: Complete. Windows local checks pass, and Linux/container verification passed on `root@192.168.1.201`.
+Status: Complete. Windows local checks pass, and Linux/container verification passed on the reviewed Linux host.
 
 New modules:
 
@@ -432,7 +446,7 @@ Verification:
 
 Updated: 2026-07-16
 
-Status: Complete. Linux WSS/TLS gate and Browser Agent container regression passed on `root@192.168.1.201`.
+Status: Complete. Linux WSS/TLS gate and Browser Agent container regression passed on the reviewed Linux host.
 
 Environment:
 
@@ -482,5 +496,5 @@ Verification:
 
 Remaining deployment risk:
 
-- The Docker host still rejects Chromium namespace sandboxing with `Operation not permitted`; container browser gates use explicit `WAR_BROWSER_NO_SANDBOX=1`. No sandbox support is claimed.
+- This historical host remained sandbox-incapable. It is not the accepted Phase 9 host and its no-sandbox evidence cannot satisfy current release or MVP acceptance.
 - The Browser Agent receives Controller dispatch over WSS, but this package intentionally does not add a new extension execution runner or protocol expansion for full workflow execution E2E.

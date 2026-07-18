@@ -1,6 +1,6 @@
 # Kế hoạch hoàn thiện MVP — Web Action Recorder v4
 
-> Nguồn chuẩn của kế hoạch này là mã tại `C:\Users\huynh cong thanh\Downloads\assistant-media\web-action-recorder-extension-v4`.
+> Nguồn chuẩn của kế hoạch này là mã trong checked-out repository root.
 > Cập nhật lần cuối: 2026-07-12.
 
 ## 1. Kết luận rà soát
