@@ -15,6 +15,7 @@ import { ControllerWssServerAdapter } from '../../controller-wss/src/serverAdapt
 import { ControllerWssRuntimeServer } from '../../controller-wss/src/wssServer.js';
 import { createWorkflowRevisionFromExtensionProfile } from '../../workflow-core/src/workflowMetadata.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
+import { redactDiagnostic } from '../../diagnostics/src/redaction.js';
 
 const IMAGE = 'war-browser-agent:phase1';
 const QUERY = 'hom nay that vui';
@@ -191,6 +192,7 @@ export async function runRealWorldContainerGate() {
     result.controlledFallback = 'FAIL';
     result.error = sanitize(error.message);
     result.durationMs = Math.round(performance.now() - started);
+    if (container) result.containerFailureDiagnostics = await containerFailureDiagnostics(container);
     if (result.jobId && controller?.core) {
       const failureState = container && agentToken ? await getContainerBaseUrl(container).then((url) => agentState(url, agentToken).catch((error) => ({ error: sanitize(error.message) }))).catch(() => null) : null;
       result.executionEvents = summarizeExecutionEvents(controller.core.events.listRecent({ jobId: result.jobId, limit: 50 }));
@@ -478,6 +480,46 @@ async function dockerBridgeGateway() {
 async function isContainerRunning(container) {
   const result = await docker(['inspect', '-f', '{{.State.Running}}', container]).catch(() => ({ stdout: 'false' }));
   return result.stdout.trim() === 'true';
+}
+
+async function containerFailureDiagnostics(container) {
+  const inspection = await docker(['inspect', '--format', '{{json .}}', container])
+    .then(({ stdout }) => JSON.parse(stdout.trim()))
+    .catch(() => ({}));
+  const logs = await docker(['logs', '--tail', '80', container]).catch((error) => ({ stdout: error.stdout || '', stderr: error.stderr || '' }));
+  return redactDiagnostic({
+    state: {
+      status: inspection.State?.Status,
+      running: inspection.State?.Running,
+      exitCode: inspection.State?.ExitCode,
+      oomKilled: inspection.State?.OOMKilled,
+      error: inspection.State?.Error,
+    },
+    runtime: {
+      user: inspection.Config?.User,
+      image: inspection.Config?.Image,
+      privileged: inspection.HostConfig?.Privileged,
+      networkMode: inspection.HostConfig?.NetworkMode,
+    },
+    logs: [...String(logs.stdout || '').split(/\r?\n/), ...String(logs.stderr || '').split(/\r?\n/)]
+      .filter(Boolean)
+      .slice(-80)
+      .map(safeLogLine),
+  });
+}
+
+function safeLogLine(line) {
+  try {
+    const parsed = JSON.parse(line);
+    return redactDiagnostic({
+      level: parsed.level,
+      component: parsed.component,
+      event: parsed.event,
+      message: parsed.message,
+    });
+  } catch {
+    return redactDiagnostic({ message: String(line).slice(0, 1000) });
+  }
 }
 
 function docker(args) {

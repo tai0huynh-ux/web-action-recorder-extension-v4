@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D final security repair loop; managed-container credential, image, sandbox, and measured-runtime hardening is ready for Docker-backed verification.
+Phase 9D managed-container Docker verification; the first sandbox-default run failed health startup and sanitized startup diagnostics are being added before the next evidence-backed attempt.
 
 Last green commit:
-dde835d17ffbbcfac2bf77f7848bd173b301e51a
+342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5
 
 HEAD:
-dde835d17ffbbcfac2bf77f7848bd173b301e51a plus the focused managed-container security repair pending commit.
+342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5 plus sanitized container-startup failure diagnostics pending commit.
 
 origin/main:
-dde835d17ffbbcfac2bf77f7848bd173b301e51a
+342a1cd0dcf4ac32f123cb1f7bf5443a135c53a5
 
 Working tree:
-Modified only for managed-container credential isolation, approved image/runtime enforcement, sandbox-default gates, focused regression coverage, and this execution-state update.
+Modified only for sanitized real-world container startup diagnostics and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- Sandboxed Chromium in the real Browser Agent container still requires the exact-head GitHub Docker gate. Terminal exactly-once persistence, execution-event value redaction, and origin private-state exclusion remain under repair.
+- GitHub Container Real World Gate `29635590644` at `342a1cd` timed out waiting for health with sandbox enabled. Existing sanitized evidence did not include the Agent startup cause, so one diagnostic-only gate repair is required before changing runtime policy.
 
 Next exact action:
-Commit and push the managed-container security checkpoint, then run the Container Real World Gate on its exact SHA.
+Commit and push sanitized startup diagnostics, rerun the Container Real World Gate, and repair only the demonstrated sandbox startup cause.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.
