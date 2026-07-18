@@ -4,7 +4,7 @@ Current phase:
 Phase 8 - Workspace and UX Integration
 
 Current subphase:
-Phase 8 complete. All Workspace and UX Integration checkpoints, packaged GUI gate, full regression, and the post-completion production check coverage audit passed.
+Phase 8 acceptance revalidation. Workspace UX, packaged GUI, and local regression are green, but the corrected Windows entrypoint exposed that the local container real-world command had previously exited without running. The current commit still needs a real Docker-backed GitHub gate.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
@@ -13,7 +13,7 @@ Last pushed green commit before the production check coverage checkpoint:
 db24da69cfc42417a94266d6d0bb653f7fbcb464
 
 Latest green checkpoint:
-Phase 8 production check coverage audit. `platform/protocol/src/protocolV2.js` is now included directly in `check:platform`; the other audited production files were already covered by `check:controller-core` or `check:controller-electron`.
+Phase 8 production check coverage and Windows real-world gate harness hardening. `platform/protocol/src/protocolV2.js` is included directly in `check:platform`, and the real-world container entrypoint now uses `pathToFileURL` so Windows cannot report a silent runtime-only pass.
 
 Completed Phase 8 subphases:
 - Phase 8A architecture review completed with one read-only subagent.
@@ -25,9 +25,11 @@ Completed Phase 8 subphases:
 - Packaged Controller release gate repaired by including controller runtime dependencies in the staged app and electron-builder package.
 
 Phase 8 subphases remaining:
-- None.
+- Run the current commit through the Docker-backed GitHub container real-world gate and record the result.
 
 Tests passed for the latest checkpoint:
+- npm.cmd run check:browser-agent
+- npm.cmd run test:browser-agent:unit
 - node --check platform/protocol/src/protocolV2.js
 - npm.cmd run test:platform:protocol
 - npm.cmd run check:platform
@@ -71,7 +73,9 @@ Packaged GUI cases passed in Phase 8:
 - Release gate packaged controller check.
 
 Full Phase 8 regression:
-- PASS.
+- Local non-Docker regression: PASS.
+- Local `test:container-real-world`: correctly attempted execution and reported `spawn docker ENOENT`; it is no longer a false PASS.
+- Docker-backed GitHub container real-world gate for the current commit: pending.
 - npm audit reported 0 vulnerabilities.
 - npm ls --depth=0 completed successfully.
 
@@ -91,12 +95,14 @@ Known product bugs:
 - None known after full Phase 8 regression.
 
 Known infrastructure blockers:
+- Docker CLI is unavailable on the local Windows host, so the real-world container gate must be accepted on the GitHub Docker runner.
 - Normal SSH configuration may be blocked by local SSH config permissions; use a null SSH config for the physical Linux host when needed.
 - Browser Agent physical Docker image can be stale after local source changes; rebuild the image before physical gates that exercise new Agent code.
 
 Next exact action:
-Begin Phase 9 - Security, release, repository hygiene, and documentation. Keep node_modules/** repository hygiene deferred to Phase 9.
+Push the Windows entrypoint fix, run the Docker-backed GitHub container real-world gate for that exact commit, then mark Phase 8 complete only if it passes.
 
 MVP remaining work:
+- Phase 8 Docker-backed final acceptance revalidation.
 - Phase 9 security, release, repository hygiene, and documentation.
 - Phase 10 final MVP acceptance.

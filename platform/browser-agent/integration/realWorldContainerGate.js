@@ -5,6 +5,7 @@ import os from 'node:os';
 import http from 'node:http';
 import https from 'node:https';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { ControllerCore, hashSecret } from '../../controller-core/src/controllerCore.js';
@@ -22,7 +23,7 @@ const DEVICE_ID = 'container-real-world-device';
 const CREDENTIAL = 'container-real-world-credential-0001';
 let mountedDataDir = '';
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runRealWorldContainerGate().then(() => {
     console.log('REAL_WORLD_CONTAINER_GATE=PASS');
   }).catch((error) => {
