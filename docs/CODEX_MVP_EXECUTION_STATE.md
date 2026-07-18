@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9F documentation finalization and exact-head full regression after Phase 9D security closure.
+Phase 9F exact-head GitHub workflow acceptance after documentation and local regression closure.
 
 Last green commit:
-995233b21f89a3376bf2631a5f69e91329cbdbd4
+53367234c0beb37aaf0eb91d9201d73d811f23fd
 
 HEAD:
-2ef8aef98a71fa9c5ad90b2d22d45a6748d6ca97 plus Phase 9 documentation updates pending commit.
+53367234c0beb37aaf0eb91d9201d73d811f23fd plus exact-head workflow acceptance pending.
 
 origin/main:
-2ef8aef98a71fa9c5ad90b2d22d45a6748d6ca97
+53367234c0beb37aaf0eb91d9201d73d811f23fd
 
 Working tree:
-Modified only for Phase 9 security/sandbox/setup/acceptance/troubleshooting documentation and this execution-state update.
+Modified only for this exact-head verification state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -36,7 +36,20 @@ Security review:
 Phase 9D review is closed with Critical 0 and High 0. Focused code/test evidence covers Electron isolation and sender validation; pairing/session authority and revocation; offline replay, exactly-once, and durable terminal outbox; malformed/bounded WSS and Native Messaging; keyboard release and clipboard policy; managed Docker arguments/image/seccomp allowlisting; active Chromium sandbox; bounded origin/grouped/graph operations; diagnostic redaction; release allowlists; and minimum-permission immutable GitHub Actions. Accepted medium limitations are broad Extension host access, no generic high-risk action classifier, unsigned development packages without external signing material, and no public-Internet deployment.
 
 Release gate:
-Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass. Phase 9 final exact-HEAD release checkpoint remains pending.
+Current local release bundle contains 79 integrity-checked artifacts; tamper detection, package secret scan, packaged Controller smoke, Electron GUI smoke, and release gate pass on the documentation SHA. Phase 9 final exact-HEAD workflow checkpoint remains pending.
+
+Phase 9 local verification after documentation:
+- `npm.cmd ci`: PASS; 0 vulnerabilities. npm reported only upstream deprecation notices.
+- `npm.cmd run test:all`: PASS; all extension, platform, security-policy, workflow, and hygiene suites passed.
+- WSS gate: PASS; TLS verification, replay, revocation, and cleanup passed.
+- Controller-to-Extension Edge E2E: PASS; grouped input, graph edit, execution, cancel, replay, and cleanup passed.
+- Electron smoke: PASS.
+- Release integrity: PASS; 79 artifacts, tamper detection and secret scan pass.
+- Packaged Controller smoke: PASS.
+- Release gate: PASS.
+- `npm.cmd audit`: PASS; 0 vulnerabilities.
+- `npm.cmd ls --depth=0`: PASS; only the approved top-level runtime packages are present.
+- Local Windows `test:container-real-world`: `BLOCKED_INFRASTRUCTURE` because Docker CLI is unavailable; the GitHub-hosted exact-SHA gate remains mandatory and is not replaced by this local result.
 
 Final acceptance:
 Phase 10 has not started.
@@ -45,7 +58,7 @@ Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29653528313` passed at exact SHA `995233b21f89a3376bf2631a5f69e91329cbdbd4` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 
 Next exact action:
-Commit the finalized Phase 9 documentation, run the complete local Phase 9 verification serially where required, and run all three GitHub workflows on the exact final Phase 9 SHA.
+Run CI, Container Real World Gate, and Windows Release Gate on exact SHA `53367234c0beb37aaf0eb91d9201d73d811f23fd`; accept Phase 9 only if all execute and pass.
 
 Remaining MVP work:
 - Phase 9F exact-head verification and workflow acceptance.
