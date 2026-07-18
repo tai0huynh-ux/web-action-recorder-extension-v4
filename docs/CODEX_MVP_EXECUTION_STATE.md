@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D managed-container Docker verification; exact-head run `29653205418` proved the fail-closed probe works and exposed an unsupported named ESM import from Playwright's CommonJS entrypoint before Chromium launch.
+Phase 9D managed-container Docker verification; exact-head run `29653358667` proved the active Chromium sandbox and full product path, leaving only Docker inspect's inline seccomp JSON representation to verify without persisting it.
 
 Last green commit:
 8e5adceadfef204f643293d7204b27bb7834e196
 
 HEAD:
-e62a5a5bfa5ca5ec79c225cbcdfb0ce62c32bf9a plus the CommonJS-compatible probe import pending commit.
+74a88713c5f9e22e1595e907b385ecb75a419d41 plus canonical measured-seccomp verification pending commit.
 
 origin/main:
-e62a5a5bfa5ca5ec79c225cbcdfb0ce62c32bf9a
+74a88713c5f9e22e1595e907b385ecb75a419d41
 
 Working tree:
-Modified only to correct the probe's Playwright CommonJS import, lock that import contract in the security validator, and update this execution state.
+Modified only to verify Docker's measured inline seccomp policy by canonical hash, keep artifact evidence category-only, add managed-runtime regression coverage, and update this execution state.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -42,10 +42,10 @@ Final acceptance:
 Phase 10 has not started.
 
 Known blockers:
-- GitHub Container Real World Gate `29652969620` at `6df2629` exposed the module-scoped Chromium WebUI data and led to the rendered ZygoteHost parser. Run `29653205418` at `e62a5a5` then failed closed before Chromium launch because the inline Node probe used a named import from Playwright's CommonJS file; local reproduction confirms default import plus destructuring is required.
+- GitHub Container Real World Gate `29653358667` at `74a8871` classified the host `USERNS_SANDBOX_CAPABLE`; Chromium authoritatively reported SUID false and user/PID/network/seccomp-BPF/TSYNC plus overall sandbox true. The full product path passed. The sole failed assertion was path-based seccomp comparison because Docker inspect returns the loaded policy JSON, not its source path.
 
 Next exact action:
-Commit and push the CommonJS-compatible probe import, rerun the exact-head gate, and require probe classification `USERNS_SANDBOX_CAPABLE` plus `userNs`, `pidNs`, `netNs`, `seccompBpf`, and `sandboxGood` with SUID false.
+Commit and push canonical measured-seccomp verification, rerun the exact-head gate, and require every sandbox, runtime, product, and cleanup assertion to pass with sanitized evidence only.
 
 Remaining MVP work:
 - Phase 9D through Phase 9F.

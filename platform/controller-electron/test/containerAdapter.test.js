@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { createDockerContainerAdapter } from '../src/containerAdapter.js';
 
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
+const APPROVED_SECCOMP_OPTION = `seccomp=${JSON.stringify(JSON.parse(fs.readFileSync(new URL('../../container/security/chromium-userns-seccomp.json', import.meta.url), 'utf8')))}`;
 
 test('managed Docker adapter isolates credentials and verifies the approved runtime', async () => {
   const execCalls = [];
@@ -73,6 +75,20 @@ test('managed Docker adapter rejects unsafe measured runtime state', async () =>
       return { stdout: '', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
+  });
+
+  await assert.rejects(() => adapter.create(container()), /security policy failed/);
+});
+
+test('managed Docker adapter rejects altered measured seccomp policy', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection({ HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', 'seccomp={"defaultAction":"SCMP_ACT_ALLOW"}'] } }))}\n`, stderr: '' };
+      return { stdout: '', stderr: '' };
+    },
+    spawnImpl: fakeSpawn([]),
   });
 
   await assert.rejects(() => adapter.create(container()), /security policy failed/);
@@ -178,7 +194,7 @@ function safeInspection(overrides = {}) {
       Memory: 2 * 1024 * 1024 * 1024,
       NanoCpus: 2_000_000_000,
       PidsLimit: 512,
-      SecurityOpt: ['apparmor=war-browser-agent', 'seccomp=C:/war/security/chromium-userns-seccomp.json'],
+      SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION],
       Binds: ['war-agent-one-data:/data'],
       PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
     },
@@ -192,7 +208,7 @@ function safeInspection(overrides = {}) {
 }
 
 function remoteSecurityOptions() {
-  return { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', 'seccomp=/etc/war/security/chromium-userns-seccomp.json'] } };
+  return { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION] } };
 }
 
 function fakeSpawn(calls) {

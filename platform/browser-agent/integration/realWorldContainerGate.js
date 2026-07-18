@@ -11,6 +11,7 @@ import { performance } from 'node:perf_hooks';
 import { ControllerCore, hashSecret } from '../../controller-core/src/controllerCore.js';
 import { JsonStore } from '../../../companion/store.js';
 import { ControllerApplicationService } from '../../controller-electron/src/controllerApplication.js';
+import { matchesApprovedSeccompSecurityOption } from '../../controller-electron/src/containerAdapter.js';
 import { ControllerWssServerAdapter } from '../../controller-wss/src/serverAdapter.js';
 import { ControllerWssRuntimeServer } from '../../controller-wss/src/wssServer.js';
 import { createWorkflowRevisionFromExtensionProfile } from '../../workflow-core/src/workflowMetadata.js';
@@ -128,7 +129,7 @@ export async function runRealWorldContainerGate() {
       containerNoAddedCapabilities: containerSecurity.addedCapabilities.length === 0,
       containerResourcesBounded: containerSecurity.resourcesBounded,
       appArmorEnforced: containerSecurity.appArmor === 'war-browser-agent',
-      constrainedSeccompApplied: containerSecurity.seccompProfile === SECCOMP_PROFILE,
+      constrainedSeccompApplied: containerSecurity.seccompPolicyMatched,
       chromiumSandboxGood: chromiumSandbox.sandboxGood === true,
       chromiumUserNamespace: chromiumSandbox.userNs === true,
       chromiumPidNamespace: chromiumSandbox.pidNs === true,
@@ -518,6 +519,7 @@ async function containerSecurityEvidence(container) {
   const config = inspection.Config || {};
   const binds = Array.isArray(host.Binds) ? host.Binds : [];
   const securityOptions = Array.isArray(host.SecurityOpt) ? host.SecurityOpt : [];
+  const seccompPolicyMatched = matchesApprovedSeccompSecurityOption(securityOptions);
   return {
     nonRoot: config.User === 'war',
     privileged: host.Privileged === true,
@@ -527,7 +529,8 @@ async function containerSecurityEvidence(container) {
     hostHomeMounted: binds.some((bind) => /(?:^|[\\/])home[\\/]|Users[\\/]/i.test(String(bind).split(':')[0])),
     addedCapabilities: Array.isArray(host.CapAdd) ? host.CapAdd : [],
     appArmor: securityOptions.find((option) => option.startsWith('apparmor='))?.slice('apparmor='.length) || null,
-    seccompProfile: securityOptions.find((option) => option.startsWith('seccomp='))?.slice('seccomp='.length) || null,
+    seccompProfile: seccompPolicyMatched ? 'chromium-userns-seccomp' : null,
+    seccompPolicyMatched,
     resourcesBounded: host.Memory === 2 * 1024 * 1024 * 1024 && host.NanoCpus === 2_000_000_000 && host.PidsLimit === 512,
   };
 }

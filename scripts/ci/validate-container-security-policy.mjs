@@ -44,6 +44,7 @@ assert(dockerfile.includes('-exec chmod a-s {} +'), 'userns-only image must stri
 assert(crypto.createHash('sha256').update(seccompText).digest('hex') === 'e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d', 'Chromium seccomp profile hash changed without review');
 assert(seccomp.defaultAction === 'SCMP_ACT_ERRNO', 'Chromium seccomp profile must retain the Docker default deny action');
 const chromiumRules = seccomp.syscalls.filter((rule) => String(rule.comment || '').startsWith('Allow Chromium'));
+const canonicalSeccompHash = crypto.createHash('sha256').update(JSON.stringify(seccomp)).digest('hex');
 assert(chromiumRules.length === 4, 'Chromium seccomp profile must add exactly four reviewed rules');
 assert(chromiumRules.every((rule) => rule.action === 'SCMP_ACT_ALLOW' && rule.args?.length === 1 && rule.args[0].op === 'SCMP_CMP_MASKED_EQ' && rule.args[0].value === 0x7e020000), 'Chromium seccomp additions must use the reviewed namespace mask');
 assert(JSON.stringify(chromiumRules.filter((rule) => rule.names[0] === 'clone').map((rule) => rule.args[0].valueTwo).sort((a, b) => a - b)) === JSON.stringify([0x10000000, 0x20000000, 0x70000000]), 'Chromium clone namespace combinations changed');
@@ -55,6 +56,10 @@ assert(browserController.includes("document.querySelector('#evaluation')"), 'Bro
 assert(runtimes[2].includes('if (!report.classification.supported) process.exitCode = 1'), 'sandbox capability probe must fail CI when authoritative proof is unavailable');
 assert(runtimes[2].includes("import playwright from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must use the CommonJS-compatible Playwright import');
 assert(!runtimes[2].includes("import { chromium } from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must not use an unsupported named import from Playwright CommonJS');
+assert(runtimes[0].includes('matchesApprovedSeccompSecurityOption(securityOptions)'), 'managed runtime must verify Docker measured seccomp policy content');
+assert(runtimes[0].includes(canonicalSeccompHash), 'managed runtime canonical seccomp hash must match the reviewed policy');
+assert(runtimes[1].includes('seccompPolicyMatched'), 'real-world evidence must record only the sanitized seccomp policy match');
+assert(!runtimes[1].includes("seccompProfile: securityOptions.find"), 'real-world evidence must not persist the full Docker seccomp JSON');
 
 if (findings.length) {
   console.error(findings.join('\n'));

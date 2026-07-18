@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import crypto from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_IMAGE = 'war-browser-agent:phase1';
@@ -7,6 +8,19 @@ const CONTROL_PORT = '3766';
 const MANAGED_LABEL = 'war-controller';
 const CREDENTIAL_PATH = '/data/device/controller-session.credential';
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
+const APPROVED_SECCOMP_CANONICAL_SHA256 = '04ba8f30f2f3b6a10e6b54836363fc9b2a05a55c4aff6ea68c95d8d3f277fd5f';
+
+export function matchesApprovedSeccompSecurityOption(securityOptions) {
+  const option = (securityOptions || []).find((value) => String(value).startsWith('seccomp='));
+  if (!option) return false;
+  try {
+    const policy = JSON.parse(String(option).slice('seccomp='.length));
+    const hash = crypto.createHash('sha256').update(JSON.stringify(policy)).digest('hex');
+    return hash === APPROVED_SECCOMP_CANONICAL_SHA256;
+  } catch {
+    return false;
+  }
+}
 
 export function createDockerContainerAdapter({ config, execFileImpl = execFileAsync, spawnImpl = spawn } = {}) {
   const containerConfig = config?.containers;
@@ -172,7 +186,7 @@ export class DockerContainerAdapter {
       && host.Privileged === false
       && host.NetworkMode !== 'host'
       && securityOptions.includes('apparmor=war-browser-agent')
-      && securityOptions.includes(`seccomp=${this.seccompProfilePath()}`)
+      && matchesApprovedSeccompSecurityOption(securityOptions)
       && host.Memory === 2 * 1024 * 1024 * 1024
       && host.NanoCpus === 2_000_000_000
       && host.PidsLimit === 512
