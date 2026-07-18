@@ -1,4 +1,5 @@
 import { validateWorkflowRevision } from '../../protocol/src/protocolV2.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 import { domainError, ERROR_CODES } from './errors.js';
 
 export class WorkflowRegistry {
@@ -11,6 +12,7 @@ export class WorkflowRegistry {
   putRevision(revision) {
     const validation = validateWorkflowRevision(revision);
     if (!validation.ok) throw domainError(ERROR_CODES.WORKFLOW_HASH_MISMATCH, 'WorkflowRevision is invalid', 400, validation.errors);
+    if (createWorkflowContentHash(revision) !== revision.contentHash) throw domainError(ERROR_CODES.WORKFLOW_HASH_MISMATCH, 'WorkflowRevision contentHash does not match its payload', 400);
     if (containsSensitiveDefault(revision)) throw domainError(ERROR_CODES.WORKFLOW_HASH_MISMATCH, 'WorkflowRevision contains sensitive default input');
     return this.store.update((state) => {
       const existing = state.workflowRevisions.find((item) => item.workflowId === revision.workflowId && item.contentHash === revision.contentHash);

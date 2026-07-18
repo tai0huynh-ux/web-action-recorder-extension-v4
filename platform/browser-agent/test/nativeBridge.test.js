@@ -9,17 +9,21 @@ import { WorkflowRegistry } from '../src/workflowRegistry.js';
 import { LocalSocketServer, prepareSocketPath } from '../src/localSocketServer.js';
 import { NativeBridgeHandler } from '../src/nativeBridgeHandler.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 import { sendLocalSocketRequest } from '../../../native-host/host.js';
 
 test('workflow registry creates new revision and deduplicates contentHash', () => {
   const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
-  const first = registry.putRevision(revisionFixture({ contentHash: 'a'.repeat(64) }));
-  const duplicate = registry.putRevision(revisionFixture({ contentHash: 'a'.repeat(64) }));
-  const changed = registry.putRevision(revisionFixture({ contentHash: 'b'.repeat(64) }));
+  const firstRevision = revisionFixture();
+  const changedRevision = revisionFixture({ profilePayload: { id: 'wf-1', name: 'Workflow', steps: [{ id: 'step-1', type: 'log', message: 'changed' }] } });
+  const first = registry.putRevision(firstRevision);
+  const duplicate = registry.putRevision(firstRevision);
+  const changed = registry.putRevision(changedRevision);
   assert.equal(first.created, true);
   assert.equal(duplicate.created, false);
   assert.equal(changed.revision.revision, 2);
   assert.equal(registry.listMetadata().length, 2);
+  assert.throws(() => registry.putRevision({ ...revisionFixture(), name: 'Tampered after hashing' }), /contentHash does not match/);
 });
 
 test('workflow registry recovers corrupt file', () => {
@@ -70,13 +74,14 @@ test('native bridge handler supports health, workflow upload, list, and get', as
     supervisor: { getState: () => ({ browserState: 'running', extensionLoaded: true }) }
   });
   const health = await handler.handle(envelope('bridge.health', {}));
-  const upload = await handler.handle(envelope('workflow.upload', { revision: revisionFixture({ contentHash: 'c'.repeat(64) }) }));
+  const uploadedRevision = revisionFixture();
+  const upload = await handler.handle(envelope('workflow.upload', { revision: uploadedRevision }));
   const list = await handler.handle(envelope('workflow.list', {}));
   const get = await handler.handle(envelope('workflow.get', { workflowId: 'wf-1', revision: 1 }));
   assert.equal(health.payload.ok, true);
   assert.equal(upload.payload.created, true);
   assert.equal(list.payload.workflows.length, 1);
-  assert.equal(get.payload.revision.contentHash, 'c'.repeat(64));
+  assert.equal(get.payload.revision.contentHash, uploadedRevision.contentHash);
 });
 
 test('native host socket client completes workflow upload and execution event round trip', async () => {
@@ -119,7 +124,7 @@ test('native host socket client completes workflow upload and execution event ro
 
 test('native bridge queues controller dispatch and cancel for extension polling', async () => {
   const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
-  registry.putRevision(revisionFixture({ contentHash: 'e'.repeat(64), profilePayload: { id: 'wf-1', name: 'Workflow', steps: [{ id: 's1', type: 'log', message: 'ok' }] } }));
+  const stored = registry.putRevision(revisionFixture({ profilePayload: { id: 'wf-1', name: 'Workflow', steps: [{ id: 's1', type: 'log', message: 'ok' }] } })).revision;
   const handler = new NativeBridgeHandler({
     identity: { deviceId: 'device-1' },
     registry,
@@ -131,7 +136,7 @@ test('native bridge queues controller dispatch and cancel for extension polling'
     jobId: 'job-1',
     workflowId: 'wf-1',
     workflowRevision: 1,
-    workflowContentHash: 'e'.repeat(64),
+    workflowContentHash: stored.contentHash,
     inputs: {},
     deadline: '2026-07-16T00:05:00.000Z',
     idempotencyKey: 'dispatch-1'
@@ -151,7 +156,7 @@ test('native bridge queues controller dispatch and cancel for extension polling'
 test('native bridge forwards extension execution envelopes and deduplicates completed jobs', async () => {
   const forwarded = [];
   const registry = new WorkflowRegistry({ filePath: tempFile('registry.json') });
-  registry.putRevision(revisionFixture({ contentHash: 'f'.repeat(64) }));
+  const stored = registry.putRevision(revisionFixture()).revision;
   const handler = new NativeBridgeHandler({
     identity: { deviceId: 'device-1' },
     registry,
@@ -164,7 +169,7 @@ test('native bridge forwards extension execution envelopes and deduplicates comp
     jobId: 'job-1',
     workflowId: 'wf-1',
     workflowRevision: 1,
-    workflowContentHash: 'f'.repeat(64),
+    workflowContentHash: stored.contentHash,
     inputs: {},
     deadline: '2026-07-16T00:05:00.000Z',
     idempotencyKey: 'dispatch-1'
@@ -183,7 +188,7 @@ test('native bridge forwards extension execution envelopes and deduplicates comp
     jobId: 'job-1',
     workflowId: 'wf-1',
     workflowRevision: 1,
-    workflowContentHash: 'f'.repeat(64),
+    workflowContentHash: stored.contentHash,
     inputs: {},
     deadline: '2026-07-16T00:05:00.000Z',
     idempotencyKey: 'dispatch-1'
@@ -194,11 +199,11 @@ test('native bridge forwards extension execution envelopes and deduplicates comp
 });
 
 function revisionFixture(overrides = {}) {
-  return {
+  const value = {
     workflowId: 'wf-1',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: '0'.repeat(64),
+    contentHash: '',
     name: 'Workflow',
     description: '',
     createdAt: '2026-07-16T00:00:00.000Z',
@@ -208,6 +213,8 @@ function revisionFixture(overrides = {}) {
     profilePayload: { id: 'wf-1', name: 'Workflow', steps: [] },
     ...overrides
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 function envelope(type, payload) {

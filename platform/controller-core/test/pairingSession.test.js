@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ControllerCore, hashSecret } from '../src/controllerCore.js';
 import { createMemoryStore, JsonStore } from '../../../companion/store.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 test('pair success binds credential to authoritative device identity without storing plaintext token', async () => {
   const core = await fixtureCore();
@@ -320,11 +321,11 @@ function presence(session, status) {
 }
 
 function revision() {
-  return {
+  const value = {
     workflowId: 'wf-1',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: 'a'.repeat(64),
+    contentHash: '',
     name: 'Workflow',
     description: '',
     createdAt: '2026-07-16T00:00:00.000Z',
@@ -333,6 +334,8 @@ function revision() {
     requiredInputs: [],
     profilePayload: { id: 'wf-1', steps: [] }
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 function dispatchArgs(session, overrides = {}) {
@@ -341,7 +344,7 @@ function dispatchArgs(session, overrides = {}) {
     generation: session.generation,
     workflowId: 'wf-1',
     workflowRevision: 1,
-    workflowContentHash: 'a'.repeat(64),
+    workflowContentHash: revision().contentHash,
     inputs: {},
     deadline: '2026-07-16T00:05:00.000Z',
     idempotencyKey: 'dispatch',

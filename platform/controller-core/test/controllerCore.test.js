@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { ControllerCore, buildDatasetAssignments } from '../src/controllerCore.js';
 import { createMemoryStore, JsonStore } from '../../../companion/store.js';
 import { createServer } from '../../../companion/server.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 const admin = 'a'.repeat(32);
 const enroll = 'e'.repeat(32);
@@ -41,15 +42,18 @@ test('device registry enrolls, idempotently updates, heartbeats, status changes,
 
 test('workflow registry deduplicates hash, increments changed revision, rejects wrong hash and sensitive defaults', async () => {
   const core = await fixtureCore();
-  const first = await core.workflows.putRevision(revision({ contentHash: 'a'.repeat(64) }));
-  const duplicate = await core.workflows.putRevision(revision({ contentHash: 'a'.repeat(64) }));
-  const changed = await core.workflows.putRevision(revision({ contentHash: 'b'.repeat(64) }));
+  const firstRevision = revision();
+  const changedRevision = revision({ profilePayload: { id: 'wf-1', steps: [{ id: 'step-1', type: 'log', message: 'changed' }] } });
+  const first = await core.workflows.putRevision(firstRevision);
+  const duplicate = await core.workflows.putRevision(firstRevision);
+  const changed = await core.workflows.putRevision(changedRevision);
   assert.equal(first.created, true);
   assert.equal(duplicate.created, false);
   assert.equal(changed.revision.revision, 2);
-  assert.equal(core.workflows.findByContentHash('wf-1', 'a'.repeat(64)).sourceDeviceId, 'dev-a');
+  assert.equal(core.workflows.findByContentHash('wf-1', firstRevision.contentHash).sourceDeviceId, 'dev-a');
   assert.deepEqual(core.workflows.listMetadata().map((item) => item.revision), [1, 2]);
   assert.throws(() => core.workflows.putRevision(revision({ contentHash: 'bad' })), /WorkflowRevision is invalid/);
+  assert.throws(() => core.workflows.putRevision({ ...revision(), name: 'Tampered after hashing' }), /contentHash does not match/);
   assert.throws(() => core.workflows.putRevision(revision({
     contentHash: 'c'.repeat(64),
     requiredInputs: [{ name: 'password', label: 'Password', index: 0, required: true, sensitive: true, defaultValue: 'secret' }]
@@ -205,11 +209,11 @@ function sequenceId() {
 }
 
 function revision(overrides = {}) {
-  return {
+  const value = {
     workflowId: 'wf-1',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: '0'.repeat(64),
+    contentHash: '',
     name: 'Workflow',
     description: '',
     createdAt: '2026-07-16T00:00:00.000Z',
@@ -219,6 +223,8 @@ function revision(overrides = {}) {
     profilePayload: { id: 'wf-1', name: 'Workflow', steps: [] },
     ...overrides
   };
+  if (!Object.hasOwn(overrides, 'contentHash')) value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 async function post(url, token, body) {

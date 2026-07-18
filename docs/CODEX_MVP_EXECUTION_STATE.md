@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; WSS pre-authentication resource controls are repaired locally.
+Phase 9D security review is in progress; workflow content-hash integrity is repaired locally.
 
 Last green commit:
-ee6253254d2ec8f44e4912c68f7c9efd96b78832
+ec2b9e0001f2b8becd488125e3378f08f04b09be
 
 HEAD:
-ee6253254d2ec8f44e4912c68f7c9efd96b78832 with the intended WSS resource-control repair uncommitted.
+ec2b9e0001f2b8becd488125e3378f08f04b09be with the intended workflow hash-integrity repair uncommitted.
 
 origin/main:
-ee6253254d2ec8f44e4912c68f7c9efd96b78832
+ec2b9e0001f2b8becd488125e3378f08f04b09be
 
 Working tree:
-Modified only for the focused WSS connection-cap/authentication-timeout repair, regression tests, and this execution-state update.
+Modified only for the focused Controller/Agent workflow hash-integrity repair, runtime packaging updates, regression tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Managed-container credential transport and deletion security blockers are fixed through `ee6253254d2ec8f44e4912c68f7c9efd96b78832`. Main-agent verification confirmed unbounded pre-authentication WSS sockets and missing hello deadlines; the local repair adds a bounded connection registry, authentication timeout, authenticated-state promotion, and close-on-pre-authentication-error behavior.
+In progress. Managed-container and WSS blockers are fixed through `ec2b9e0001f2b8becd488125e3378f08f04b09be`. Main-agent verification confirmed that Controller and Agent registries trusted arbitrary SHA-shaped workflow hashes; the local repair recomputes canonical content hashes at both registry boundaries and regenerates the hash after origin sanitization changes payload content.
 
 Release gate:
 Phase 9B local release integrity, packaged Controller, and release gate pass after lockfile reinstall. Phase 9 final release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push the WSS resource-control repair, then continue independent verification of workflow hash and terminal exact-once findings.
+Validate, commit, and push workflow hash integrity, then repair the terminal exact-once acknowledgement and persistence boundary.
 
 Remaining MVP work:
 - Phase 9C through Phase 9F.

@@ -98,6 +98,7 @@ export const browserAgentFiles = [
   'platform/protocol/schemas/command-status.v1.schema.json',
   'platform/protocol/schemas/war-control-envelope.v1.schema.json',
   'platform/protocol/schemas/workflow-revision-metadata.v1.schema.json',
+  'platform/workflow-core/src/workflowMetadata.js',
   'native-host/framing.js',
   'native-host/host.js',
   'native-host/install.js',

@@ -47,6 +47,7 @@ COPY platform/browser-agent/src ./platform/browser-agent/src
 COPY platform/diagnostics/src ./platform/diagnostics/src
 COPY platform/protocol/src ./platform/protocol/src
 COPY platform/protocol/schemas ./platform/protocol/schemas
+COPY platform/workflow-core/src ./platform/workflow-core/src
 COPY native-host ./native-host
 COPY manifest.json ./extension/manifest.json
 COPY src ./extension/src

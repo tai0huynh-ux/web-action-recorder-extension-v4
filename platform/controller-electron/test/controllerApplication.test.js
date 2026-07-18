@@ -4,6 +4,7 @@ import { ControllerCore, hashSecret } from '../../controller-core/src/controller
 import { createMemoryStore } from '../../../companion/store.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 import { ControllerApplicationService, DISPATCH_DEADLINE_SECONDS } from '../src/controllerApplication.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 test('application dispatch persists a command and delivers it through WSS without leaking main-owned fields', async () => {
   const core = await connectedCore();
@@ -179,11 +180,12 @@ test('application revoke closes the active session and rejects the revoked crede
 
 test('application previews origin inventory with conflict and duplicate decisions', async () => {
   const core = await connectedCore();
-  await core.workflows.putRevision(revision());
+  const localRevision = revision();
+  await core.workflows.putRevision(localRevision);
   const transport = fakeTransport({
     originInventory: {
       workflows: [
-        { workflowId: 'wf-1', revision: 1, contentHash: 'a'.repeat(64), name: 'Same', updatedAt: '2026-07-16T00:00:00.000Z' },
+        { workflowId: 'wf-1', revision: 1, contentHash: localRevision.contentHash, name: 'Same', updatedAt: '2026-07-16T00:00:00.000Z' },
         { workflowId: 'wf-1', revision: 2, contentHash: 'b'.repeat(64), name: 'Conflict', updatedAt: '2026-07-16T00:00:00.000Z' },
         { workflowId: 'wf-new', revision: 1, contentHash: 'c'.repeat(64), name: 'New', updatedAt: '2026-07-16T00:00:00.000Z' },
         { workflowId: 'wf-bad', revision: 1, contentHash: 'not-a-hash', name: 'Bad' }
@@ -210,7 +212,7 @@ test('application pulls origin workflows through WSS, strips secret-like fields,
     originInventory: {
       workflows: [
         { workflowId: 'wf-1', revision: 2, contentHash: 'b'.repeat(64), name: 'Conflict', updatedAt: '2026-07-16T00:00:00.000Z' },
-        { workflowId: 'wf-origin', revision: 1, contentHash: 'd'.repeat(64), name: 'Origin', updatedAt: '2026-07-16T00:00:00.000Z' }
+        { workflowId: 'wf-origin', revision: 1, contentHash: originWorkflow.contentHash, name: 'Origin', updatedAt: '2026-07-16T00:00:00.000Z' }
       ]
     },
     originWorkflows: { 'wf-origin:1': originWorkflow }
@@ -224,6 +226,8 @@ test('application pulls origin workflows through WSS, strips secret-like fields,
   assert.equal(stored.profilePayload.nested.keep, true);
   assert.equal(Object.hasOwn(stored.profilePayload, 'credential'), false);
   assert.equal(Object.hasOwn(stored.profilePayload.nested, 'token'), false);
+  assert.equal(stored.contentHash, createWorkflowContentHash(stored));
+  assert.notEqual(stored.contentHash, originWorkflow.contentHash);
   assert.equal(snapshot.originSyncResults.length, 1);
   assert.equal(snapshot.auditEvents.at(-1).type, 'origin.sync.completed');
 });
@@ -418,11 +422,11 @@ async function connectedCore() {
 }
 
 function revision(overrides = {}) {
-  return {
+  const value = {
     workflowId: 'wf-1',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: 'a'.repeat(64),
+    contentHash: '',
     name: 'Workflow',
     description: '',
     createdAt: '2026-07-16T00:00:00.000Z',
@@ -432,6 +436,8 @@ function revision(overrides = {}) {
     profilePayload: { id: 'wf-1', steps: [] },
     ...overrides
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 function agentHello() {

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
 import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
-import { createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
+import { createWorkflowContentHash, createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
 import { applyLinksToSteps, collectOutgoingIds, validateGraph } from '../../../src/graph.js';
 import { normalizeProfile, validateProfile } from '../../../src/shared.js';
 import { toPublicRuntimeConfig } from './runtimeConfig.js';
@@ -625,6 +625,7 @@ function sanitizeOriginInventory(payload = {}) {
 function sanitizeOriginWorkflow(workflow) {
   const clone = structuredClone(workflow || {});
   stripSecretLikeFields(clone);
+  clone.contentHash = createWorkflowContentHash(clone);
   return clone;
 }
 

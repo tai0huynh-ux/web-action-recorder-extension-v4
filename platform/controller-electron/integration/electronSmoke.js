@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { createElectronControllerRuntime } from '../src/electronRuntime.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 import { IPC_CHANNELS } from '../src/ipcContract.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 const results = [];
 const artifactDir = path.resolve('artifacts/controller-electron');
@@ -436,11 +437,11 @@ function agentHello() {
 }
 
 function workflowRevision() {
-  return {
+  const value = {
     workflowId: 'wf-smoke',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: 'd'.repeat(64),
+    contentHash: '',
     name: 'Smoke Workflow',
     description: 'Smoke workflow',
     createdAt: '2026-07-16T00:00:00.000Z',
@@ -449,14 +450,17 @@ function workflowRevision() {
     requiredInputs: [{ name: 'url', label: 'URL', index: 0, required: true, sensitive: false, type: 'string' }],
     profilePayload: { id: 'wf-smoke', steps: [] },
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 function sensitiveWorkflowRevision() {
-  return {
+  const value = {
     ...workflowRevision(),
     workflowId: 'wf-sensitive-smoke',
-    contentHash: 'e'.repeat(64),
     name: 'Sensitive Smoke Workflow',
     requiredInputs: [{ name: 'secret', label: 'Secret', index: 0, required: true, sensitive: true, type: 'string' }],
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }

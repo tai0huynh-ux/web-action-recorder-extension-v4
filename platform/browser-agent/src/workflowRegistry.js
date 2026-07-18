@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { validateWorkflowRevision } from '../../protocol/src/protocolV2.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 export class WorkflowRegistry {
   constructor({ filePath, maxCount = 1000, maxPayloadBytes = 1024 * 1024, log = () => {} }) {
@@ -35,6 +36,7 @@ export class WorkflowRegistry {
       error.details = validation.errors;
       throw error;
     }
+    if (createWorkflowContentHash(revision) !== revision.contentHash) throw new Error('WorkflowRevision contentHash does not match its payload.');
     const workflowId = revision.workflowId;
     const existingByHash = this.findByContentHash(workflowId, revision.contentHash);
     if (existingByHash) return { created: false, revision: existingByHash };

@@ -10,6 +10,7 @@ import { JsonStore } from '../../../companion/store.js';
 import { ControllerWssServerAdapter } from '../src/serverAdapter.js';
 import { ControllerWssRuntimeServer } from '../src/wssServer.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
+import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 export async function runWssGate() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'war-wss-gate-'));
@@ -206,11 +207,11 @@ function executionResult(session, jobId) {
 }
 
 function revision() {
-  return {
+  const value = {
     workflowId: 'wf-1',
     revision: 1,
     schemaVersion: 'war-workflow-revision.v2',
-    contentHash: 'a'.repeat(64),
+    contentHash: '',
     name: 'Workflow',
     description: '',
     createdAt: new Date().toISOString(),
@@ -219,6 +220,8 @@ function revision() {
     requiredInputs: [],
     profilePayload: { id: 'wf-1', steps: [] }
   };
+  value.contentHash = createWorkflowContentHash(value);
+  return value;
 }
 
 function dispatchArgs(session, overrides = {}) {
@@ -227,7 +230,7 @@ function dispatchArgs(session, overrides = {}) {
     generation: session.generation,
     workflowId: 'wf-1',
     workflowRevision: 1,
-    workflowContentHash: 'a'.repeat(64),
+    workflowContentHash: revision().contentHash,
     inputs: {},
     deadline: new Date(Date.now() + 60000).toISOString(),
     idempotencyKey: 'dispatch',
