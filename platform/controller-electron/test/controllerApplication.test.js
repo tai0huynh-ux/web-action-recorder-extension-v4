@@ -96,15 +96,54 @@ test('application manages container lifecycle through a bounded adapter', async 
   await app.restartContainer({ containerId });
   await app.stopContainer({ containerId });
   const duplicate = await app.duplicateContainer({ containerId, name: 'Agent Two' });
+  const managedDeviceId = added.data.container.deviceId;
   const deleted = await app.deleteContainer({ containerId });
 
   assert.equal(added.data.operation.ok, true);
   assert.equal(core.containers.getContainer(containerId).status, 'deleted');
+  assert.ok(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt);
+  assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
   assert.equal(duplicate.data.container.name, 'Agent Two');
   assert.equal(duplicate.data.operation.ok, true);
   assert.notEqual(duplicate.data.container.runtime.dockerName, added.data.container.runtime.dockerName);
   assert.equal(deleted.data.operation.ok, true);
   assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'create', 'delete']);
+});
+
+test('deleting an already-revoked failed managed container remains idempotent', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  adapter.create = async function create(container) {
+    this.calls.push({ action: 'create', id: container.id });
+    throw new Error('create failed');
+  };
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const added = await app.addContainer({ name: 'Failed Agent', image: 'war-browser-agent:test', runtime: { dockerName: 'failed-agent' } });
+
+  const deleted = await app.deleteContainer({ containerId: added.data.container.id });
+
+  assert.equal(deleted.data.container.status, 'deleted');
+  assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'delete']);
+});
+
+test('managed container deletion failure revokes access but does not report registry deletion', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  adapter.delete = async function deleteContainer(container) {
+    this.calls.push({ action: 'delete', id: container.id });
+    throw new Error('runtime cleanup failed');
+  };
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const added = await app.addContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'agent-one' } });
+  const managedDeviceId = added.data.container.deviceId;
+
+  const deleted = await app.deleteContainer({ containerId: added.data.container.id });
+
+  assert.equal(deleted.data.operation.ok, false);
+  assert.equal(deleted.data.container.status, 'failed');
+  assert.equal(deleted.data.container.desiredState, 'deleted');
+  assert.ok(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt);
+  assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
 });
 
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {

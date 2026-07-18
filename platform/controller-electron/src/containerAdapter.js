@@ -71,8 +71,8 @@ export class DockerContainerAdapter {
 
   async delete(container) {
     const name = dockerName(container);
-    await this.docker(['rm', '-f', name]).catch(() => {});
-    await this.docker(['volume', 'rm', '-f', dataVolume(name)]).catch(() => {});
+    await this.docker(['rm', '-f', name]);
+    await this.docker(['volume', 'rm', '-f', dataVolume(name)]);
     return { status: 'deleted', runtime: { dockerName: name } };
   }
 

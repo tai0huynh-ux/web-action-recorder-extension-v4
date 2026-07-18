@@ -4,19 +4,19 @@ Current phase:
 Phase 9 - Security, CI, Repository Hygiene, Release, and Documentation
 
 Current subphase:
-Phase 9D security review is in progress; the managed-container credential argv blocker is repaired locally.
+Phase 9D security review is in progress; managed-container deletion revocation is repaired locally.
 
 Last green commit:
-f4adbb16194d72cb41bb48f222b6db75ab607a84
+110cdf31d8c32fdbf8600212821eb4ec66626fef
 
 HEAD:
-f4adbb16194d72cb41bb48f222b6db75ab607a84 with the intended managed-container security repair uncommitted.
+110cdf31d8c32fdbf8600212821eb4ec66626fef with the intended managed-container deletion revocation repair uncommitted.
 
 origin/main:
-f4adbb16194d72cb41bb48f222b6db75ab607a84
+110cdf31d8c32fdbf8600212821eb4ec66626fef
 
 Working tree:
-Modified only for the focused managed-container credential transport repair, regression tests, and this execution-state update.
+Modified only for the focused managed-container deletion revocation repair, regression tests, and this execution-state update.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -33,7 +33,7 @@ node_modules tracking:
 Zero files under `node_modules/**` remain in the Git index. The local dependency tree was recreated with `npm.cmd ci` and remains ignored.
 
 Security review:
-In progress. Main-agent review confirmed that managed-container session credentials were placed in `docker run` argv. The focused repair passes values through the local Docker child environment or SSH stdin env-file while argv contains variable names only. Remaining domains and the required read-only subagent report are pending.
+In progress. Managed-container session credentials no longer appear in process argv after checkpoint `110cdf31d8c32fdbf8600212821eb4ec66626fef`. Main-agent review also confirmed that deletion left pairing credentials active and suppressed Docker cleanup failures; the local repair revokes the device, closes its authoritative session, propagates cleanup failure, and refuses to report registry deletion when runtime cleanup fails.
 
 Release gate:
 Phase 9B local release integrity, packaged Controller, and release gate pass after lockfile reinstall. Phase 9 final release checkpoint remains pending.
@@ -45,7 +45,7 @@ Known blockers:
 - None.
 
 Next exact action:
-Validate, commit, and push the managed-container credential argv repair, then continue independent verification of the remaining Phase 9D findings.
+Validate, commit, and push the managed-container deletion revocation repair, then continue independent verification of the remaining Phase 9D findings.
 
 Remaining MVP work:
 - Phase 9C through Phase 9F.

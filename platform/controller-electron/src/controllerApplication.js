@@ -100,8 +100,15 @@ export class ControllerApplicationService extends EventEmitter {
   }
   async deleteContainer({ containerId }) {
     const container = this.core.containers.getContainer(containerId);
+    if (container.deviceId) {
+      await this.revokeAgent({ deviceId: container.deviceId }).catch((error) => {
+        if (error?.code !== 'DEVICE_NOT_FOUND') throw error;
+      });
+    }
     const operation = await this.safeContainerOperation('delete', container);
-    const next = await this.core.containers.deleteContainer(containerId);
+    const next = operation.ok
+      ? await this.core.containers.deleteContainer(containerId)
+      : await this.core.containers.updateStatus(containerId, 'failed', { desiredState: 'deleted', lastError: operation.error });
     this.invalidate('containers', { containerId });
     return this.result({ container: next, operation });
   }

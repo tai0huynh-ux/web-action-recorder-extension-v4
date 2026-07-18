@@ -104,6 +104,21 @@ test('managed SSH Docker creation sends credentials through stdin instead of arg
   assert.equal(execCalls.some((call) => call.args.join(' ').includes('c'.repeat(20))), false);
 });
 
+test('managed Docker deletion propagates runtime cleanup failure', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: {
+      wss: { enabled: true, host: '127.0.0.1', port: 47651 },
+      containers: { enabled: true, runtime: 'local-docker', timeoutMs: 1000, hostLabel: 'local-docker' },
+    },
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'rm') throw new Error('runtime cleanup failed');
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await assert.rejects(() => adapter.delete({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } }), /cleanup failed/);
+});
+
 function fakeChildProcess() {
   const listeners = new Map();
   const stream = () => ({ on() {} });
