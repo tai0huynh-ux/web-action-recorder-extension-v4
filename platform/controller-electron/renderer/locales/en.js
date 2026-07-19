@@ -219,6 +219,7 @@ export default {
       delay: 'Delay',
       selector: 'Selector',
       input: 'Input',
+      step: 'Step',
       deleteAction: 'Delete step {name}',
       sampleNotice: 'Read-only fixture when no workflow is selected.',
     },

@@ -219,6 +219,7 @@ export default {
       delay: 'Delay',
       selector: 'Selector',
       input: 'Input',
+      step: 'Bước',
       deleteAction: 'Xóa bước {name}',
       sampleNotice: 'Fixture chỉ đọc khi chưa chọn workflow.',
     },

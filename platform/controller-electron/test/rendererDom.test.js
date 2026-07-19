@@ -187,6 +187,41 @@ test('workspace selected machine count updates', async () => {
   assert.ok(current.textContent.includes('Đã chọn 1 máy'));
 });
 
+test('workspace compact toolbar switches to the action graph pane', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, i18n.t('workspace.toolbar.graph'));
+
+  assert.equal(state.store.workspace.activePane, 'graph');
+  assert.ok(all(current, (node) => node.className.includes('graph-pane'))[0].className.includes('active-mobile-pane'));
+  assert.equal(all(current, (node) => node.className.includes('containers-pane'))[0].className.includes('active-mobile-pane'), false);
+});
+
+test('workspace action graph zoom, fit, reset, and node selection update renderer state', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, i18n.t('workspace.graph.zoomIn'));
+  assert.equal(state.store.workspace.graphViewport.scale, 1.1);
+  await clickButton(current, i18n.t('workspace.graph.fit'));
+  assert.ok(state.store.workspace.graphViewport.scale >= 0.5);
+  await clickButton(current, i18n.t('workspace.graph.reset'));
+  assert.deepEqual(state.store.workspace.graphViewport, { scale: 1, offsetX: 0, offsetY: 0 });
+
+  const node = all(current, (item) => item.className.includes('graph-node'))[0];
+  await node.click();
+  assert.equal(state.store.workspace.graphSelectedNodeId, 'sample-switch');
+  assert.ok(all(current, (item) => item.className.includes('graph-node'))[0].className.includes('selected'));
+});
+
 test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -797,6 +832,7 @@ function resetStore() {
     workspace: {
       selection: { selectedIds: new Set(), anchorId: null },
       activeInputMode: 'text',
+      activePane: 'containers',
       search: '',
       addContainerOpen: false,
       containerNamePrefix: '',
@@ -806,6 +842,9 @@ function resetStore() {
       containerPending: {},
       containerErrors: {},
       containerNetworkOpenId: '',
+      graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
+      graphViewportInitialized: false,
+      graphSelectedNodeId: '',
     },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },

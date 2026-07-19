@@ -33,10 +33,10 @@ function workspaceView(refresh) {
   const layout = clampWorkspaceLayout(store.settings?.workspace);
   const selected = selectedDevices(store.devices, store.workspace.selection);
   const root = el('section', { className: layout.graphCollapsed ? 'workspace-view graph-collapsed' : 'workspace-view', ariaLabel: t('navigation.workspace') }, [
-    workspaceMobileToolbar(),
-    containersPane(refresh),
-    inputPane(selected, refresh),
-    graphPane(refresh),
+    workspaceMobileToolbar(refresh),
+    containersPane(refresh, workspacePaneActive('containers')),
+    inputPane(selected, refresh, workspacePaneActive('input')),
+    graphPane(refresh, workspacePaneActive('graph')),
   ]);
   if (root.style?.setProperty) {
     root.style.setProperty('--workspace-left', `${layout.leftWidth}px`);
@@ -45,15 +45,33 @@ function workspaceView(refresh) {
   return root;
 }
 
-function workspaceMobileToolbar() {
+function workspaceMobileToolbar(refresh) {
   return el('div', { className: 'workspace-mobile-toolbar', role: 'toolbar', ariaLabel: t('navigation.workspace') }, [
-    button(t('workspace.toolbar.machines'), () => {}, { className: 'button compact' }),
-    button(t('workspace.toolbar.input'), () => {}, { className: 'button compact' }),
-    button(t('workspace.toolbar.graph'), () => {}, { className: 'button compact' }),
+    workspacePaneButton('containers', t('workspace.toolbar.machines'), refresh),
+    workspacePaneButton('input', t('workspace.toolbar.input'), refresh),
+    workspacePaneButton('graph', t('workspace.toolbar.graph'), refresh),
   ]);
 }
 
-function containersPane(refresh) {
+function workspacePaneButton(pane, label, refresh) {
+  const active = workspacePaneActive(pane);
+  const item = button(label, () => {
+    store.workspace.activePane = pane;
+    refresh();
+  }, { className: `button compact mobile-pane-switch${active ? ' active' : ''}` });
+  item.setAttribute('aria-pressed', String(active));
+  return item;
+}
+
+function workspacePaneActive(pane) {
+  return (store.workspace.activePane || 'containers') === pane;
+}
+
+function workspacePaneClass(baseClass, active) {
+  return `workspace-pane ${baseClass}${active ? ' active-mobile-pane' : ''}`;
+}
+
+function containersPane(refresh, active = false) {
   const devices = visibleWorkspaceDevices();
   const search = el('input', { type: 'search', placeholder: t('workspace.containers.search'), value: store.workspace.search, ariaLabel: t('workspace.containers.search') });
   search.addEventListener('input', () => {
@@ -61,7 +79,7 @@ function containersPane(refresh) {
     refresh();
   });
   const status = selectionStatus();
-  return el('aside', { className: 'workspace-pane containers-pane', ariaLabel: t('workspace.containers.title') }, [
+  return el('aside', { className: workspacePaneClass('containers-pane', active), ariaLabel: t('workspace.containers.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.containers.title') }),
@@ -429,8 +447,8 @@ function deviceCard(device, devices, index, refresh) {
   return card;
 }
 
-function inputPane(selected, refresh) {
-  return el('section', { className: 'workspace-pane input-pane', ariaLabel: t('workspace.input.title') }, [
+function inputPane(selected, refresh, active = false) {
+  return el('section', { className: workspacePaneClass('input-pane', active), ariaLabel: t('workspace.input.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.input.title') }),
@@ -656,14 +674,15 @@ function inputSummary(selected) {
   ]);
 }
 
-function graphPane(refresh) {
+function graphPane(refresh, active = false) {
   const layout = clampWorkspaceLayout(store.settings?.workspace);
   const toggle = button(layout.graphCollapsed ? t('workspace.graph.expand') : t('workspace.graph.collapse'), async () => {
     store.settings.workspace = { ...layout, graphCollapsed: !layout.graphCollapsed };
     await window.warController.settings.update({ workspace: store.settings.workspace });
     refresh();
   }, { className: 'button compact' });
-  return el('section', { className: 'workspace-pane graph-pane', ariaLabel: t('workspace.graph.title') }, [
+  const canvas = graphCanvas(refresh);
+  return el('section', { className: workspacePaneClass('graph-pane', active), ariaLabel: t('workspace.graph.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.graph.title') }),
@@ -672,8 +691,8 @@ function graphPane(refresh) {
       toggle,
     ]),
     graphResizeHandle(refresh),
-    graphToolbar(),
-    layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : graphCanvas(),
+    graphToolbar(canvas, refresh),
+    layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : canvas,
   ]);
 }
 
@@ -700,22 +719,43 @@ function graphResizeHandle(refresh) {
   return handle;
 }
 
-function graphToolbar() {
+function graphToolbar(canvas, refresh) {
+  const viewport = normalizeGraphViewport(store.workspace.graphViewport);
   return el('div', { className: 'graph-toolbar', role: 'toolbar', ariaLabel: t('workspace.graph.title') }, [
-    button('+', () => {}, { className: 'icon-button', disabled: false }),
-    button('-', () => {}, { className: 'icon-button', disabled: false }),
-    button(t('workspace.graph.fit'), () => {}, { className: 'button compact' }),
-    button(t('workspace.graph.reset'), () => {}, { className: 'button compact' }),
+    button(t('workspace.graph.zoomIn'), () => zoomGraphViewport(canvas, 0.1, refresh), { className: 'button compact' }),
+    button(t('workspace.graph.zoomOut'), () => zoomGraphViewport(canvas, -0.1, refresh), { className: 'button compact' }),
+    button(t('workspace.graph.fit'), () => fitGraphViewport(canvas, refresh), { className: 'button compact' }),
+    button(t('workspace.graph.reset'), () => resetGraphViewport(refresh), { className: 'button compact' }),
     button(t('workspace.graph.undo'), () => {}, { className: 'button compact', disabled: true }),
     button(t('workspace.graph.redo'), () => {}, { className: 'button compact', disabled: true }),
+    el('span', { className: 'graph-zoom-status', text: `${Math.round(viewport.scale * 100)}%` }),
   ]);
 }
 
-function graphCanvas() {
-  return el('div', { className: 'graph-canvas', tabIndex: 0, ariaLabel: t('workspace.graph.title') }, [
+function graphCanvas(refresh) {
+  const viewport = normalizeGraphViewport(store.workspace.graphViewport);
+  const stage = el('div', { className: 'graph-stage' }, [
     edgeLayer(),
-    ...WORKSPACE_SAMPLE_NODES.map((node) => graphNode(node)),
+    ...WORKSPACE_SAMPLE_NODES.map((node) => graphNode(node, refresh)),
   ]);
+  stage.style?.setProperty('--graph-scale', String(viewport.scale));
+  stage.style?.setProperty('--graph-offset-x', `${viewport.offsetX}px`);
+  stage.style?.setProperty('--graph-offset-y', `${viewport.offsetY}px`);
+  const canvas = el('div', { className: 'graph-canvas', tabIndex: 0, ariaLabel: t('workspace.graph.title') }, [stage]);
+  canvas.addEventListener('keydown', (event) => {
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomGraphViewport(canvas, 0.1, refresh);
+    } else if (event.key === '-') {
+      event.preventDefault();
+      zoomGraphViewport(canvas, -0.1, refresh);
+    } else if (event.key === '0') {
+      event.preventDefault();
+      resetGraphViewport(refresh);
+    }
+  });
+  scheduleInitialGraphFit(canvas, refresh);
+  return canvas;
 }
 
 function edgeLayer() {
@@ -725,22 +765,28 @@ function edgeLayer() {
   ]);
 }
 
-function graphNode(node) {
-  const item = el('article', { className: `graph-node ${node.type}` }, [
+function graphNode(node, refresh) {
+  const selected = store.workspace.graphSelectedNodeId === node.id;
+  const item = el('article', {
+    className: `graph-node ${node.type}${selected ? ' selected' : ''}`,
+    role: 'button',
+    tabIndex: 0,
+    ariaLabel: `${t('workspace.graph.step')} ${node.title}`,
+  }, [
     el('div', { className: 'graph-node-header' }, [
       el('strong', { text: `Bước ${node.title}` }),
-      button('×', () => {}, { className: 'node-delete', disabled: true }),
+      el('span', { className: 'node-delete', text: '×', title: t('workspace.graph.deleteAction', { name: node.title }) }),
       el('span', { className: 'origin-badge strong', text: t('workspace.containers.origin') }),
     ]),
     el('div', { className: 'graph-node-body' }, [
       el('span', { className: 'port input-port', text: '' }),
-      el('label', { className: 'delay-field' }, [
+      el('div', { className: 'delay-field' }, [
         el('span', { text: `${t('workspace.graph.delay')}:` }),
-        el('input', { type: 'number', value: node.delay, disabled: true, ariaLabel: t('workspace.graph.delay') }),
+        el('span', { className: 'node-delay-value', text: node.delay }),
         el('span', { text: 'ms' }),
       ]),
       el('span', { className: 'order-badge', text: node.badge }),
-      el('input', { type: 'text', value: node.body, disabled: true, ariaLabel: node.type === 'input' ? t('workspace.graph.input') : t('workspace.graph.selector') }),
+      el('div', { className: 'node-value', text: node.body }),
       el('span', { className: 'port output-port', text: '' }),
     ]),
   ]);
@@ -748,7 +794,80 @@ function graphNode(node) {
     item.style.setProperty('--node-x', `${node.x}px`);
     item.style.setProperty('--node-y', `${node.y}px`);
   }
+  item.addEventListener('click', () => selectGraphNode(node.id, refresh));
+  item.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    selectGraphNode(node.id, refresh);
+  });
   return item;
+}
+
+function selectGraphNode(nodeId, refresh) {
+  store.workspace.graphSelectedNodeId = nodeId;
+  refresh();
+}
+
+function normalizeGraphViewport(value = {}) {
+  const scale = Number(value.scale);
+  const offsetX = Number(value.offsetX);
+  const offsetY = Number(value.offsetY);
+  return {
+    scale: Number.isFinite(scale) ? Math.max(0.5, Math.min(1.6, scale)) : 1,
+    offsetX: Number.isFinite(offsetX) ? Math.max(-2000, Math.min(2000, offsetX)) : 0,
+    offsetY: Number.isFinite(offsetY) ? Math.max(-2000, Math.min(2000, offsetY)) : 0,
+  };
+}
+
+function zoomGraphViewport(canvas, delta, refresh) {
+  const current = normalizeGraphViewport(store.workspace.graphViewport);
+  const scale = Math.max(0.5, Math.min(1.6, Number((current.scale + delta).toFixed(2))));
+  const width = Number(canvas?.clientWidth) || 900;
+  const height = Number(canvas?.clientHeight) || 620;
+  const ratio = scale / current.scale;
+  store.workspace.graphViewport = {
+    scale,
+    offsetX: width / 2 - ((width / 2) - current.offsetX) * ratio,
+    offsetY: height / 2 - ((height / 2) - current.offsetY) * ratio,
+  };
+  store.workspace.graphViewportInitialized = true;
+  refresh();
+}
+
+function fitGraphViewport(canvas, refresh) {
+  const width = Math.max(320, Number(canvas?.clientWidth) || 900);
+  const height = Math.max(320, Number(canvas?.clientHeight) || 620);
+  const bounds = sampleGraphBounds();
+  const scale = Math.max(0.5, Math.min(1.4, Math.min((width - 48) / bounds.width, (height - 48) / bounds.height)));
+  store.workspace.graphViewport = {
+    scale,
+    offsetX: (width - bounds.width * scale) / 2 - bounds.left * scale,
+    offsetY: (height - bounds.height * scale) / 2 - bounds.top * scale,
+  };
+  store.workspace.graphViewportInitialized = true;
+  refresh();
+}
+
+function resetGraphViewport(refresh) {
+  store.workspace.graphViewport = { scale: 1, offsetX: 0, offsetY: 0 };
+  store.workspace.graphViewportInitialized = true;
+  refresh();
+}
+
+function scheduleInitialGraphFit(canvas, refresh) {
+  if (store.workspace.graphViewportInitialized || typeof globalThis.requestAnimationFrame !== 'function') return;
+  globalThis.requestAnimationFrame(() => {
+    if (store.workspace.graphViewportInitialized || !canvas?.clientWidth || !canvas?.clientHeight) return;
+    fitGraphViewport(canvas, refresh);
+  });
+}
+
+function sampleGraphBounds() {
+  const left = Math.min(...WORKSPACE_SAMPLE_NODES.map((node) => node.x));
+  const top = Math.min(...WORKSPACE_SAMPLE_NODES.map((node) => node.y));
+  const right = Math.max(...WORKSPACE_SAMPLE_NODES.map((node) => node.x + 360));
+  const bottom = Math.max(...WORKSPACE_SAMPLE_NODES.map((node) => node.y + 160));
+  return { left, top, width: right - left, height: bottom - top };
 }
 
 function overviewView(refresh) {

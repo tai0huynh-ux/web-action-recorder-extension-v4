@@ -11,6 +11,7 @@ export const store = {
   workspace: {
     selection: createWorkspaceSelection(),
     activeInputMode: 'text',
+    activePane: 'containers',
     search: '',
     addContainerOpen: false,
     containerNamePrefix: '',
@@ -20,6 +21,9 @@ export const store = {
     containerPending: {},
     containerErrors: {},
     containerNetworkOpenId: '',
+    graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
+    graphViewportInitialized: false,
+    graphSelectedNodeId: '',
   },
   bootstrap: null,
   runtime: null,
