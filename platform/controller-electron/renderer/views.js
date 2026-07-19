@@ -31,7 +31,7 @@ export function renderView(refresh) {
 
 function workspaceView(refresh) {
   const layout = clampWorkspaceLayout(store.settings?.workspace);
-  const selected = selectedDevices(store.devices, store.workspace.selection);
+  const selected = selectedDevices(allWorkspaceDevices(), store.workspace.selection);
   const root = el('section', { className: layout.graphCollapsed ? 'workspace-view graph-collapsed' : 'workspace-view', ariaLabel: t('navigation.workspace') }, [
     workspaceMobileToolbar(refresh),
     containersPane(refresh, workspacePaneActive('containers')),
@@ -92,8 +92,15 @@ function containersPane(refresh, active = false) {
     ]),
     search,
     el('div', { className: 'toolbar tight' }, [
-      button(t('workspace.containers.all'), () => {}, { className: 'button chip' }),
-      button(t('workspace.containers.filter'), () => {}, { className: 'button chip' }),
+      button(t('workspace.containers.all'), () => {
+        store.workspace.deviceFilter = 'all';
+        store.workspace.filterOpen = false;
+        refresh();
+      }, { className: `button chip${store.workspace.deviceFilter === 'all' ? ' active' : ''}` }),
+      button(t('workspace.containers.filter'), () => {
+        store.workspace.filterOpen = !store.workspace.filterOpen;
+        refresh();
+      }, { className: `button chip${store.workspace.filterOpen || store.workspace.deviceFilter !== 'all' ? ' active' : ''}` }),
       button(t('workspace.containers.selectAll'), () => {
         store.workspace.selection = reduceDeviceSelection(store.workspace.selection, devices, { type: 'selectAllVisible' });
         refresh();
@@ -103,10 +110,26 @@ function containersPane(refresh, active = false) {
         refresh();
       }, { className: 'button chip' }),
     ]),
+    store.workspace.filterOpen ? containerFilterPanel(refresh) : null,
     store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
     store.containers.length ? managedContainerActions(refresh) : null,
   ]);
+}
+
+function containerFilterPanel(refresh) {
+  const filter = el('select', { ariaLabel: t('workspace.containers.filter') }, [
+    el('option', { value: 'all', text: t('workspace.containers.filterAll') }),
+    el('option', { value: 'online', text: t('workspace.containers.filterOnline') }),
+    el('option', { value: 'offline', text: t('workspace.containers.filterOffline') }),
+    el('option', { value: 'containers', text: t('workspace.containers.filterContainers') }),
+  ]);
+  filter.value = store.workspace.deviceFilter || 'all';
+  filter.addEventListener('change', () => {
+    store.workspace.deviceFilter = filter.value;
+    refresh();
+  });
+  return el('div', { className: 'filter-panel' }, [field(t('workspace.containers.filter'), filter)]);
 }
 
 function addContainerForm(refresh) {
@@ -456,7 +479,7 @@ function inputPane(selected, refresh, active = false) {
       ]),
     ]),
     inputTabs(refresh),
-    inputModeContent(selected),
+    inputModeContent(selected, refresh),
     inputSummary(selected),
   ]);
 }
@@ -481,21 +504,31 @@ function inputTabs(refresh) {
 
 function visibleWorkspaceDevices() {
   const query = store.workspace.search.trim().toLowerCase();
-  const devices = [
+  const filter = store.workspace.deviceFilter || 'all';
+  return allWorkspaceDevices().filter((device) => {
+    const status = normalizeDeviceStatus(device);
+    if (filter === 'online' && status !== 'online') return false;
+    if (filter === 'offline' && status !== 'offline') return false;
+    if (filter === 'containers' && !device.managedContainer) return false;
+    if (!query) return true;
+    const text = [device.id, device.deviceId, device.displayName, device.name, device.status].filter(Boolean).join(' ').toLowerCase();
+    return text.includes(query);
+  });
+}
+
+function allWorkspaceDevices() {
+  return [
     ...store.devices,
     ...store.containers.map((container) => ({
       ...container,
       displayName: container.name,
+      status: isContainerAgentOnline(container) ? 'online' : 'offline',
       agentVersion: container.image,
       groupIds: [],
       lastSeenAt: container.updatedAt,
+      managedContainer: true,
     })),
   ];
-  if (!query) return devices;
-  return devices.filter((device) => {
-    const text = [device.id, device.deviceId, device.displayName, device.name, device.status].filter(Boolean).join(' ').toLowerCase();
-    return text.includes(query);
-  });
 }
 
 function selectionStatus() {
@@ -620,58 +653,136 @@ function safeError(result) {
   return `${result?.code || 'ERROR'}: ${result?.message || 'Request failed'}`.slice(0, 300);
 }
 
-function inputModeContent(selected) {
-  if (store.workspace.activeInputMode === 'grid') return gridInputPreview(selected);
-  if (store.workspace.activeInputMode === 'picker') return pickerInputPreview();
+function inputModeContent(selected, refresh) {
+  if (store.workspace.activeInputMode === 'grid') return gridInputEditor(selected, refresh);
+  if (store.workspace.activeInputMode === 'picker') return pickerInputEditor(selected, refresh);
   const textarea = el('textarea', {
     rows: 7,
     placeholder: 'group: 1\ndữ liệu ô 1|dữ liệu ô 2|dữ liệu ô 3 (máy 1)\ndữ liệu ô 1|dữ liệu ô 2|dữ liệu ô 3 (máy 2)',
+    value: store.workspace.inputDraft || '',
   });
+  const validation = el('p', { className: 'status', text: inputDraftValidation(store.workspace.inputDraft).message, ariaLive: 'polite' });
+  textarea.addEventListener('input', () => {
+    store.workspace.inputDraft = textarea.value;
+    const result = inputDraftValidation(textarea.value);
+    validation.className = result.ok ? 'status' : 'status error';
+    validation.textContent = result.message;
+  });
+  textarea.addEventListener('change', refresh);
   return el('div', { className: 'input-mode' }, [
     field(t('workspace.input.textareaLabel'), textarea),
     el('p', { className: 'muted', text: `${t('workspace.input.separator')}: |` }),
-    el('p', { className: 'muted', text: t('workspace.input.validation') }),
+    validation,
   ]);
 }
 
-function gridInputPreview(selected) {
-  const rows = selected.length ? selected : store.devices.slice(0, 3);
+function gridInputEditor(selected, refresh) {
+  if (!selected.length) return el('div', { className: 'input-mode' }, [
+    el('p', { className: 'empty-state', text: t('workspace.input.chooseMachine') }),
+  ]);
+  const header = el('thead', {}, [el('tr', {}, [
+    el('th', { text: t('workspace.input.machine') }),
+    el('th', { text: t('workspace.input.cell1') }),
+    el('th', { text: t('workspace.input.cell2') }),
+    el('th', { text: t('workspace.input.cell3') }),
+  ])]);
+  const body = el('tbody', {}, selected.map((device, rowIndex) => {
+    const deviceId = device.id || device.deviceId;
+    const values = gridDraftValues(deviceId);
+    return el('tr', {}, [
+      el('td', { text: device.displayName || device.name || deviceId || `${t('workspace.input.machine')} ${rowIndex + 1}` }),
+      ...values.map((value, cellIndex) => {
+        const input = el('input', {
+          type: 'text',
+          value,
+          ariaLabel: `${t('workspace.input.machine')} ${rowIndex + 1}, ${t(`workspace.input.cell${cellIndex + 1}`)}`,
+        });
+        input.addEventListener('input', () => updateGridDraft(deviceId, cellIndex, input.value));
+        input.addEventListener('change', refresh);
+        return el('td', {}, [input]);
+      }),
+    ]);
+  }));
   return el('div', { className: 'input-mode' }, [
     el('div', { className: 'group-chip', text: t('workspace.input.group') }),
-    table([
-      { key: 'machine', label: t('workspace.input.machine') },
-      { key: 'cell1', label: t('workspace.input.cell1') },
-      { key: 'cell2', label: t('workspace.input.cell2') },
-      { key: 'cell3', label: t('workspace.input.cell3') },
-    ], rows.map((device, index) => ({
-      machine: device.displayName || device.name || device.deviceId || `${t('workspace.input.machine')} ${index + 1}`,
-      cell1: `${t('workspace.input.cell1')} ${index + 1}`,
-      cell2: `${t('workspace.input.cell2')} ${index + 1}`,
-      cell3: `${t('workspace.input.cell3')} ${index + 1}`,
-    }))),
+    el('div', { className: 'table-scroll' }, [el('table', { className: 'data-table editable-grid' }, [header, body])]),
   ]);
 }
 
-function pickerInputPreview() {
+function pickerInputEditor(selected, refresh) {
+  const picked = new Set(store.workspace.pickedCells || []);
   return el('div', { className: 'input-mode picker-mode' }, [
-    el('p', { text: t('workspace.input.chooseMachine') }),
-    button(t('workspace.input.chooseCell'), () => {}, { disabled: true }),
-    el('p', { text: t('workspace.input.pickedCount') }),
-    el('p', { className: 'muted', text: t('workspace.input.pickerUnavailable') }),
+    el('p', { text: selected.length ? t('workspace.input.chooseCellHelp') : t('workspace.input.chooseMachine') }),
+    el('div', { className: 'toolbar tight' }, [1, 2, 3].map((cell) => button(t(`workspace.input.cell${cell}`), () => {
+      if (picked.has(cell)) picked.delete(cell);
+      else picked.add(cell);
+      store.workspace.pickedCells = [...picked].sort();
+      refresh();
+    }, { className: `button chip${picked.has(cell) ? ' active' : ''}`, disabled: !selected.length }))),
+    el('p', { text: t('workspace.input.pickedCount', { count: picked.size }) }),
+    el('p', { className: 'muted', text: t('workspace.input.pickerLocalHelp') }),
   ]);
 }
 
 function inputSummary(selected) {
+  const stats = workspaceInputStats(selected);
   return el('dl', { className: 'metric-grid compact-grid' }, [
     el('dt', { text: t('workspace.input.selectedMachines') }),
     el('dd', { text: selected.length }),
     el('dt', { text: t('workspace.input.groups') }),
-    el('dd', { text: 1 }),
+    el('dd', { text: stats.groups }),
     el('dt', { text: t('workspace.input.targets') }),
-    el('dd', { text: 3 }),
+    el('dd', { text: stats.targets }),
     el('dt', { text: t('workspace.input.totalValues') }),
-    el('dd', { text: selected.length * 3 }),
+    el('dd', { text: stats.totalValues }),
   ]);
+}
+
+function inputDraftValidation(value) {
+  const stats = inputDraftStats(value);
+  if (!String(value || '').trim()) return { ok: true, message: t('workspace.input.validationEmpty'), stats };
+  if (stats.invalidRows.length) return {
+    ok: false,
+    message: t('workspace.input.validationMismatch', { rows: stats.invalidRows.join(', ') }),
+    stats,
+  };
+  return { ok: true, message: t('workspace.input.validationValid', { rows: stats.rows, values: stats.totalValues }), stats };
+}
+
+function inputDraftStats(value) {
+  const lines = String(value || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const groupHeaders = lines.filter((line) => /^group\s*:/i.test(line));
+  const rows = lines.filter((line) => !/^group\s*:/i.test(line)).map((line) => line.split('|').map((item) => item.trim()));
+  const targets = rows.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+  const invalidRows = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.length !== targets).map(({ index }) => index + 1);
+  return {
+    groups: groupHeaders.length || (rows.length ? 1 : 0),
+    rows: rows.length,
+    targets,
+    totalValues: rows.reduce((total, row) => total + row.filter(Boolean).length, 0),
+    invalidRows,
+  };
+}
+
+function gridDraftValues(deviceId) {
+  const values = store.workspace.inputGrid?.[deviceId];
+  return [0, 1, 2].map((index) => String(values?.[index] || ''));
+}
+
+function updateGridDraft(deviceId, cellIndex, value) {
+  const values = gridDraftValues(deviceId);
+  values[cellIndex] = value;
+  store.workspace.inputGrid = { ...store.workspace.inputGrid, [deviceId]: values };
+}
+
+function workspaceInputStats(selected) {
+  if (store.workspace.activeInputMode === 'text') return inputDraftStats(store.workspace.inputDraft);
+  if (store.workspace.activeInputMode === 'picker') {
+    const targets = (store.workspace.pickedCells || []).length;
+    return { groups: selected.length ? 1 : 0, targets, totalValues: selected.length * targets };
+  }
+  const values = selected.flatMap((device) => gridDraftValues(device.id || device.deviceId));
+  return { groups: selected.length ? 1 : 0, targets: selected.length ? 3 : 0, totalValues: values.filter(Boolean).length };
 }
 
 function graphPane(refresh, active = false) {
@@ -681,17 +792,18 @@ function graphPane(refresh, active = false) {
     await window.warController.settings.update({ workspace: store.settings.workspace });
     refresh();
   }, { className: 'button compact' });
-  const canvas = graphCanvas(refresh);
+  const nodes = workspaceGraphNodes();
+  const canvas = graphCanvas(nodes, refresh);
   return el('section', { className: workspacePaneClass('graph-pane', active), ariaLabel: t('workspace.graph.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.graph.title') }),
-        el('p', { className: 'muted', text: t('workspace.graph.sampleNotice') }),
+        el('p', { className: 'muted', text: t('workspace.graph.draftNotice') }),
       ]),
       toggle,
     ]),
     graphResizeHandle(refresh),
-    graphToolbar(canvas, refresh),
+    graphToolbar(canvas, nodes, refresh),
     layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : canvas,
   ]);
 }
@@ -719,24 +831,26 @@ function graphResizeHandle(refresh) {
   return handle;
 }
 
-function graphToolbar(canvas, refresh) {
+function graphToolbar(canvas, nodes, refresh) {
   const viewport = normalizeGraphViewport(store.workspace.graphViewport);
   return el('div', { className: 'graph-toolbar', role: 'toolbar', ariaLabel: t('workspace.graph.title') }, [
+    button(t('workspace.graph.addStep'), () => addWorkspaceGraphNode(refresh), { className: 'button compact primary' }),
     button(t('workspace.graph.zoomIn'), () => zoomGraphViewport(canvas, 0.1, refresh), { className: 'button compact' }),
     button(t('workspace.graph.zoomOut'), () => zoomGraphViewport(canvas, -0.1, refresh), { className: 'button compact' }),
-    button(t('workspace.graph.fit'), () => fitGraphViewport(canvas, refresh), { className: 'button compact' }),
+    button(t('workspace.graph.fit'), () => fitGraphViewport(canvas, refresh, nodes), { className: 'button compact' }),
     button(t('workspace.graph.reset'), () => resetGraphViewport(refresh), { className: 'button compact' }),
-    button(t('workspace.graph.undo'), () => {}, { className: 'button compact', disabled: true }),
-    button(t('workspace.graph.redo'), () => {}, { className: 'button compact', disabled: true }),
+    button(t('workspace.graph.restore'), () => restoreWorkspaceGraph(refresh), { className: 'button compact' }),
+    button(t('workspace.graph.undo'), () => undoWorkspaceGraph(refresh), { className: 'button compact', disabled: !store.workspace.graphHistory.length }),
+    button(t('workspace.graph.redo'), () => redoWorkspaceGraph(refresh), { className: 'button compact', disabled: !store.workspace.graphFuture.length }),
     el('span', { className: 'graph-zoom-status', text: `${Math.round(viewport.scale * 100)}%` }),
   ]);
 }
 
-function graphCanvas(refresh) {
+function graphCanvas(nodes, refresh) {
   const viewport = normalizeGraphViewport(store.workspace.graphViewport);
   const stage = el('div', { className: 'graph-stage' }, [
-    edgeLayer(),
-    ...WORKSPACE_SAMPLE_NODES.map((node) => graphNode(node, refresh)),
+    edgeLayer(nodes),
+    ...nodes.map((node) => graphNode(node, refresh)),
   ]);
   stage.style?.setProperty('--graph-scale', String(viewport.scale));
   stage.style?.setProperty('--graph-offset-x', `${viewport.offsetX}px`);
@@ -754,39 +868,55 @@ function graphCanvas(refresh) {
       resetGraphViewport(refresh);
     }
   });
-  scheduleInitialGraphFit(canvas, refresh);
+  scheduleInitialGraphFit(canvas, refresh, nodes);
   return canvas;
 }
 
-function edgeLayer() {
-  return el('div', { className: 'graph-edges', ariaLabel: '' }, [
-    el('span', { className: 'graph-edge edge-one', text: '' }),
-    el('span', { className: 'graph-edge edge-two', text: '' }),
-  ]);
+function edgeLayer(nodes) {
+  const edges = [];
+  if (nodes.length >= 2) edges.push(el('span', { className: 'graph-edge edge-one', text: '' }));
+  if (nodes.length >= 3) edges.push(el('span', { className: 'graph-edge edge-two', text: '' }));
+  return el('div', { className: 'graph-edges', ariaLabel: '' }, edges);
 }
 
 function graphNode(node, refresh) {
   const selected = store.workspace.graphSelectedNodeId === node.id;
+  const title = el('input', { type: 'text', value: node.title, ariaLabel: t('workspace.graph.stepName') });
+  const delay = el('input', { type: 'number', value: node.delay, min: 0, max: 3600000, step: 50, ariaLabel: t('workspace.graph.delay') });
+  const body = el('input', { type: 'text', value: node.body, ariaLabel: t('workspace.graph.body') });
+  const removeLabel = t('workspace.graph.deleteAction', { name: node.title });
+  const remove = button('×', (event) => {
+    event.stopPropagation?.();
+    removeWorkspaceGraphNode(node.id, refresh);
+  }, { className: 'node-delete' });
+  remove.title = removeLabel;
+  remove.setAttribute('aria-label', removeLabel);
+  for (const control of [title, delay, body, remove]) {
+    control.addEventListener('click', (event) => event.stopPropagation?.());
+  }
+  title.addEventListener('change', () => updateWorkspaceGraphNode(node.id, { title: title.value.trim() || node.title }, refresh));
+  delay.addEventListener('change', () => updateWorkspaceGraphNode(node.id, { delay: normalizeGraphDelay(delay.value) }, refresh));
+  body.addEventListener('change', () => updateWorkspaceGraphNode(node.id, { body: body.value }, refresh));
   const item = el('article', {
     className: `graph-node ${node.type}${selected ? ' selected' : ''}`,
-    role: 'button',
+    role: 'group',
     tabIndex: 0,
     ariaLabel: `${t('workspace.graph.step')} ${node.title}`,
   }, [
     el('div', { className: 'graph-node-header' }, [
-      el('strong', { text: `Bước ${node.title}` }),
-      el('span', { className: 'node-delete', text: '×', title: t('workspace.graph.deleteAction', { name: node.title }) }),
+      title,
+      remove,
       el('span', { className: 'origin-badge strong', text: t('workspace.containers.origin') }),
     ]),
     el('div', { className: 'graph-node-body' }, [
       el('span', { className: 'port input-port', text: '' }),
       el('div', { className: 'delay-field' }, [
         el('span', { text: `${t('workspace.graph.delay')}:` }),
-        el('span', { className: 'node-delay-value', text: node.delay }),
+        delay,
         el('span', { text: 'ms' }),
       ]),
       el('span', { className: 'order-badge', text: node.badge }),
-      el('div', { className: 'node-value', text: node.body }),
+      body,
       el('span', { className: 'port output-port', text: '' }),
     ]),
   ]);
@@ -796,11 +926,99 @@ function graphNode(node, refresh) {
   }
   item.addEventListener('click', () => selectGraphNode(node.id, refresh));
   item.addEventListener('keydown', (event) => {
+    if (event.target !== item) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     selectGraphNode(node.id, refresh);
   });
   return item;
+}
+
+function workspaceGraphNodes() {
+  const nodes = Array.isArray(store.workspace.graphDraftNodes) ? store.workspace.graphDraftNodes : [];
+  return nodes.map((node, index) => ({ ...node, badge: `${index + 1} : group 1` }));
+}
+
+function graphSnapshot(nodes = workspaceGraphNodes()) {
+  return nodes.map((node) => ({ ...node }));
+}
+
+function commitWorkspaceGraph(nextNodes, refresh) {
+  const current = graphSnapshot();
+  const next = graphSnapshot(nextNodes);
+  if (JSON.stringify(current) === JSON.stringify(next)) return;
+  store.workspace.graphHistory = [...store.workspace.graphHistory.slice(-49), current];
+  store.workspace.graphFuture = [];
+  store.workspace.graphDraftNodes = next;
+  if (!next.some((node) => node.id === store.workspace.graphSelectedNodeId)) {
+    store.workspace.graphSelectedNodeId = next[0]?.id || '';
+  }
+  refresh();
+}
+
+function updateWorkspaceGraphNode(nodeId, patch, refresh) {
+  commitWorkspaceGraph(workspaceGraphNodes().map((node) => node.id === nodeId ? { ...node, ...patch } : node), refresh);
+}
+
+function removeWorkspaceGraphNode(nodeId, refresh) {
+  commitWorkspaceGraph(workspaceGraphNodes().filter((node) => node.id !== nodeId), refresh);
+}
+
+function addWorkspaceGraphNode(refresh) {
+  const nodes = workspaceGraphNodes();
+  let sequence = nodes.length + 1;
+  while (nodes.some((node) => node.id === `draft-step-${sequence}`)) sequence += 1;
+  const column = nodes.length % 3;
+  const row = Math.floor(nodes.length / 3);
+  const node = {
+    id: `draft-step-${sequence}`,
+    type: 'input',
+    title: t('workspace.graph.newStep', { count: sequence }),
+    delay: 250,
+    body: t('workspace.graph.newStepBody'),
+    badge: '',
+    x: 110 + column * 410,
+    y: 54 + row * 220,
+  };
+  store.workspace.graphSelectedNodeId = node.id;
+  commitWorkspaceGraph([...nodes, node], refresh);
+}
+
+function restoreWorkspaceGraph(refresh) {
+  commitWorkspaceGraph(WORKSPACE_SAMPLE_NODES, refresh);
+}
+
+function undoWorkspaceGraph(refresh) {
+  if (!store.workspace.graphHistory.length) return;
+  const history = [...store.workspace.graphHistory];
+  const previous = history.pop();
+  store.workspace.graphFuture = [graphSnapshot(), ...store.workspace.graphFuture].slice(0, 50);
+  store.workspace.graphHistory = history;
+  store.workspace.graphDraftNodes = graphSnapshot(previous);
+  reconcileGraphSelection(store.workspace.graphDraftNodes);
+  refresh();
+}
+
+function redoWorkspaceGraph(refresh) {
+  if (!store.workspace.graphFuture.length) return;
+  const [next, ...future] = store.workspace.graphFuture;
+  store.workspace.graphHistory = [...store.workspace.graphHistory.slice(-49), graphSnapshot()];
+  store.workspace.graphFuture = future;
+  store.workspace.graphDraftNodes = graphSnapshot(next);
+  reconcileGraphSelection(store.workspace.graphDraftNodes);
+  refresh();
+}
+
+function reconcileGraphSelection(nodes) {
+  if (!nodes.some((node) => node.id === store.workspace.graphSelectedNodeId)) {
+    store.workspace.graphSelectedNodeId = nodes[0]?.id || '';
+  }
+}
+
+function normalizeGraphDelay(value) {
+  const delay = Number(value);
+  if (!Number.isFinite(delay)) return 0;
+  return Math.max(0, Math.min(3600000, Math.round(delay)));
 }
 
 function selectGraphNode(nodeId, refresh) {
@@ -834,10 +1052,10 @@ function zoomGraphViewport(canvas, delta, refresh) {
   refresh();
 }
 
-function fitGraphViewport(canvas, refresh) {
+function fitGraphViewport(canvas, refresh, nodes = workspaceGraphNodes()) {
   const width = Math.max(320, Number(canvas?.clientWidth) || 900);
   const height = Math.max(320, Number(canvas?.clientHeight) || 620);
-  const bounds = sampleGraphBounds();
+  const bounds = sampleGraphBounds(nodes);
   const scale = Math.max(0.5, Math.min(1.4, Math.min((width - 48) / bounds.width, (height - 48) / bounds.height)));
   store.workspace.graphViewport = {
     scale,
@@ -854,19 +1072,20 @@ function resetGraphViewport(refresh) {
   refresh();
 }
 
-function scheduleInitialGraphFit(canvas, refresh) {
+function scheduleInitialGraphFit(canvas, refresh, nodes) {
   if (store.workspace.graphViewportInitialized || typeof globalThis.requestAnimationFrame !== 'function') return;
   globalThis.requestAnimationFrame(() => {
     if (store.workspace.graphViewportInitialized || !canvas?.clientWidth || !canvas?.clientHeight) return;
-    fitGraphViewport(canvas, refresh);
+    fitGraphViewport(canvas, refresh, nodes);
   });
 }
 
-function sampleGraphBounds() {
-  const left = Math.min(...WORKSPACE_SAMPLE_NODES.map((node) => node.x));
-  const top = Math.min(...WORKSPACE_SAMPLE_NODES.map((node) => node.y));
-  const right = Math.max(...WORKSPACE_SAMPLE_NODES.map((node) => node.x + 360));
-  const bottom = Math.max(...WORKSPACE_SAMPLE_NODES.map((node) => node.y + 160));
+function sampleGraphBounds(nodes = workspaceGraphNodes()) {
+  if (!nodes.length) return { left: 0, top: 0, width: 360, height: 160 };
+  const left = Math.min(...nodes.map((node) => node.x));
+  const top = Math.min(...nodes.map((node) => node.y));
+  const right = Math.max(...nodes.map((node) => node.x + 360));
+  const bottom = Math.max(...nodes.map((node) => node.y + 160));
   return { left, top, width: right - left, height: bottom - top };
 }
 

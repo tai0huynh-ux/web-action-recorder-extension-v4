@@ -94,6 +94,7 @@ const dom = await import('../renderer/dom.js');
 const i18n = await import('../renderer/i18n.js');
 const state = await import('../renderer/state.js');
 const views = await import('../renderer/views.js');
+const workspaceState = await import('../renderer/workspaceState.js');
 
 test('button created with text retains visible text', () => {
   const node = dom.button('Create', () => {});
@@ -187,6 +188,54 @@ test('workspace selected machine count updates', async () => {
   assert.ok(current.textContent.includes('Đã chọn 1 máy'));
 });
 
+test('workspace device filter changes the visible device list', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.devices = [deviceFixture('dev-online', 'Online'), { ...deviceFixture('dev-offline', 'Offline'), status: 'offline' }];
+  state.store.containers = [containerFixture()];
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, i18n.t('workspace.containers.filter'));
+  const filter = all(current, (node) => node.localName === 'select' && accessibleName(node) === i18n.t('workspace.containers.filter'))[0];
+  filter.value = 'containers';
+  await fire(filter, 'change');
+
+  const cards = all(current, (node) => node.className.includes('device-card') && !node.className.includes('managed-container'));
+  assert.equal(cards.length, 1);
+  assert.ok(cards[0].textContent.includes('Agent One'));
+});
+
+test('workspace text, grid, and cell picker controls retain editable draft state', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.devices = [deviceFixture('dev-a', 'Máy 1')];
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, all(current, (node) => node.className.includes('device-card'))[0].textContent);
+
+  const textarea = first(current, 'textarea');
+  textarea.value = 'a|b\nc';
+  await fire(textarea, 'input');
+  assert.equal(state.store.workspace.inputDraft, 'a|b\nc');
+  assert.ok(current.textContent.includes(i18n.t('workspace.input.validationMismatch', { rows: '2' })));
+
+  await clickButton(current, i18n.t('workspace.input.grid'));
+  const gridInput = all(current, (node) => node.localName === 'input' && node.getAttribute('aria-label').includes(i18n.t('workspace.input.cell1')))[0];
+  gridInput.value = 'grid value';
+  await fire(gridInput, 'input');
+  await fire(gridInput, 'change');
+  assert.equal(state.store.workspace.inputGrid['dev-a'][0], 'grid value');
+  assert.ok(all(current, (node) => node.localName === 'input').some((node) => node.value === 'grid value'));
+
+  await clickButton(current, i18n.t('workspace.input.picker'));
+  await clickButton(current, i18n.t('workspace.input.cell1'));
+  assert.deepEqual(state.store.workspace.pickedCells, [1]);
+  assert.ok(current.textContent.includes(i18n.t('workspace.input.pickedCount', { count: 1 })));
+});
+
 test('workspace compact toolbar switches to the action graph pane', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -220,6 +269,31 @@ test('workspace action graph zoom, fit, reset, and node selection update rendere
   await node.click();
   assert.equal(state.store.workspace.graphSelectedNodeId, 'sample-switch');
   assert.ok(all(current, (item) => item.className.includes('graph-node'))[0].className.includes('selected'));
+});
+
+test('workspace action graph supports edit, delete, undo, redo, add, and restore', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  const title = all(current, (node) => node.localName === 'input' && node.getAttribute('aria-label') === i18n.t('workspace.graph.stepName'))[0];
+  title.value = 'open page';
+  await fire(title, 'change');
+  assert.equal(state.store.workspace.graphDraftNodes[0].title, 'open page');
+
+  await all(current, (node) => node.localName === 'button' && node.className === 'node-delete')[0].click();
+  assert.equal(state.store.workspace.graphDraftNodes.length, 2);
+  await clickButton(current, i18n.t('workspace.graph.undo'));
+  assert.equal(state.store.workspace.graphDraftNodes.length, 3);
+  await clickButton(current, i18n.t('workspace.graph.redo'));
+  assert.equal(state.store.workspace.graphDraftNodes.length, 2);
+  await clickButton(current, i18n.t('workspace.graph.addStep'));
+  assert.equal(state.store.workspace.graphDraftNodes.length, 3);
+  await clickButton(current, i18n.t('workspace.graph.restore'));
+  assert.deepEqual(state.store.workspace.graphDraftNodes.map((node) => node.id), workspaceState.WORKSPACE_SAMPLE_NODES.map((node) => node.id));
 });
 
 test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
@@ -834,6 +908,11 @@ function resetStore() {
       activeInputMode: 'text',
       activePane: 'containers',
       search: '',
+      deviceFilter: 'all',
+      filterOpen: false,
+      inputDraft: '',
+      inputGrid: {},
+      pickedCells: [],
       addContainerOpen: false,
       containerNamePrefix: '',
       containerNameSequence: null,
@@ -845,6 +924,9 @@ function resetStore() {
       graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
       graphViewportInitialized: false,
       graphSelectedNodeId: '',
+      graphDraftNodes: workspaceState.WORKSPACE_SAMPLE_NODES.map((node) => ({ ...node })),
+      graphHistory: [],
+      graphFuture: [],
     },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },

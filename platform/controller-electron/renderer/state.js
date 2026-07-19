@@ -1,5 +1,5 @@
 import { t } from './i18n.js';
-import { clampWorkspaceLayout, createWorkspaceSelection } from './workspaceState.js';
+import { clampWorkspaceLayout, createWorkspaceSelection, WORKSPACE_SAMPLE_NODES } from './workspaceState.js';
 
 const api = window.warController;
 
@@ -13,6 +13,11 @@ export const store = {
     activeInputMode: 'text',
     activePane: 'containers',
     search: '',
+    deviceFilter: 'all',
+    filterOpen: false,
+    inputDraft: '',
+    inputGrid: {},
+    pickedCells: [],
     addContainerOpen: false,
     containerNamePrefix: '',
     containerNameSequence: null,
@@ -24,6 +29,9 @@ export const store = {
     graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
     graphViewportInitialized: false,
     graphSelectedNodeId: '',
+    graphDraftNodes: WORKSPACE_SAMPLE_NODES.map((node) => ({ ...node })),
+    graphHistory: [],
+    graphFuture: [],
   },
   bootstrap: null,
   runtime: null,

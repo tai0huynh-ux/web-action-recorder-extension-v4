@@ -50,6 +50,11 @@ test('renderer styles do not import remote assets', () => {
   }
 });
 
+test('workspace controls do not use empty click handlers', () => {
+  const source = fs.readFileSync(path.join(rendererRoot, 'views.js'), 'utf8');
+  assert.doesNotMatch(source, /\(\)\s*=>\s*\{\s*\}/);
+});
+
 function listFiles(root, extension) {
   return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(root, entry.name);
