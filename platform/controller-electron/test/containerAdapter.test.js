@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { createDockerContainerAdapter } from '../src/containerAdapter.js';
 
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
@@ -14,7 +15,8 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
     execFileImpl: async (file, args, options) => {
       execCalls.push({ file, args, options });
       if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection())}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection())}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
@@ -52,7 +54,7 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(JSON.stringify(result).includes('cccc'), false);
   assert.equal(result.runtime.privileged, false);
   assert.equal(result.runtime.nonRootUser, 'war');
-  assert.equal(result.runtime.networkMode, 'bridge');
+  assert.equal(result.runtime.networkMode, ipv4NetworkName());
   assert.equal(result.runtime.controlPort, 49000);
 });
 
@@ -71,7 +73,8 @@ test('managed Docker adapter rejects unsafe measured runtime state', async () =>
     config: managedConfig('local-docker'),
     execFileImpl: async (_file, args) => {
       if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection({ HostConfig: { Privileged: true } }))}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection({ HostConfig: { Privileged: true } }))}\n`, stderr: '' };
       return { stdout: '', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
@@ -85,13 +88,62 @@ test('managed Docker adapter rejects altered measured seccomp policy', async () 
     config: managedConfig('local-docker'),
     execFileImpl: async (_file, args) => {
       if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(safeInspection({ HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', 'seccomp={"defaultAction":"SCMP_ACT_ALLOW"}'] } }))}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection({ HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', 'seccomp={"defaultAction":"SCMP_ACT_ALLOW"}'] } }))}\n`, stderr: '' };
       return { stdout: '', stderr: '' };
     },
     spawnImpl: fakeSpawn([]),
   });
 
   await assert.rejects(() => adapter.create(container()), /security policy failed/);
+});
+
+test('managed Docker adapter creates an IPv6 network with a stable suffix and keeps IPv4 toggle explicit', async () => {
+  const execCalls = [];
+  let ipv4NetworkNameSeen = '';
+  let ipv6NetworkName = '';
+  const adapter = createDockerContainerAdapter({
+    config: {
+      ...managedConfig('local-docker'),
+      containers: { ...managedConfig('local-docker').containers, ipv6Interface: 'eth0', ipv6Driver: 'macvlan' },
+    },
+    execFileImpl: async (file, args) => {
+      execCalls.push({ file, args });
+      if (file === 'ip') return { stdout: JSON.stringify([{ addr_info: [{ family: 'inet6', scope: 'global', prefixlen: 64, local: '2001:db8:1:2::10' }] }]), stderr: '' };
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'Error: No such network' });
+      if (args[0] === 'network' && args[1] === 'create') {
+        if (args.includes('macvlan')) ipv6NetworkName = args.at(-1);
+        else ipv4NetworkNameSeen = args.at(-1);
+        return { stdout: `${args.at(-1)}\n`, stderr: '' };
+      }
+      if (args[0] === 'inspect') {
+        return { stdout: `${JSON.stringify(safeInspection({ NetworkSettings: { Networks: {
+          [ipv4NetworkNameSeen]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 },
+          [ipv6NetworkName]: { GlobalIPv6Address: '2001:db8:1:2:a8bb:ccff:fedd:eeff', GlobalIPv6PrefixLen: 64 },
+        } }, HostConfig: { NetworkMode: ipv4NetworkNameSeen } }))}\n`, stderr: '' };
+      }
+      return { stdout: 'ok\n', stderr: '' };
+    },
+    spawnImpl: fakeSpawn([]),
+  });
+
+  const result = await adapter.create(container({
+    credential: 'c'.repeat(43),
+    runtime: { ipv4Enabled: true, ipv6Enabled: true, ipv6Suffix: 'a8bb:ccff:fedd:eeff' },
+  }));
+  const run = execCalls.find((call) => call.args[0] === 'run' && call.args.includes('--name'));
+  const networkCreate = execCalls.find((call) => call.args[0] === 'network' && call.args[1] === 'create' && call.args.includes('macvlan'));
+  assert.equal(result.runtime.ipv6Address, '2001:db8:1:2:a8bb:ccff:fedd:eeff');
+  assert.equal(result.runtime.ipv6Prefix, '2001:db8:1:2::/64');
+  assert.ok(run.args.some((arg) => arg === `name=${ipv4NetworkNameSeen}`));
+  assert.ok(run.args.some((arg) => arg === `name=${ipv6NetworkName},ip6=2001:db8:1:2:a8bb:ccff:fedd:eeff,mac-address=aa:bb:cc:dd:ee:ff`));
+  assert.equal(networkCreate.args.includes('--ipv4=false'), true);
+  assert.equal(networkCreate.args.includes('--driver'), true);
+  assert.equal(networkCreate.args.includes('macvlan'), true);
+  assert.equal(networkCreate.args.includes('--opt') && networkCreate.args.includes('parent=eth0'), true);
+  assert.equal(networkCreate.args.includes('--ipv6'), true);
+  assert.equal(networkCreate.args.includes('--subnet') && networkCreate.args.includes('2001:db8:1:2::/64'), true);
 });
 
 test('managed Docker adapter uses bounded SSH Docker commands', async () => {
@@ -129,7 +181,8 @@ test('managed SSH Docker creation streams the credential separately from safe en
     execFileImpl: async (file, args) => {
       execCalls.push({ file, args });
       if (args.at(-1)?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args.at(-1)?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
+      if (args.at(-1)?.includes("'network' 'inspect'")) throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+      if (args.at(-1)?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(managedIpv4Inspection(remoteSecurityOptions()))}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
@@ -178,13 +231,13 @@ function managedConfig(runtime) {
   };
 }
 
-function container({ credential = 'c'.repeat(43), image = 'war-browser-agent:phase1' } = {}) {
+function container({ credential = 'c'.repeat(43), image = 'war-browser-agent:phase1', runtime = {} } = {}) {
   return {
     id: 'container-1',
     name: 'Agent One',
     image,
     deviceId: 'managed-device-1',
-    runtime: { dockerName: 'war-agent-one' },
+    runtime: { dockerName: 'war-agent-one', ...runtime },
     provisioning: { credential },
   };
 }
@@ -213,11 +266,27 @@ function safeInspection(overrides = {}) {
     ...overrides,
     Config: { ...base.Config, ...(overrides.Config || {}) },
     HostConfig: { ...base.HostConfig, ...(overrides.HostConfig || {}) },
+    NetworkSettings: {
+      Networks: { bridge: { GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 } },
+      ...(overrides.NetworkSettings || {}),
+    },
   };
 }
 
 function remoteSecurityOptions() {
   return { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION] } };
+}
+
+function ipv4NetworkName() {
+  return `war-managed-ipv4-${crypto.createHash('sha256').update('war-agent-one').digest('hex').slice(0, 12)}`;
+}
+
+function managedIpv4Inspection(overrides = {}) {
+  return safeInspection({
+    ...overrides,
+    HostConfig: { NetworkMode: ipv4NetworkName(), ...(overrides.HostConfig || {}) },
+    NetworkSettings: { Networks: { [ipv4NetworkName()]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 } }, ...(overrides.NetworkSettings || {}) },
+  });
 }
 
 function fakeSpawn(calls) {

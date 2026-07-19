@@ -11,6 +11,7 @@ test('release file allowlists keep controller package scoped to runtime files', 
   assert(controllerFiles.includes('platform/controller-wss/src/wssServer.js'));
   assert(controllerFiles.includes('platform/controller-core/src/controllerCore.js'));
   assert(controllerFiles.includes('platform/controller-core/src/containerRegistry.js'));
+  assert(controllerFiles.includes('platform/controller-core/src/networkConfig.js'));
   assert(controllerFiles.includes('platform/input-parser/src/inputParser.js'));
   assert(controllerFiles.includes('src/graph.js'));
   assert(controllerFiles.includes('src/shared.js'));

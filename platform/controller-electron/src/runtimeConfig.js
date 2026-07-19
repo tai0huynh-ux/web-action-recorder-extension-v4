@@ -1,6 +1,7 @@
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import os from 'node:os';
+import { normalizeIpv6Prefix } from '../../controller-core/src/networkConfig.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const DEFAULT_PORT = 0;
@@ -24,6 +25,9 @@ export function resolveElectronRuntimeConfig({
   const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
   const containerSeccompProfilePath = env.WAR_CONTAINER_SECCOMP_PROFILE_PATH || '';
   const containerImage = env.WAR_CONTAINER_IMAGE || 'war-browser-agent:phase1';
+  const containerIpv6Interface = env.WAR_CONTAINER_IPV6_INTERFACE || '';
+  const containerIpv6Prefix = env.WAR_CONTAINER_IPV6_PREFIX || '';
+  const containerIpv6Driver = env.WAR_CONTAINER_IPV6_DRIVER || 'macvlan';
   const wssRequested = env.WAR_CONTROLLER_WSS_ENABLED === '1' || Boolean(certPath || keyPath);
   const errors = [];
 
@@ -47,6 +51,16 @@ export function resolveElectronRuntimeConfig({
   if (containerRuntime !== 'disabled' && !containerSeccompProfilePath) errors.push('Managed containers require WAR_CONTAINER_SECCOMP_PROFILE_PATH');
   if (containerRuntime === 'local-docker' && containerSeccompProfilePath && !isReadable(fs, containerSeccompProfilePath)) errors.push('Container seccomp profile is not readable');
   if (containerRuntime === 'ssh-docker' && containerSeccompProfilePath && !/^\/[A-Za-z0-9._/-]+$/.test(containerSeccompProfilePath)) errors.push('SSH container seccomp profile path must be absolute');
+  if (containerIpv6Interface && !/^[A-Za-z0-9_.:-]{1,32}$/.test(containerIpv6Interface)) errors.push('Container IPv6 interface is invalid');
+  if (!['bridge', 'macvlan'].includes(containerIpv6Driver)) errors.push('Container IPv6 driver must be bridge or macvlan');
+  let normalizedIpv6Prefix = null;
+  if (containerIpv6Prefix) {
+    try {
+      normalizedIpv6Prefix = normalizeIpv6Prefix(containerIpv6Prefix);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
 
   const wssEnabled = wssRequested && errors.length === 0;
   const containersEnabled = containerRuntime !== 'disabled' && errors.length === 0;
@@ -77,6 +91,9 @@ export function resolveElectronRuntimeConfig({
       controllerCaPath: containerControllerCaPath || null,
       seccompProfilePath: containerSeccompProfilePath || null,
       image: containerImage,
+      ipv6Interface: containerIpv6Interface || null,
+      ipv6Prefix: normalizedIpv6Prefix,
+      ipv6Driver: containerIpv6Driver,
       timeoutMs: 120000,
       hostLabel: containerRuntime === 'ssh-docker' ? 'ssh-docker' : 'local-docker',
     },
@@ -107,6 +124,10 @@ export function toPublicRuntimeConfig(config) {
       sshIdentityConfigured: Boolean(config.containers?.sshIdentityFile),
       controllerCa: config.containers?.controllerCaPath ? nodePath.basename(config.containers.controllerCaPath) : null,
       seccompProfile: config.containers?.seccompProfilePath ? nodePath.basename(config.containers.seccompProfilePath) : null,
+      ipv6AutoPrefix: !config.containers?.ipv6Prefix,
+      ipv6InterfaceConfigured: Boolean(config.containers?.ipv6Interface),
+      ipv6StaticPrefixConfigured: Boolean(config.containers?.ipv6Prefix),
+      ipv6Driver: config.containers?.ipv6Driver || null,
     },
   });
 }

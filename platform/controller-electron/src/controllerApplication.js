@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
+import { ipv6Eui64SuffixFromMacAddress } from '../../controller-core/src/networkConfig.js';
 import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
 import { createWorkflowContentHash, createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
 import { applyLinksToSteps, collectOutgoingIds, validateGraph } from '../../../src/graph.js';
@@ -77,6 +78,28 @@ export class ControllerApplicationService extends EventEmitter {
     this.invalidate('containers', { containerId });
     return this.result({ container: next, operation });
   }
+  async updateContainerNetwork({ containerId, ipv4Enabled = true, ipv6Enabled = false, ipv6Suffix }) {
+    const container = this.core.containers.getContainer(containerId);
+    const proposed = {
+      ...container,
+      runtime: {
+        ...container.runtime,
+        ipv4Enabled,
+        ipv6Enabled,
+        ipv6Suffix: ipv6Enabled ? ipv6Suffix : null,
+        ipv6Prefix: null,
+        ipv6Address: null,
+        ipv6Network: null,
+        ipv6PrefixChanged: false,
+      },
+    };
+    const operation = await this.safeContainerOperation('updateNetwork', proposed);
+    const next = operation.ok
+      ? await this.core.containers.updateStatus(containerId, operation.status || container.status, { runtime: operation.runtime })
+      : container;
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
   async duplicateContainer({ containerId, name }) {
     const source = this.core.containers.getContainer(containerId);
     const deviceId = `managed-${crypto.randomUUID()}`;
@@ -88,7 +111,15 @@ export class ControllerApplicationService extends EventEmitter {
     const container = await this.core.containers.duplicateContainer(containerId, {
       name,
       deviceId,
-      runtime: { ...source.runtime, dockerName },
+      runtime: {
+        ...source.runtime,
+        dockerName,
+        ipv6Suffix: source.runtime?.ipv6Enabled ? randomIpv6Suffix() : null,
+        ipv6Prefix: null,
+        ipv6Address: null,
+        ipv6Network: null,
+        ipv6PrefixChanged: false,
+      },
     });
     const operation = await this.safeContainerOperation('create', { ...container, provisioning });
     const next = operation.ok ? await this.core.containers.updateStatus(container.id, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime }) : await this.core.containers.updateStatus(container.id, 'failed', { lastError: operation.error });
@@ -663,6 +694,12 @@ function managedDeviceDescriptor({ deviceId, displayName }) {
     labels: ['managed-container'],
     groupIds: []
   };
+}
+
+function randomIpv6Suffix() {
+  const bytes = crypto.randomBytes(6);
+  bytes[0] = (bytes[0] & 0xfc) | 0x02;
+  return ipv6Eui64SuffixFromMacAddress([...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join(':'));
 }
 
 function codedError(code, message, details) {

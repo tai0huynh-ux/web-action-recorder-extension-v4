@@ -79,10 +79,15 @@ test('container registry creates, updates status, duplicates, and soft deletes m
   const store = createMemoryStore();
   const core = new ControllerCore({ store, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
   await core.load();
-  const created = await core.containers.createContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'war-agent-one', privileged: true } });
+  const created = await core.containers.createContainer({
+    name: 'Agent One',
+    image: 'war-browser-agent:test',
+    runtime: { dockerName: 'war-agent-one', privileged: true, ipv4Enabled: true, ipv6Enabled: true, ipv6Suffix: 'abcd:ef01:2345:6789' },
+  });
   assert.equal(created.id, 'container-1');
   assert.equal(created.status, 'created');
   assert.equal(created.runtime.privileged, false);
+  assert.equal(created.runtime.ipv6Suffix, 'abcd:ef01:2345:6789');
   const running = await core.containers.updateStatus(created.id, 'running', {
     desiredState: 'running',
     resourceUsage: { cpuPercent: 1.5, memoryBytes: 1024, memoryLimitBytes: 2048 }

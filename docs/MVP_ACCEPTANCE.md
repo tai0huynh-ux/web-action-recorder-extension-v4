@@ -19,6 +19,14 @@
 
 The packaged Controller must complete the supported path: startup, TLS WSS, managed container, active sandbox, pairing/authentication, Chromium, MV3, Native Messaging, controlled record/run, origin inventory/preview/pull/idempotent pull, graph edit/validation/new revision, grouped text/table/cell input, dispatch/ack/start/success, clipboard, cancel/duplicate cancel, offline replay/exactly-once, Controller restart, Agent restart, negative credential/TLS/pairing cases, revocation, package integrity, and cleanup.
 
+## Managed container network settings
+
+- IPv4 and IPv6 can be enabled independently per managed container; at least one family is required.
+- IPv6 uses the host's discovered global `/64` prefix plus a persisted user-selected final 64-bit suffix. On an on-link prefix, the suffix must be EUI-64 (`xxxx:xxff:fexx:xxxx`) so the derived MAC and SLAAC identity remain stable; routed/delegated prefixes use the IPv6 bridge driver.
+- Start, Restart, and Apply network reconcile a changed provider prefix while preserving the suffix; Refresh reports drift without silently mutating a running container.
+- The implementation keeps the reviewed non-root/AppArmor/seccomp/no-host-network policy. Public inbound IPv6 on a routed/delegated prefix still requires upstream routing or intentional NDP proxying.
+- This enhancement is covered by Controller Core/Electron unit tests, full local regression, release packaging, and disposable remote Docker macvlan/IPv6-network probes. A new physical Phase 10 product run is required before making a new-SHA MVP readiness claim.
+
 ## Soak
 
 - 20 successful dispatches.
@@ -38,6 +46,8 @@ Required zero counts: duplicate executions, lost terminal results, credential ex
 The reviewed Linux host and implementation checkpoint `8fe2706c8803f04cedfc092babbe7b004b8f3f79` pass the persistent AppArmor/seccomp verification, disposable policy probe, managed lifecycle, complete product path, negative security cases, cleanup, local regression, packaging, and required soak matrix. The managed product run covers origin synchronization, repeated-pull idempotency, graph revision preservation/execution, grouped text/table/cell dispatch, exact clipboard verification, cancellation, offline exactly-once replay, and Controller/Agent restart persistence.
 
 The final readiness claim remains bound to one additional condition: CI, Container Real World Gate, and Windows Release Gate must all pass on the exact commit containing this acceptance documentation. Runtime evidence under `artifacts/physical-lan-pilot/` is intentionally ignored and must not be committed.
+
+The managed IPv4/IPv6 networking follow-up in the current checkpoint has passed Controller Core/Electron tests, local regression, release packaging, release integrity, the serial release gate, and a disposable remote dual-network macvlan probe. It has not rerun the complete physical Phase 10 product path on this new SHA; therefore it does not change the readiness decision by itself.
 
 ## Classification
 

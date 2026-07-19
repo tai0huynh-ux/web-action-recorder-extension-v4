@@ -234,6 +234,25 @@ test('managed container pending lifecycle disables conflicting actions', () => {
   assert.equal(findButton(rendered, 'Restart').disabled, true);
 });
 
+test('managed container network settings toggle IPv4 and apply a stable IPv6 suffix', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One', runtime: { dockerName: 'war-agent-one', ipv4Enabled: true, ipv6Enabled: false } })];
+  state.store.containers = apiState.containers;
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Cài đặt mạng');
+  const panel = all(current, (node) => node.className === 'network-settings')[0];
+  const inputs = all(panel, (node) => node.localName === 'input');
+  inputs[0].checked = false;
+  inputs[1].checked = true;
+  inputs[2].disabled = false;
+  inputs[2].value = 'a8bb:ccff:fedd:eeff';
+  await clickButton(panel, 'Áp dụng mạng');
+  assert.equal(apiState.containers[0].runtime.ipv4Enabled, false);
+  assert.equal(apiState.containers[0].runtime.ipv6Enabled, true);
+  assert.equal(apiState.containers[0].runtime.ipv6Suffix, 'a8bb:ccff:fedd:eeff');
+});
+
 test('managed container delete requires exact confirmation', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -744,6 +763,7 @@ function resetStore() {
       addContainerPending: false,
       containerPending: {},
       containerErrors: {},
+      containerNetworkOpenId: '',
     },
     bootstrap: { deviceCount: 0, sessionCount: 0, groupCount: 0, workflowCount: 0, applicationVersion: 'test' },
     runtime: { status: 'disabled', enabled: false, bindHost: '127.0.0.1', port: 0 },
@@ -894,7 +914,7 @@ function installControllerApi() {
             image,
             status: 'running',
             deviceId: `managed-device-${apiState.containers.length + 1}`,
-            runtime: { dockerName: runtime?.dockerName || `war-${apiState.containers.length + 1}`, privileged: false },
+            runtime: { ...runtime, dockerName: runtime?.dockerName || `war-${apiState.containers.length + 1}`, privileged: false },
             resourceUsage: { cpuPercent: 1, memoryBytes: 1024 * 1024 },
           };
           apiState.containers = [...apiState.containers, container];
@@ -904,6 +924,13 @@ function installControllerApi() {
         stop: async ({ containerId }) => containerOperation('stop', containerId, 'stopped'),
         restart: async ({ containerId }) => containerOperation('restart', containerId, 'running'),
         refresh: async ({ containerId }) => containerOperation('refresh', containerId, 'running'),
+        updateNetwork: async ({ containerId, ...network }) => {
+          apiState.containerCalls.updateNetwork = (apiState.containerCalls.updateNetwork || 0) + 1;
+          apiState.containers = apiState.containers.map((container) => container.id === containerId
+            ? { ...container, runtime: { ...container.runtime, ...network, ipv6Address: network.ipv6Enabled ? `2001:db8:1:2:${network.ipv6Suffix}` : null } }
+            : container);
+          return { ok: true, data: { container: apiState.containers.find((container) => container.id === containerId), operation: { ok: true } } };
+        },
         duplicate: async ({ containerId }) => {
           apiState.containerCalls.duplicate = (apiState.containerCalls.duplicate || 0) + 1;
           if (apiState.containerResults.duplicate) return apiState.containerResults.duplicate;

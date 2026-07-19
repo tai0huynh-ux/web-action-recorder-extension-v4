@@ -95,6 +95,12 @@ function addContainerForm(refresh) {
   const name = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.namePlaceholder') });
   const image = el('input', { type: 'text', value: 'war-browser-agent:phase1', placeholder: t('workspace.containers.imagePlaceholder') });
   const dockerName = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.dockerNamePlaceholder') });
+  const ipv4Enabled = el('input', { type: 'checkbox', checked: true });
+  const ipv6Enabled = el('input', { type: 'checkbox', checked: false });
+  const ipv6Suffix = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.ipv6SuffixPlaceholder'), disabled: true });
+  ipv6Enabled.addEventListener('change', () => {
+    ipv6Suffix.disabled = !ipv6Enabled.checked;
+  });
   const status = el('p', { className: 'status', text: store.workspace.containerNotice || '', ariaLive: 'polite' });
   const createDisabled = store.workspace.addContainerPending === true;
   return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
@@ -102,16 +108,34 @@ function addContainerForm(refresh) {
     field(t('workspace.containers.name'), name),
     field(t('workspace.containers.image'), image),
     field(t('workspace.containers.dockerName'), dockerName),
+    field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
+    field(t('workspace.containers.ipv6Enabled'), ipv6Enabled),
+    field(t('workspace.containers.ipv6Suffix'), ipv6Suffix),
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.create'), async () => {
         if (store.workspace.addContainerPending) return;
         const payload = {
           name: name.value.trim(),
           image: image.value.trim() || undefined,
-          runtime: dockerName.value.trim() ? { dockerName: dockerName.value.trim() } : undefined,
+          runtime: {
+            ...(dockerName.value.trim() ? { dockerName: dockerName.value.trim() } : {}),
+            ipv4Enabled: ipv4Enabled.checked,
+            ipv6Enabled: ipv6Enabled.checked,
+            ipv6Suffix: ipv6Enabled.checked ? ipv6Suffix.value.trim() : null,
+          },
         };
         if (!payload.name) {
           store.workspace.containerNotice = t('workspace.containers.nameRequired');
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
+        if (!payload.runtime.ipv4Enabled && !payload.runtime.ipv6Enabled) {
+          store.workspace.containerNotice = t('workspace.containers.networkRequired');
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
+        if (payload.runtime.ipv6Enabled && !payload.runtime.ipv6Suffix) {
+          store.workspace.containerNotice = t('workspace.containers.ipv6SuffixRequired');
           status.textContent = store.workspace.containerNotice;
           return;
         }
@@ -154,17 +178,88 @@ function managedContainerActions(refresh) {
         el('span', { className: agentOnline ? 'status-pill online' : 'status-pill offline', text: agentOnline ? t('workspace.containers.agentOnline') : t('workspace.containers.agentOffline') }),
         el('span', { className: 'device-meta', text: container.runtime?.dockerName || shortId(container.id) }),
         el('span', { className: 'device-meta', text: usageSummary(container.resourceUsage) }),
+        el('span', { className: 'device-meta', text: containerNetworkSummary(container) }),
+        container.runtime?.ipv6PrefixChanged ? el('span', { className: 'device-meta error', text: t('workspace.containers.ipv6PrefixChanged') }) : null,
         error ? el('span', { className: 'device-meta error', text: error, ariaLive: 'polite' }) : null,
         el('div', { className: 'toolbar tight' }, [
           button(t('workspace.containers.start'), () => containerAction('start', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'running' }),
           button(t('workspace.containers.stop'), () => containerAction('stop', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'stopped' }),
           button(t('workspace.containers.restart'), () => containerAction('restart', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container, refresh), { className: 'button chip', disabled: terminalDisabled || Boolean(pendingAction) }),
+          button(t('workspace.containers.networkSettings'), () => {
+            store.workspace.containerNetworkOpenId = store.workspace.containerNetworkOpenId === container.id ? '' : container.id;
+            refresh();
+          }, { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.duplicate'), () => duplicateContainer(container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.delete'), () => containerAction('delete', container, refresh), { className: 'button chip danger', disabled: terminalDisabled || busy }),
         ]),
+        store.workspace.containerNetworkOpenId === container.id ? containerNetworkForm(container, refresh) : null,
       ]);
     }));
+}
+
+function containerNetworkForm(container, refresh) {
+  const ipv4Enabled = el('input', { type: 'checkbox', checked: container.runtime?.ipv4Enabled !== false });
+  const ipv6Enabled = el('input', { type: 'checkbox', checked: container.runtime?.ipv6Enabled === true });
+  const ipv6Suffix = el('input', {
+    type: 'text',
+    value: container.runtime?.ipv6Suffix || '',
+    placeholder: t('workspace.containers.ipv6SuffixPlaceholder'),
+    disabled: !ipv6Enabled.checked,
+  });
+  ipv6Enabled.addEventListener('change', () => {
+    ipv6Suffix.disabled = !ipv6Enabled.checked;
+  });
+  return el('div', { className: 'network-settings' }, [
+    field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
+    field(t('workspace.containers.ipv6Enabled'), ipv6Enabled),
+    field(t('workspace.containers.ipv6Suffix'), ipv6Suffix),
+    el('p', { className: 'muted', text: t('workspace.containers.ipv6StableHelp') }),
+    button(t('workspace.containers.applyNetwork'), async () => {
+      if (!ipv4Enabled.checked && !ipv6Enabled.checked) {
+        store.workspace.containerErrors = { ...store.workspace.containerErrors, [container.id]: t('workspace.containers.networkRequired') };
+        refresh();
+        return;
+      }
+      if (ipv6Enabled.checked && !ipv6Suffix.value.trim()) {
+        store.workspace.containerErrors = { ...store.workspace.containerErrors, [container.id]: t('workspace.containers.ipv6SuffixRequired') };
+        refresh();
+        return;
+      }
+      await updateContainerNetwork(container, {
+        ipv4Enabled: ipv4Enabled.checked,
+        ipv6Enabled: ipv6Enabled.checked,
+        ipv6Suffix: ipv6Enabled.checked ? ipv6Suffix.value.trim() : undefined,
+      }, refresh);
+    }, { className: 'button primary' }),
+  ]);
+}
+
+async function updateContainerNetwork(container, network, refresh) {
+  const containerId = container.id;
+  if (store.workspace.containerPending?.[containerId]) return;
+  store.workspace.containerPending = { ...store.workspace.containerPending, [containerId]: 'network' };
+  store.workspace.containerNotice = t('workspace.containers.networkUpdating', { name: container.name || container.id });
+  refresh();
+  try {
+    const result = await window.warController.containers.updateNetwork({ containerId, ...network });
+    if (result?.ok === false || result?.data?.operation?.ok === false) {
+      const failure = result?.ok === false ? result : { code: 'CONTAINER_NETWORK_FAILED', message: result.data.operation.error };
+      store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(failure) };
+    } else {
+      const { [containerId]: _clearedError, ...remainingErrors } = store.workspace.containerErrors || {};
+      store.workspace.containerErrors = remainingErrors;
+      store.workspace.containerNotice = t('workspace.containers.networkUpdated');
+      store.workspace.containerNetworkOpenId = '';
+      await refreshAll();
+    }
+  } catch (error) {
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+  } finally {
+    const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
+    store.workspace.containerPending = remainingPending;
+    refresh();
+  }
 }
 
 async function containerAction(action, container, refresh) {
@@ -367,6 +462,13 @@ function usageSummary(resourceUsage) {
   return `${cpu} / ${mem}`;
 }
 
+function containerNetworkSummary(container) {
+  const runtime = container.runtime || {};
+  const families = [runtime.ipv4Enabled !== false ? 'IPv4' : null, runtime.ipv6Enabled ? 'IPv6' : null].filter(Boolean).join(' + ');
+  if (!runtime.ipv6Enabled) return families || t('workspace.containers.networkUnavailable');
+  return `${families}: ${runtime.ipv6Address || runtime.ipv6Suffix || t('workspace.containers.unknown')}`;
+}
+
 function isContainerAgentOnline(container) {
   if (!container?.deviceId) return false;
   return store.sessions.some((session) => session.deviceId === container.deviceId && session.status === 'online' && !session.revoked);
@@ -378,6 +480,7 @@ function pendingStatus(action) {
   if (action === 'restart') return 'restarting';
   if (action === 'delete') return 'deleting';
   if (action === 'duplicate') return 'creating';
+  if (action === 'network') return 'restarting';
   return 'creating';
 }
 

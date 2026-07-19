@@ -99,6 +99,7 @@ test('public runtime config redacts managed container paths and target details',
       WAR_CONTAINER_SSH_IDENTITY_FILE: identity,
       WAR_CONTAINER_CONTROLLER_CA_PATH: ca,
       WAR_CONTAINER_SECCOMP_PROFILE_PATH: '/etc/war/security/chromium-userns-seccomp.json',
+      WAR_CONTAINER_IPV6_INTERFACE: 'eth0',
     },
   });
   const dto = toPublicRuntimeConfig(config);
@@ -106,9 +107,29 @@ test('public runtime config redacts managed container paths and target details',
   assert.equal(dto.containers.sshIdentityConfigured, true);
   assert.equal(dto.containers.controllerCa, 'ca.pem');
   assert.equal(dto.containers.seccompProfile, 'chromium-userns-seccomp.json');
+  assert.equal(dto.containers.ipv6AutoPrefix, true);
+  assert.equal(dto.containers.ipv6InterfaceConfigured, true);
   assert.equal(JSON.stringify(dto).includes('root@192.0.2.20'), false);
   assert.equal(JSON.stringify(dto).includes('id_ed25519'), false);
   assert.equal(JSON.stringify(dto).includes(dir), false);
+});
+
+test('runtime config validates an optional static managed IPv6 /64 prefix', () => {
+  const valid = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_PREFIX: '2001:0db8:1234:5678::/64' } });
+  assert.equal(valid.containers.ipv6Prefix, '2001:db8:1234:5678::/64');
+  const invalid = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_PREFIX: '2001:db8::/48' } });
+  assert.equal(invalid.degraded, true);
+  assert.match(invalid.errors.join(' '), /\/64/);
+});
+
+test('runtime config selects macvlan for on-link IPv6 and rejects invalid drivers', () => {
+  const macvlan = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_INTERFACE: 'enp2s0' } });
+  assert.equal(macvlan.containers.ipv6Driver, 'macvlan');
+  const invalidDriver = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_DRIVER: 'overlay' } });
+  assert.equal(invalidDriver.degraded, true);
+  assert.match(invalidDriver.errors.join(' '), /driver must be bridge or macvlan/);
+  const autoInterface = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_DRIVER: 'macvlan' } });
+  assert.equal(autoInterface.degraded, false);
 });
 
 function fakeApp(userData) {

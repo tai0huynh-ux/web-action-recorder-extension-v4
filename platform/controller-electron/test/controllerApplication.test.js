@@ -96,6 +96,7 @@ test('application manages container lifecycle through a bounded adapter', async 
   await app.refreshContainer({ containerId });
   await app.restartContainer({ containerId });
   await app.stopContainer({ containerId });
+  const network = await app.updateContainerNetwork({ containerId, ipv4Enabled: true, ipv6Enabled: true, ipv6Suffix: 'a8bb:ccff:fedd:eeff' });
   const duplicate = await app.duplicateContainer({ containerId, name: 'Agent Two' });
   const managedDeviceId = added.data.container.deviceId;
   const deleted = await app.deleteContainer({ containerId });
@@ -107,8 +108,11 @@ test('application manages container lifecycle through a bounded adapter', async 
   assert.equal(duplicate.data.container.name, 'Agent Two');
   assert.equal(duplicate.data.operation.ok, true);
   assert.notEqual(duplicate.data.container.runtime.dockerName, added.data.container.runtime.dockerName);
+  assert.equal(network.data.container.runtime.ipv6Address, '2001:db8:1:2:a8bb:ccff:fedd:eeff');
+  assert.notEqual(duplicate.data.container.runtime.ipv6Suffix, network.data.container.runtime.ipv6Suffix);
+  assert.match(duplicate.data.container.runtime.ipv6Suffix, /^[0-9a-f]{1,4}:[0-9a-f]{1,2}ff:fe[0-9a-f]{1,2}:[0-9a-f]{1,4}$/);
   assert.equal(deleted.data.operation.ok, true);
-  assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'create', 'delete']);
+  assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'updateNetwork', 'create', 'delete']);
 });
 
 test('deleting an already-revoked failed managed container remains idempotent', async () => {
@@ -418,11 +422,23 @@ function fakeTransport({ failDispatch = false, failDispatchDeviceId = null, fail
 function fakeContainerAdapter() {
   return {
     calls: [],
-    async create(container) { this.calls.push({ action: 'create', id: container.id }); return { runtime: { dockerName: container.runtime.dockerName || container.id, privileged: false } }; },
+    async create(container) { this.calls.push({ action: 'create', id: container.id }); return { runtime: { ...container.runtime, dockerName: container.runtime.dockerName || container.id, privileged: false } }; },
     async start(container) { this.calls.push({ action: 'start', id: container.id }); return {}; },
     async stop(container) { this.calls.push({ action: 'stop', id: container.id }); return {}; },
     async restart(container) { this.calls.push({ action: 'restart', id: container.id }); return {}; },
     async status(container) { this.calls.push({ action: 'status', id: container.id }); return { status: 'running', resourceUsage: { cpuPercent: 2, memoryBytes: 1024 } }; },
+    async updateNetwork(container) {
+      this.calls.push({ action: 'updateNetwork', id: container.id });
+      return {
+        status: container.status,
+        runtime: {
+          ...container.runtime,
+          ipv6Prefix: '2001:db8:1:2::/64',
+          ipv6Address: `2001:db8:1:2:${container.runtime.ipv6Suffix}`,
+          ipv6Network: 'war-managed-ipv6-123456789abc',
+        },
+      };
+    },
     async delete(container) { this.calls.push({ action: 'delete', id: container.id }); return {}; },
   };
 }

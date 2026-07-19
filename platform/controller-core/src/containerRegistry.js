@@ -1,4 +1,5 @@
 import { domainError, ERROR_CODES } from './errors.js';
+import { normalizeIpv6Address, normalizeIpv6Prefix, normalizeManagedNetwork } from './networkConfig.js';
 
 const STATUS = new Set(['created', 'starting', 'running', 'stopping', 'stopped', 'restarting', 'deleting', 'deleted', 'failed']);
 
@@ -102,12 +103,53 @@ function optionalString(value) {
 }
 
 function sanitizeRuntime(runtime = {}) {
+  let network;
+  try {
+    network = normalizeManagedNetwork(runtime);
+  } catch (error) {
+    throw domainError(ERROR_CODES.INVALID_TARGET, error.message, 400);
+  }
   return {
     dockerName: optionalString(runtime.dockerName),
     networkMode: optionalString(runtime.networkMode || 'bridge'),
     nonRootUser: optionalString(runtime.nonRootUser || 'war'),
     privileged: false,
+    ...network,
+    ipv4Network: optionalString(runtime.ipv4Network),
+    ipv6Prefix: normalizeOptionalIpv6Prefix(runtime.ipv6Prefix),
+    ipv6Address: normalizeOptionalIpv6Address(runtime.ipv6Address),
+    ipv6Network: optionalString(runtime.ipv6Network),
+    ipv6Driver: ['bridge', 'macvlan'].includes(runtime.ipv6Driver) ? runtime.ipv6Driver : null,
+    ipv6MacAddress: normalizeOptionalMacAddress(runtime.ipv6MacAddress),
+    ipv6PrefixChanged: runtime.ipv6PrefixChanged === true,
   };
+}
+
+function normalizeOptionalIpv6Prefix(value) {
+  if (!value) return null;
+  try {
+    return normalizeIpv6Prefix(value);
+  } catch {
+    throw domainError(ERROR_CODES.INVALID_TARGET, 'Managed container IPv6 prefix is invalid', 400);
+  }
+}
+
+function normalizeOptionalIpv6Address(value) {
+  if (!value) return null;
+  try {
+    return normalizeIpv6Address(value);
+  } catch {
+    throw domainError(ERROR_CODES.INVALID_TARGET, 'Managed container IPv6 address is invalid', 400);
+  }
+}
+
+function normalizeOptionalMacAddress(value) {
+  if (!value) return null;
+  const text = String(value).toLowerCase();
+  if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(text)) {
+    throw domainError(ERROR_CODES.INVALID_TARGET, 'Managed container MAC address is invalid', 400);
+  }
+  return text;
 }
 
 function sanitizeResourceUsage(value = {}) {

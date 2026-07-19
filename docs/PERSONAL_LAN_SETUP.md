@@ -26,9 +26,27 @@ $env:WAR_CONTAINER_SSH_IDENTITY_FILE="$env:USERPROFILE\.ssh\id_ed25519"
 $env:WAR_CONTAINER_CONTROLLER_HOST="<controller-address-reachable-by-agent>"
 $env:WAR_CONTAINER_CONTROLLER_CA_PATH="<controller-ca-path>"
 $env:WAR_CONTAINER_SECCOMP_PROFILE_PATH="/etc/war/security/chromium-userns-seccomp.json"
+$env:WAR_CONTAINER_IPV6_INTERFACE="<linux-interface-with-global-ipv6-64>"
 ```
 
 The managed adapter invokes SSH with `-F NUL`, the configured identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10`; it never relies on the user SSH config. Do not place credentials, private keys, personal IP addresses, or SSH keys in source files. Pair each Agent through the Controller UI and store the one-time credential only in the managed Agent data volume.
+
+`WAR_CONTAINER_IPV6_INTERFACE` is optional when the Docker host has exactly one unique global `/64` prefix; the adapter discovers its interface. Configure it when the host has multiple global prefixes. The default driver is `macvlan`. Use `WAR_CONTAINER_IPV6_DRIVER=bridge` only with a separately routed/delegated `/64`, normally together with `WAR_CONTAINER_IPV6_PREFIX=<prefix>/64`. Automatic provider-prefix changes require interface discovery rather than a static override.
+
+## Stable managed IPv6
+
+The Controller network settings expose independent IPv4 and IPv6 switches. At least one family must remain enabled. For an on-link IPv6 `/64`, enter an EUI-64 final suffix such as `a8bb:ccff:fedd:eeff`.
+
+For an address such as `2001:db8:1234:5678:a8bb:ccff:fedd:eeff`:
+
+- `2001:db8:1234:5678::/64` is the provider-controlled prefix;
+- `a8bb:ccff:fedd:eeff` is the Controller-persisted EUI-64 suffix. It maps to the stable MAC `aa:bb:cc:dd:ee:ff`;
+- choose a different suffix for each container on the same prefix;
+- do not use `::1`, which is reserved for the managed Docker network gateway;
+- after the provider prefix changes to `2001:db8:aaaa:bbbb::/64`, Start, Restart, or Apply network reconciles the address to `2001:db8:aaaa:bbbb:a8bb:ccff:fedd:eeff`;
+- Refresh reports prefix drift without silently changing a running container.
+
+When `WAR_CONTAINER_IPV6_INTERFACE` is configured, the adapter creates a labeled IPv6 `macvlan` on that interface, enables IPv6, and assigns the exact static address plus its EUI-64 MAC. This is the correct mode for an on-link ISP `/64`; the upstream router supplies reachability through normal neighbor discovery. If the host has a separately routed/delegated `/64`, set `WAR_CONTAINER_IPV6_DRIVER=bridge` and the adapter uses an IPv6-only bridge instead. IPv4, when enabled, uses a separate labeled private bridge. Neither mode uses host networking. A routed deployment still requires the upstream router to route the delegated `/64` to the Docker host.
 
 ## Managed container policy
 
@@ -37,7 +55,7 @@ The Controller-managed container must retain:
 - user `war`;
 - AppArmor `war-browser-agent`;
 - reviewed constrained seccomp policy;
-- bridge network and private PID namespace;
+- only the labeled managed IPv4 bridge and/or labeled managed IPv6 bridge (`macvlan` for on-link `/64`, `bridge` for routed `/64`), plus a private PID namespace;
 - memory `2g`, CPUs `2`, PID limit `512`;
 - named `/data` volume and only the approved CA bind;
 - no privileged mode, Docker socket, host home, host network/PID, or added capabilities;

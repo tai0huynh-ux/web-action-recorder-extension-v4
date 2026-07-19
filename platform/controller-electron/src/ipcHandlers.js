@@ -72,6 +72,7 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.containers.stop, (payload) => application.stopContainer(payload)],
     [IPC_CHANNELS.containers.restart, (payload) => application.restartContainer(payload)],
     [IPC_CHANNELS.containers.refresh, (payload) => application.refreshContainer(payload)],
+    [IPC_CHANNELS.containers.updateNetwork, (payload) => application.updateContainerNetwork(payload)],
     [IPC_CHANNELS.containers.duplicate, (payload) => application.duplicateContainer(payload)],
     [IPC_CHANNELS.containers.delete, (payload) => application.deleteContainer(payload)],
     [IPC_CHANNELS.groups.list, () => application.listGroups()],

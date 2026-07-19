@@ -17,6 +17,7 @@ export const store = {
     addContainerPending: false,
     containerPending: {},
     containerErrors: {},
+    containerNetworkOpenId: '',
   },
   bootstrap: null,
   runtime: null,

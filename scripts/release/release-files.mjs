@@ -38,6 +38,7 @@ export const controllerFiles = [
   'platform/controller-core/src/executionEventStore.js',
   'platform/controller-core/src/groupRegistry.js',
   'platform/controller-core/src/jobService.js',
+  'platform/controller-core/src/networkConfig.js',
   'platform/controller-core/src/pairingService.js',
   'platform/controller-core/src/persistenceAdapter.js',
   'platform/controller-core/src/sessionManager.js',

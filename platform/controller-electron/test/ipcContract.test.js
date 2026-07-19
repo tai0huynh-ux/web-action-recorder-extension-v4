@@ -157,6 +157,15 @@ test('container payload accepts only bounded renderer-owned fields', () => {
   }
 });
 
+test('container network payload accepts only explicit IPv4 and IPv6 preferences', () => {
+  const payload = { containerId: 'container-1', ipv4Enabled: false, ipv6Enabled: true, ipv6Suffix: 'abcd:ef01:2345:6789' };
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.updateNetwork, payload), payload);
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.containers.updateNetwork, { ...payload, networkMode: 'host' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('validator does not mutate input', () => {
   const payload = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { count: 1 } };
   const before = JSON.stringify(payload);
