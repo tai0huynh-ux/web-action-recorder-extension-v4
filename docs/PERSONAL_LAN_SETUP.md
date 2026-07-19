@@ -22,12 +22,13 @@ $env:WAR_CONTROLLER_TLS_CERT_PATH="<certificate-path>"
 $env:WAR_CONTROLLER_TLS_KEY_PATH="<private-key-path>"
 $env:WAR_CONTAINER_RUNTIME="ssh-docker"
 $env:WAR_CONTAINER_SSH_TARGET="<dedicated-agent-host>"
+$env:WAR_CONTAINER_SSH_IDENTITY_FILE="$env:USERPROFILE\.ssh\id_ed25519"
 $env:WAR_CONTAINER_CONTROLLER_HOST="<controller-address-reachable-by-agent>"
 $env:WAR_CONTAINER_CONTROLLER_CA_PATH="<controller-ca-path>"
 $env:WAR_CONTAINER_SECCOMP_PROFILE_PATH="/etc/war/security/chromium-userns-seccomp.json"
 ```
 
-Do not place credentials, private keys, personal IP addresses, or SSH keys in source files. Pair each Agent through the Controller UI and store the one-time credential only in the managed Agent data volume.
+The managed adapter invokes SSH with `-F NUL`, the configured identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10`; it never relies on the user SSH config. Do not place credentials, private keys, personal IP addresses, or SSH keys in source files. Pair each Agent through the Controller UI and store the one-time credential only in the managed Agent data volume.
 
 ## Managed container policy
 

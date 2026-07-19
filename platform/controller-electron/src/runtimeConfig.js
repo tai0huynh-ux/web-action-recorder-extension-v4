@@ -19,6 +19,7 @@ export function resolveElectronRuntimeConfig({
   const keyPath = env.WAR_CONTROLLER_TLS_KEY_PATH;
   const containerRuntime = env.WAR_CONTAINER_RUNTIME || 'disabled';
   const containerSshTarget = env.WAR_CONTAINER_SSH_TARGET || '';
+  const containerSshIdentityFile = env.WAR_CONTAINER_SSH_IDENTITY_FILE || '';
   const containerControllerHost = env.WAR_CONTAINER_CONTROLLER_HOST || '';
   const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
   const containerSeccompProfilePath = env.WAR_CONTAINER_SECCOMP_PROFILE_PATH || '';
@@ -38,6 +39,9 @@ export function resolveElectronRuntimeConfig({
   }
   if (!['disabled', 'local-docker', 'ssh-docker'].includes(containerRuntime)) errors.push('Container runtime must be disabled, local-docker, or ssh-docker');
   if (containerRuntime === 'ssh-docker' && !containerSshTarget) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_TARGET');
+  if (containerRuntime === 'ssh-docker' && containerSshTarget && !isSshTarget(containerSshTarget)) errors.push('SSH Docker target is invalid');
+  if (containerRuntime === 'ssh-docker' && !containerSshIdentityFile) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_IDENTITY_FILE');
+  if (containerRuntime === 'ssh-docker' && containerSshIdentityFile && !isReadable(fs, containerSshIdentityFile)) errors.push('SSH Docker identity file is not readable');
   if (containerRuntime !== 'disabled' && !wssRequested) errors.push('Managed containers require WSS Controller configuration');
   if (containerRuntime === 'local-docker' && containerControllerCaPath && !isReadable(fs, containerControllerCaPath)) errors.push('Container Controller CA file is not readable');
   if (containerRuntime !== 'disabled' && !containerSeccompProfilePath) errors.push('Managed containers require WAR_CONTAINER_SECCOMP_PROFILE_PATH');
@@ -68,6 +72,7 @@ export function resolveElectronRuntimeConfig({
       enabled: containersEnabled,
       runtime: containerRuntime,
       sshTarget: containerSshTarget || null,
+      sshIdentityFile: containerSshIdentityFile || null,
       controllerHost: containerControllerHost || null,
       controllerCaPath: containerControllerCaPath || null,
       seccompProfilePath: containerSeccompProfilePath || null,
@@ -99,6 +104,7 @@ export function toPublicRuntimeConfig(config) {
       runtime: config.containers?.runtime || 'disabled',
       host: config.containers?.hostLabel || null,
       sshConfigured: Boolean(config.containers?.sshTarget),
+      sshIdentityConfigured: Boolean(config.containers?.sshIdentityFile),
       controllerCa: config.containers?.controllerCaPath ? nodePath.basename(config.containers.controllerCaPath) : null,
       seccompProfile: config.containers?.seccompProfilePath ? nodePath.basename(config.containers.seccompProfilePath) : null,
     },
@@ -126,6 +132,12 @@ function isReadable(fs, filePath) {
   } catch {
     return false;
   }
+}
+
+function isSshTarget(value) {
+  return typeof value === 'string'
+    && value.length <= 255
+    && /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(value);
 }
 
 function deepFreeze(value) {

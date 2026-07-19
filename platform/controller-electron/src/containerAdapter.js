@@ -232,7 +232,7 @@ export class DockerContainerAdapter {
       return this.execFile('docker', args, { timeout: this.config.timeoutMs });
     }
     if (this.config.runtime === 'ssh-docker') {
-      return this.execFile('ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...args])], { timeout: this.config.timeoutMs });
+      return this.execFile('ssh', this.sshArgs(shellJoin(['docker', ...args])), { timeout: this.config.timeoutMs });
     }
     throw new Error('Unsupported container runtime');
   }
@@ -249,7 +249,7 @@ export class DockerContainerAdapter {
     if (this.config.runtime === 'ssh-docker') {
       const imageIndex = args.length - 1;
       const remoteArgs = [...args.slice(0, imageIndex), '--env-file', '/dev/stdin', args[imageIndex]];
-      return spawnWithInput(this.spawn, 'ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...remoteArgs])], {
+      return spawnWithInput(this.spawn, 'ssh', this.sshArgs(shellJoin(['docker', ...remoteArgs])), {
         input: encodeEnvironment(entries),
         timeoutMs: this.config.timeoutMs,
       });
@@ -262,12 +262,28 @@ export class DockerContainerAdapter {
       return spawnWithInput(this.spawn, 'docker', args, { input, timeoutMs: this.config.timeoutMs });
     }
     if (this.config.runtime === 'ssh-docker') {
-      return spawnWithInput(this.spawn, 'ssh', ['-F', 'NUL', this.config.sshTarget, '--', shellJoin(['docker', ...args])], {
+      return spawnWithInput(this.spawn, 'ssh', this.sshArgs(shellJoin(['docker', ...args])), {
         input,
         timeoutMs: this.config.timeoutMs,
       });
     }
     throw new Error('Unsupported container runtime');
+  }
+
+  sshArgs(command) {
+    const identityFile = this.config.sshIdentityFile;
+    if (typeof identityFile !== 'string' || identityFile.length < 1 || identityFile.length > 1024 || /[\r\n]/.test(identityFile)) {
+      throw new Error('Managed SSH identity file is invalid');
+    }
+    return [
+      '-F', 'NUL',
+      '-i', identityFile,
+      '-o', 'IdentitiesOnly=yes',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      this.config.sshTarget,
+      '--', command,
+    ];
   }
 }
 

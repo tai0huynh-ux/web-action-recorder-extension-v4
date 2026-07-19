@@ -83,9 +83,11 @@ test('public runtime config redacts managed container paths and target details',
   const cert = path.join(dir, 'cert.pem');
   const key = path.join(dir, 'key.pem');
   const ca = path.join(dir, 'ca.pem');
+  const identity = path.join(dir, 'id_ed25519');
   fs.writeFileSync(cert, 'cert');
   fs.writeFileSync(key, 'key');
   fs.writeFileSync(ca, 'ca');
+  fs.writeFileSync(identity, 'private-key-placeholder');
   const config = resolveElectronRuntimeConfig({
     app: fakeApp('/data'),
     env: {
@@ -94,15 +96,18 @@ test('public runtime config redacts managed container paths and target details',
       WAR_CONTROLLER_TLS_KEY_PATH: key,
       WAR_CONTAINER_RUNTIME: 'ssh-docker',
       WAR_CONTAINER_SSH_TARGET: 'root@192.0.2.20',
+      WAR_CONTAINER_SSH_IDENTITY_FILE: identity,
       WAR_CONTAINER_CONTROLLER_CA_PATH: ca,
       WAR_CONTAINER_SECCOMP_PROFILE_PATH: '/etc/war/security/chromium-userns-seccomp.json',
     },
   });
   const dto = toPublicRuntimeConfig(config);
   assert.equal(dto.containers.enabled, true);
+  assert.equal(dto.containers.sshIdentityConfigured, true);
   assert.equal(dto.containers.controllerCa, 'ca.pem');
   assert.equal(dto.containers.seccompProfile, 'chromium-userns-seccomp.json');
   assert.equal(JSON.stringify(dto).includes('root@192.0.2.20'), false);
+  assert.equal(JSON.stringify(dto).includes('id_ed25519'), false);
   assert.equal(JSON.stringify(dto).includes(dir), false);
 });
 

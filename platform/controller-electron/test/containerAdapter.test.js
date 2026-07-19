@@ -100,7 +100,7 @@ test('managed Docker adapter uses bounded SSH Docker commands', async () => {
     config: managedConfig('ssh-docker'),
     execFileImpl: async (file, args) => {
       calls.push({ file, args });
-      if (args[4]?.includes("'{{.State.Status}}'")) return { stdout: 'running\n', stderr: '' };
+      if (args.at(-1)?.includes("'{{.State.Status}}'")) return { stdout: 'running\n', stderr: '' };
       return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
     },
   });
@@ -108,9 +108,17 @@ test('managed Docker adapter uses bounded SSH Docker commands', async () => {
   await adapter.status({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } });
 
   assert.equal(calls[0].file, 'ssh');
-  assert.deepEqual(calls[0].args.slice(0, 4), ['-F', 'NUL', 'operator@agent.example', '--']);
-  assert.ok(calls[0].args[4].includes("'docker' 'inspect'"));
-  assert.equal(calls[0].args[4].includes(';'), false);
+  assert.deepEqual(calls[0].args.slice(0, -1), [
+    '-F', 'NUL',
+    '-i', 'C:/Users/operator/.ssh/id_ed25519',
+    '-o', 'IdentitiesOnly=yes',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    'operator@agent.example',
+    '--',
+  ]);
+  assert.ok(calls[0].args.at(-1).includes("'docker' 'inspect'"));
+  assert.equal(calls[0].args.at(-1).includes(';'), false);
 });
 
 test('managed SSH Docker creation streams the credential separately from safe environment', async () => {
@@ -120,8 +128,8 @@ test('managed SSH Docker creation streams the credential separately from safe en
     config: managedConfig('ssh-docker'),
     execFileImpl: async (file, args) => {
       execCalls.push({ file, args });
-      if (args[4]?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
-      if (args[4]?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
+      if (args.at(-1)?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args.at(-1)?.includes("'inspect' '--format' '{{json .}}'")) return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
     spawnImpl: fakeSpawn(spawnCalls),
@@ -160,6 +168,7 @@ function managedConfig(runtime) {
       runtime,
       image: 'war-browser-agent:phase1',
       sshTarget: runtime === 'ssh-docker' ? 'operator@agent.example' : undefined,
+      sshIdentityFile: runtime === 'ssh-docker' ? 'C:/Users/operator/.ssh/id_ed25519' : undefined,
       timeoutMs: 1000,
       hostLabel: runtime,
       seccompProfilePath: runtime === 'ssh-docker'
