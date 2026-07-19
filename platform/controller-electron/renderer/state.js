@@ -13,6 +13,8 @@ export const store = {
     activeInputMode: 'text',
     search: '',
     addContainerOpen: false,
+    containerNamePrefix: '',
+    containerNameSequence: null,
     containerNotice: '',
     addContainerPending: false,
     containerPending: {},

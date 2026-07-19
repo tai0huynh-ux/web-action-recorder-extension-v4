@@ -92,12 +92,43 @@ function containersPane(refresh) {
 }
 
 function addContainerForm(refresh) {
-  const name = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.namePlaceholder') });
+  const initialPrefix = store.workspace.containerNamePrefix.trim() || latestContainerNamePrefix(store.containers) || 'Agent';
+  const suggestedSequence = nextContainerSequence(initialPrefix, store.containers);
+  const initialSequence = validContainerSequence(store.workspace.containerNameSequence)
+    ? store.workspace.containerNameSequence
+    : suggestedSequence;
+  store.workspace.containerNamePrefix = initialPrefix;
+  store.workspace.containerNameSequence = initialSequence;
+  const namePrefix = el('input', { type: 'text', value: initialPrefix, placeholder: t('workspace.containers.namePrefixPlaceholder') });
+  const nameSequence = el('input', { type: 'number', value: initialSequence, min: 1, max: 999999, step: 1, ariaLabel: t('workspace.containers.nameSequence') });
+  const namePreview = el('p', { className: 'muted name-preview' });
+  const updateNamePreview = () => {
+    const sequence = parseContainerSequence(nameSequence.value);
+    const completeName = sequence ? containerDisplayName(namePrefix.value, sequence) : namePrefix.value.trim();
+    namePreview.textContent = t('workspace.containers.namePreview', { name: completeName || t('workspace.containers.unknown') });
+  };
+  namePrefix.addEventListener('input', () => {
+    store.workspace.containerNamePrefix = namePrefix.value;
+    const nextSequence = nextContainerSequence(namePrefix.value, store.containers);
+    nameSequence.value = String(nextSequence);
+    store.workspace.containerNameSequence = nextSequence;
+    updateNamePreview();
+  });
+  nameSequence.addEventListener('input', () => {
+    store.workspace.containerNameSequence = parseContainerSequence(nameSequence.value);
+    updateNamePreview();
+  });
+  updateNamePreview();
   const image = el('input', { type: 'text', value: 'war-browser-agent:phase1', placeholder: t('workspace.containers.imagePlaceholder') });
   const dockerName = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.dockerNamePlaceholder') });
   const ipv4Enabled = el('input', { type: 'checkbox', checked: true });
   const ipv6Enabled = el('input', { type: 'checkbox', checked: false });
-  const ipv6Suffix = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.ipv6SuffixPlaceholder'), disabled: true });
+  const ipv6Suffix = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.ipv6SuffixPlaceholder'), disabled: true, ariaLabel: t('workspace.containers.ipv6Suffix') });
+  const randomIpv6 = button(t('workspace.containers.randomIpv6'), () => {
+    ipv6Enabled.checked = true;
+    ipv6Suffix.disabled = false;
+    ipv6Suffix.value = randomIpv6Eui64Suffix();
+  }, { className: 'button compact' });
   ipv6Enabled.addEventListener('change', () => {
     ipv6Suffix.disabled = !ipv6Enabled.checked;
   });
@@ -105,17 +136,27 @@ function addContainerForm(refresh) {
   const createDisabled = store.workspace.addContainerPending === true;
   return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
     el('strong', { text: t('workspace.containers.add') }),
-    field(t('workspace.containers.name'), name),
+    el('div', { className: 'form-grid container-name-grid' }, [
+      field(t('workspace.containers.namePrefix'), namePrefix),
+      field(t('workspace.containers.nameSequence'), nameSequence),
+    ]),
+    namePreview,
     field(t('workspace.containers.image'), image),
     field(t('workspace.containers.dockerName'), dockerName),
     field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
     field(t('workspace.containers.ipv6Enabled'), ipv6Enabled),
-    field(t('workspace.containers.ipv6Suffix'), ipv6Suffix),
+    el('div', { className: 'field' }, [
+      el('span', { text: t('workspace.containers.ipv6Suffix') }),
+      el('div', { className: 'inline-control' }, [ipv6Suffix, randomIpv6]),
+      el('small', { className: 'muted', text: t('workspace.containers.ipv6StableHelp') }),
+    ]),
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.create'), async () => {
         if (store.workspace.addContainerPending) return;
+        const fixedName = namePrefix.value.trim();
+        const sequenceNumber = parseContainerSequence(nameSequence.value);
         const payload = {
-          name: name.value.trim(),
+          name: fixedName && sequenceNumber ? containerDisplayName(fixedName, sequenceNumber) : '',
           image: image.value.trim() || undefined,
           runtime: {
             ...(dockerName.value.trim() ? { dockerName: dockerName.value.trim() } : {}),
@@ -124,8 +165,13 @@ function addContainerForm(refresh) {
             ipv6Suffix: ipv6Enabled.checked ? ipv6Suffix.value.trim() : null,
           },
         };
-        if (!payload.name) {
+        if (!fixedName) {
           store.workspace.containerNotice = t('workspace.containers.nameRequired');
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
+        if (!sequenceNumber) {
+          store.workspace.containerNotice = t('workspace.containers.nameSequenceRequired');
           status.textContent = store.workspace.containerNotice;
           return;
         }
@@ -151,6 +197,8 @@ function addContainerForm(refresh) {
           }
           store.workspace.containerNotice = t('workspace.containers.createRequested');
           await refreshAll();
+          store.workspace.containerNamePrefix = fixedName;
+          store.workspace.containerNameSequence = nextContainerSequence(fixedName, store.containers);
         } catch (error) {
           store.workspace.containerNotice = safeError({ code: 'ERROR', message: error.message });
         } finally {
@@ -206,14 +254,23 @@ function containerNetworkForm(container, refresh) {
     value: container.runtime?.ipv6Suffix || '',
     placeholder: t('workspace.containers.ipv6SuffixPlaceholder'),
     disabled: !ipv6Enabled.checked,
+    ariaLabel: t('workspace.containers.ipv6Suffix'),
   });
+  const randomIpv6 = button(t('workspace.containers.randomIpv6'), () => {
+    ipv6Enabled.checked = true;
+    ipv6Suffix.disabled = false;
+    ipv6Suffix.value = randomIpv6Eui64Suffix();
+  }, { className: 'button compact' });
   ipv6Enabled.addEventListener('change', () => {
     ipv6Suffix.disabled = !ipv6Enabled.checked;
   });
   return el('div', { className: 'network-settings' }, [
     field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
     field(t('workspace.containers.ipv6Enabled'), ipv6Enabled),
-    field(t('workspace.containers.ipv6Suffix'), ipv6Suffix),
+    el('div', { className: 'field' }, [
+      el('span', { text: t('workspace.containers.ipv6Suffix') }),
+      el('div', { className: 'inline-control' }, [ipv6Suffix, randomIpv6]),
+    ]),
     el('p', { className: 'muted', text: t('workspace.containers.ipv6StableHelp') }),
     button(t('workspace.containers.applyNetwork'), async () => {
       if (!ipv4Enabled.checked && !ipv6Enabled.checked) {
@@ -434,6 +491,63 @@ function selectionAction(event, id) {
   if (event.shiftKey) return { type: 'range', id };
   if (event.ctrlKey || event.metaKey) return { type: 'toggle', id };
   return { type: 'single', id };
+}
+
+function latestContainerNamePrefix(containers = []) {
+  for (let index = containers.length - 1; index >= 0; index -= 1) {
+    const parsed = splitContainerDisplayName(containers[index]?.name);
+    if (parsed) return parsed.prefix;
+  }
+  return '';
+}
+
+function nextContainerSequence(prefix, containers = []) {
+  const normalizedPrefix = normalizeContainerNamePrefix(prefix);
+  if (!normalizedPrefix) return 1;
+  let maximum = 0;
+  for (const container of containers) {
+    const parsed = splitContainerDisplayName(container?.name);
+    if (parsed?.prefix.toLocaleLowerCase() === normalizedPrefix.toLocaleLowerCase()) maximum = Math.max(maximum, parsed.sequence);
+  }
+  return maximum + 1;
+}
+
+function splitContainerDisplayName(value) {
+  const match = String(value || '').trim().match(/^(.*?)\s+(\d+)$/);
+  if (!match) return null;
+  const prefix = normalizeContainerNamePrefix(match[1]);
+  const sequence = parseContainerSequence(match[2]);
+  return prefix && sequence ? { prefix, sequence } : null;
+}
+
+function normalizeContainerNamePrefix(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function parseContainerSequence(value) {
+  const sequence = Number(value);
+  return validContainerSequence(sequence) ? sequence : null;
+}
+
+function validContainerSequence(value) {
+  return Number.isSafeInteger(value) && value >= 1 && value <= 999999;
+}
+
+function containerDisplayName(prefix, sequence) {
+  return `${normalizeContainerNamePrefix(prefix)} ${sequence}`;
+}
+
+function randomIpv6Eui64Suffix() {
+  const bytes = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[0] = (bytes[0] & 0xfc) | 0x02;
+  const groups = [
+    ((bytes[0] ^ 0x02) << 8) | bytes[1],
+    (bytes[2] << 8) | 0xff,
+    (0xfe << 8) | bytes[3],
+    (bytes[4] << 8) | bytes[5],
+  ];
+  return groups.map((group) => group.toString(16)).join(':');
 }
 
 function shortId(id) {

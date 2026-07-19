@@ -257,6 +257,26 @@ th {
   gap: 10px 12px;
 }
 
+.container-name-grid {
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.35fr);
+}
+
+.inline-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-control .button {
+  white-space: nowrap;
+}
+
+.name-preview {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
 .status {
   min-height: 20px;
   color: var(--accent-dark);
@@ -642,6 +662,11 @@ th {
 
   .item-row {
     flex-direction: column;
+  }
+
+  .container-name-grid,
+  .inline-control {
+    grid-template-columns: 1fr;
   }
 }
 

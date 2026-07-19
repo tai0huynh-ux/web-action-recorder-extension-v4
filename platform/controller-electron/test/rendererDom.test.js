@@ -190,14 +190,16 @@ test('workspace selected machine count updates', async () => {
 test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
   resetStore();
   state.store.view = 'workspace';
-  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
   await clickButton(current, '+ Thêm container');
   const inputs = all(current, (node) => node.localName === 'input');
   inputs[1].value = 'Agent One';
-  inputs[3].value = 'war-agent-one';
+  inputs[4].value = 'war-agent-one';
   await clickButton(current, 'Tạo');
   assert.equal(apiState.containers[0].runtime.dockerName, 'war-agent-one');
-  assert.ok(state.store.containers.some((container) => container.name === 'Agent One'));
+  assert.ok(state.store.containers.some((container) => container.name === 'Agent One 1'));
   assert.equal(state.store.containers[0].status, 'running');
 });
 
@@ -214,7 +216,45 @@ test('workspace add container prevents duplicate create requests', async () => {
   await create.click();
   await firstClick;
   assert.equal(apiState.containerCalls.add, 1);
-  assert.equal(apiState.containers.filter((container) => container.name === 'Agent One').length, 1);
+  assert.equal(apiState.containers.filter((container) => container.name === 'Agent One 1').length, 1);
+});
+
+test('workspace add container advances the sequence for the fixed name', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, `+ ${i18n.t('workspace.containers.add')}`);
+  await clickButton(current, i18n.t('workspace.containers.create'));
+
+  let form = all(current, (node) => node.getAttribute('role') === 'form')[0];
+  let sequence = all(form, (node) => node.localName === 'input' && node.type === 'number')[0];
+  assert.equal(apiState.containers[0].name, 'Agent 1');
+  assert.equal(state.store.workspace.containerNameSequence, 2);
+  assert.equal(sequence.value, '2');
+
+  await clickButton(current, i18n.t('workspace.containers.create'));
+  form = all(current, (node) => node.getAttribute('role') === 'form')[0];
+  sequence = all(form, (node) => node.localName === 'input' && node.type === 'number')[0];
+  assert.deepEqual(apiState.containers.map((container) => container.name), ['Agent 1', 'Agent 2']);
+  assert.equal(sequence.value, '3');
+});
+
+test('workspace random IPv6 enables IPv6 and generates a valid EUI-64 suffix', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, `+ ${i18n.t('workspace.containers.add')}`);
+  const form = all(current, (node) => node.getAttribute('role') === 'form')[0];
+  const checkboxes = all(form, (node) => node.localName === 'input' && node.type === 'checkbox');
+  const suffix = all(form, (node) => node.getAttribute('aria-label') === i18n.t('workspace.containers.ipv6Suffix'))[0];
+
+  await clickButton(form, i18n.t('workspace.containers.randomIpv6'));
+
+  assert.equal(checkboxes[1].checked, true);
+  assert.equal(suffix.disabled, false);
+  assert.match(suffix.value, /^[0-9a-f]{1,4}:[0-9a-f]{1,2}ff:fe[0-9a-f]{1,2}:[0-9a-f]{1,4}$/);
 });
 
 test('managed container pending lifecycle disables conflicting actions', () => {
@@ -759,6 +799,8 @@ function resetStore() {
       activeInputMode: 'text',
       search: '',
       addContainerOpen: false,
+      containerNamePrefix: '',
+      containerNameSequence: null,
       containerNotice: '',
       addContainerPending: false,
       containerPending: {},
