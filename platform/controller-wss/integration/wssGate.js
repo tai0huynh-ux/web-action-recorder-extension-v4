@@ -24,7 +24,10 @@ export async function runWssGate() {
     dockerVersion: await dockerVersion().catch(() => 'unknown'),
     tlsVerified: false,
     unauthorizedTlsRejected: false,
+    wrongTlsEndpointRejected: false,
     authorizationHeaderReceived: false,
+    wrongCredentialRejected: false,
+    unpairedAgentRejected: false,
     agentsAuthenticated: 0,
     restartReplayPassed: false,
     sameJobId: false,
@@ -49,7 +52,17 @@ export async function runWssGate() {
     await assertRejects(() => connectAgent(gate.url, { deviceId: 'dev-a', credential: 'cred-a' }));
     artifact.unauthorizedTlsRejected = true;
 
+    await assertRejects(() => connectRaw(gate.url, ca, { Authorization: 'Bearer cred-a' }, { servername: 'wrong-controller.invalid' }));
+    artifact.wrongTlsEndpointRejected = true;
+
     await assertRejects(() => connectRaw(gate.url, ca));
+
+    const wrongCredential = await connectAgent(gate.url, { deviceId: 'dev-a', credential: 'wrong-credential', ca, nonce: 'wrong-credential' });
+    artifact.wrongCredentialRejected = wrongCredential.response.payload.ok === false;
+    wrongCredential.socket.close();
+    const unpaired = await connectAgent(gate.url, { deviceId: 'dev-unpaired', credential: 'unpaired-credential', ca, nonce: 'unpaired' });
+    artifact.unpairedAgentRejected = unpaired.response.payload.ok === false;
+    unpaired.socket.close();
 
     const agentA = await connectAgent(gate.url, { deviceId: 'dev-a', credential: 'cred-a', ca });
     artifact.tlsVerified = true;
@@ -91,7 +104,7 @@ export async function runWssGate() {
     await fs.writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
     console.log(`artifact=${artifactPath}`);
     console.log(JSON.stringify(artifact, null, 2));
-    if (!artifact.tlsVerified || !artifact.unauthorizedTlsRejected || !artifact.authorizationHeaderReceived || artifact.agentsAuthenticated !== 2 || !artifact.restartReplayPassed || !artifact.sameJobId || !artifact.sameIdempotencyKey || artifact.terminalReplayCount !== 0 || !artifact.revokedCredentialRejected || !artifact.cleanupPassed) {
+    if (!artifact.tlsVerified || !artifact.unauthorizedTlsRejected || !artifact.wrongTlsEndpointRejected || !artifact.authorizationHeaderReceived || !artifact.wrongCredentialRejected || !artifact.unpairedAgentRejected || artifact.agentsAuthenticated !== 2 || !artifact.restartReplayPassed || !artifact.sameJobId || !artifact.sameIdempotencyKey || artifact.terminalReplayCount !== 0 || !artifact.revokedCredentialRejected || !artifact.cleanupPassed) {
       throw new Error('WSS gate failed');
     }
     return artifact;
@@ -138,9 +151,9 @@ async function connectAgent(url, { deviceId, credential, ca, nonce = 'nonce-a' }
   };
 }
 
-function connectRaw(url, ca, headers = {}) {
+function connectRaw(url, ca, headers = {}, options = {}) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, [], { ca, headers });
+    const socket = new WebSocket(url, [], { ca, headers, ...options });
     socket.once('open', () => resolve(socket));
     socket.once('error', reject);
   });
