@@ -7,6 +7,21 @@ import { createDockerContainerAdapter } from '../src/containerAdapter.js';
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
 const APPROVED_SECCOMP_OPTION = `seccomp=${JSON.stringify(JSON.parse(fs.readFileSync(new URL('../../container/security/chromium-userns-seccomp.json', import.meta.url), 'utf8')))}`;
 
+test('managed Docker adapter probes the bounded Docker server version', async () => {
+  const calls = [];
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (file, args, options) => {
+      calls.push({ file, args, options });
+      return { stdout: '28.3.2\n', stderr: '' };
+    },
+  });
+
+  assert.deepEqual(await adapter.probe(), { connected: true });
+  assert.deepEqual(calls[0].args, ['version', '--format', '{{.Server.Version}}']);
+  assert.equal(calls[0].options.timeout, 1000);
+});
+
 test('managed Docker adapter isolates credentials and verifies the approved runtime', async () => {
   const execCalls = [];
   const spawnCalls = [];

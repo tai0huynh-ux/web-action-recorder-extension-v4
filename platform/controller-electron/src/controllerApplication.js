@@ -6,7 +6,7 @@ import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../
 import { createWorkflowContentHash, createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
 import { applyLinksToSteps, collectOutgoingIds, validateGraph } from '../../../src/graph.js';
 import { normalizeProfile, validateProfile } from '../../../src/shared.js';
-import { toPublicRuntimeConfig } from './runtimeConfig.js';
+import { MANAGED_CONTAINER_HOST_ID, toPublicRuntimeConfig } from './runtimeConfig.js';
 
 export const DISPATCH_DEADLINE_SECONDS = Object.freeze({ min: 10, default: 300, max: 86400 });
 // Serialized renderer-provided workflow inputs are capped before command dispatch.
@@ -31,6 +31,7 @@ export class ControllerApplicationService extends EventEmitter {
       port: this.wssRuntime?.server?.address?.()?.port || publicConfig?.wss?.port || 0,
       storeStatus: publicConfig?.storeStatus || 'loaded',
       degraded: Boolean(publicConfig?.degraded),
+      containers: publicConfig?.containers || { enabled: false, runtime: 'disabled', hostId: null, hostLabel: null },
       applicationVersion: this.version,
       protocolVersion: 'v1'
     });
@@ -53,13 +54,44 @@ export class ControllerApplicationService extends EventEmitter {
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   listContainers() { return this.result(this.core.containers.listContainers()); }
+  async listContainerHosts() {
+    const publicConfig = this.config ? toPublicRuntimeConfig(this.config).containers : null;
+    if (!publicConfig?.enabled || !this.containerAdapter?.probe) {
+      return this.result({ status: 'disabled', hosts: [] });
+    }
+    const operation = await this.safeContainerOperation('probe', {});
+    if (!operation.ok || operation.connected !== true) {
+      return this.result({ status: 'unavailable', hosts: [] });
+    }
+    return this.result({
+      status: 'connected',
+      hosts: [{
+        id: publicConfig.hostId || MANAGED_CONTAINER_HOST_ID,
+        label: publicConfig.hostLabel || null,
+        runtime: publicConfig.runtime,
+        connected: true,
+      }],
+    });
+  }
   async addContainer(payload) {
     const deviceId = payload.deviceId || `managed-${crypto.randomUUID()}`;
+    const host = resolveManagedContainerHost(payload.host, this.config?.containers);
+    if (this.config?.containers?.enabled) {
+      const probe = await this.safeContainerOperation('probe', {});
+      if (!probe.ok || probe.connected !== true) {
+        throw codedError('CONTAINER_HOST_UNAVAILABLE', 'Selected managed Docker host is unavailable');
+      }
+    }
+    const runtime = {
+      ...(payload.runtime || {}),
+      dockerName: payload.runtime?.dockerName || managedDockerName(payload.name),
+    };
+    const image = this.config?.containers?.enabled ? this.config.containers.image : payload.image;
     const provisioning = await this.core.pairing.provisionManagedAgent({
       device: managedDeviceDescriptor({ deviceId, displayName: payload.name }),
       displayName: payload.name,
     });
-    const container = await this.core.containers.createContainer({ ...payload, deviceId });
+    const container = await this.core.containers.createContainer({ ...payload, host, image, runtime, deviceId });
     const operation = await this.safeContainerOperation('create', { ...container, provisioning });
     const next = operation.ok ? await this.core.containers.updateStatus(container.id, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime }) : await this.core.containers.updateStatus(container.id, 'failed', { lastError: operation.error });
     if (!operation.ok) await this.core.pairing.revoke(deviceId).catch(() => {});
@@ -668,6 +700,24 @@ function stripSecretLikeFields(value) {
     if (/password|passwd|token|secret|credential|cookie/i.test(key)) delete value[key];
     else stripSecretLikeFields(value[key]);
   }
+}
+
+function resolveManagedContainerHost(requestedHost, config) {
+  if (!config?.enabled) return requestedHost || null;
+  const expectedHost = config.hostId || MANAGED_CONTAINER_HOST_ID;
+  if (requestedHost && requestedHost !== expectedHost) {
+    throw codedError('INVALID_CONTAINER_HOST', 'Selected managed Docker host is unavailable');
+  }
+  return expectedHost;
+}
+
+function managedDockerName(displayName) {
+  const base = String(displayName || 'agent')
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9_.-]+/g, '-')
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+    .slice(0, 48) || 'agent';
+  return `war-${base}-${crypto.randomUUID().slice(0, 8)}`.slice(0, 80);
 }
 
 function managedDeviceDescriptor({ deviceId, displayName }) {

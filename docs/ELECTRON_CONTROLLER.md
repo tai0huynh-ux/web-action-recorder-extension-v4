@@ -19,8 +19,17 @@ Optional environment variables:
 - `WAR_CONTROLLER_TLS_CERT_PATH`: TLS certificate path for WSS.
 - `WAR_CONTROLLER_TLS_KEY_PATH`: TLS private key path for WSS.
 - `WAR_CONTROLLER_ALLOW_LAN=1`: required before binding non-loopback hosts.
+- `WAR_CONTAINER_RUNTIME`: `local-docker`, `ssh-docker`, or `disabled`.
+- `WAR_CONTAINER_HOST_LABEL`: safe display name for the configured Docker host.
+- `WAR_CONTAINER_SSH_TARGET` and `WAR_CONTAINER_SSH_IDENTITY_FILE`: backend-only SSH Docker connection settings.
 
-The renderer only receives safe metadata such as WSS status, safe bind host, port, and store loaded/degraded state.
+The renderer only receives safe metadata such as WSS status, safe bind host, port, store loaded/degraded state, and the configured Docker host ID/display label. It never receives the SSH target, identity path, private key, or credentials.
+
+## Managed Containers
+
+Open **Thêm container** in Workspace to probe the configured Docker host. The machine selector lists only a host whose Docker server probe succeeds. The Controller re-probes the selected allowlisted host when **Tạo** is pressed and rejects renderer-supplied host IDs that are not configured.
+
+The user chooses the display-name prefix, sequence number, and IPv4/IPv6 settings. The main process owns the approved image, unique Docker name, managed Agent identity and credential, isolated data volume, WSS settings, resource limits, and AppArmor/seccomp/browser-sandbox policy. After provisioning succeeds, the new container is refreshed into the managed application list where Start, Stop, Restart, Refresh, network settings, Duplicate, and Delete remain available.
 
 ## Pairing Workflow
 

@@ -47,6 +47,14 @@ export class DockerContainerAdapter {
     this.spawn = spawnImpl;
   }
 
+  async probe() {
+    const version = (await this.docker(['version', '--format', '{{.Server.Version}}'])).stdout.trim();
+    if (!/^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/.test(version)) {
+      throw new Error('Managed Docker host returned an invalid version');
+    }
+    return { connected: true };
+  }
+
   async create(container) {
     const name = dockerName(container);
     const volume = dataVolume(name);

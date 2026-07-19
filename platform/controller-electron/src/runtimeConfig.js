@@ -5,6 +5,7 @@ import { normalizeIpv6Prefix } from '../../controller-core/src/networkConfig.js'
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const DEFAULT_PORT = 0;
+export const MANAGED_CONTAINER_HOST_ID = 'configured-docker-host';
 
 export function resolveElectronRuntimeConfig({
   app,
@@ -19,6 +20,7 @@ export function resolveElectronRuntimeConfig({
   const certPath = env.WAR_CONTROLLER_TLS_CERT_PATH;
   const keyPath = env.WAR_CONTROLLER_TLS_KEY_PATH;
   const containerRuntime = env.WAR_CONTAINER_RUNTIME || 'disabled';
+  const containerHostLabel = env.WAR_CONTAINER_HOST_LABEL || '';
   const containerSshTarget = env.WAR_CONTAINER_SSH_TARGET || '';
   const containerSshIdentityFile = env.WAR_CONTAINER_SSH_IDENTITY_FILE || '';
   const containerControllerHost = env.WAR_CONTAINER_CONTROLLER_HOST || '';
@@ -42,6 +44,7 @@ export function resolveElectronRuntimeConfig({
     if (keyPath && !isReadable(fs, keyPath)) errors.push('WSS TLS private key is not readable');
   }
   if (!['disabled', 'local-docker', 'ssh-docker'].includes(containerRuntime)) errors.push('Container runtime must be disabled, local-docker, or ssh-docker');
+  if (containerHostLabel && !isHostLabel(containerHostLabel)) errors.push('Container host label is invalid');
   if (containerRuntime === 'ssh-docker' && !containerSshTarget) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_TARGET');
   if (containerRuntime === 'ssh-docker' && containerSshTarget && !isSshTarget(containerSshTarget)) errors.push('SSH Docker target is invalid');
   if (containerRuntime === 'ssh-docker' && !containerSshIdentityFile) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_IDENTITY_FILE');
@@ -85,6 +88,8 @@ export function resolveElectronRuntimeConfig({
     containers: {
       enabled: containersEnabled,
       runtime: containerRuntime,
+      hostId: containerRuntime === 'disabled' ? null : MANAGED_CONTAINER_HOST_ID,
+      hostDisplayName: containerHostLabel || null,
       sshTarget: containerSshTarget || null,
       sshIdentityFile: containerSshIdentityFile || null,
       controllerHost: containerControllerHost || null,
@@ -120,6 +125,8 @@ export function toPublicRuntimeConfig(config) {
       enabled: Boolean(config.containers?.enabled),
       runtime: config.containers?.runtime || 'disabled',
       host: config.containers?.hostLabel || null,
+      hostId: config.containers?.enabled ? config.containers?.hostId || MANAGED_CONTAINER_HOST_ID : null,
+      hostLabel: config.containers?.hostDisplayName || null,
       sshConfigured: Boolean(config.containers?.sshTarget),
       sshIdentityConfigured: Boolean(config.containers?.sshIdentityFile),
       controllerCa: config.containers?.controllerCaPath ? nodePath.basename(config.containers.controllerCaPath) : null,
@@ -159,6 +166,14 @@ function isSshTarget(value) {
   return typeof value === 'string'
     && value.length <= 255
     && /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(value);
+}
+
+function isHostLabel(value) {
+  return typeof value === 'string'
+    && value.trim() === value
+    && value.length >= 1
+    && value.length <= 80
+    && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function deepFreeze(value) {

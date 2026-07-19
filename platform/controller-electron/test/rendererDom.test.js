@@ -305,11 +305,25 @@ test('workspace add container uses the Controller containers API and refreshes m
   await clickButton(current, '+ Thêm container');
   const inputs = all(current, (node) => node.localName === 'input');
   inputs[1].value = 'Agent One';
-  inputs[4].value = 'war-agent-one';
   await clickButton(current, 'Tạo');
-  assert.equal(apiState.containers[0].runtime.dockerName, 'war-agent-one');
+  assert.equal(apiState.lastContainerAddPayload.host, 'configured-docker-host');
+  assert.equal(apiState.containers[0].runtime.dockerName, 'war-1');
   assert.ok(state.store.containers.some((container) => container.name === 'Agent One 1'));
   assert.equal(state.store.containers[0].status, 'running');
+});
+
+test('workspace add container requires a successfully probed Docker host', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [] } };
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, `+ ${i18n.t('workspace.containers.add')}`);
+
+  assert.equal(findButton(current, i18n.t('workspace.containers.create')).disabled, true);
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.hostUnavailable')));
 });
 
 test('workspace add container prevents duplicate create requests', async () => {
@@ -883,6 +897,8 @@ function resetStore() {
   apiState.containers = [];
   apiState.containerCalls = {};
   apiState.containerResults = {};
+  apiState.containerHostsResult = null;
+  apiState.lastContainerAddPayload = null;
   apiState.containerAddDelay = false;
   apiState.originCalls = {};
   apiState.originPreviewDelay = false;
@@ -916,6 +932,9 @@ function resetStore() {
       addContainerOpen: false,
       containerNamePrefix: '',
       containerNameSequence: null,
+      containerHostId: '',
+      containerHosts: [],
+      containerHostStatus: 'idle',
       containerNotice: '',
       addContainerPending: false,
       containerPending: {},
@@ -1023,6 +1042,8 @@ const apiState = {
   containers: [],
   containerCalls: {},
   containerResults: {},
+  containerHostsResult: null,
+  lastContainerAddPayload: null,
   containerAddDelay: false,
   originCalls: {},
   originPreviewDelay: false,
@@ -1068,13 +1089,20 @@ function installControllerApi() {
       sessions: { list: async () => ({ ok: true, data: { sessions: [] } }) },
       containers: {
         list: async () => ({ ok: true, data: { containers: apiState.containers } }),
-        add: async ({ name, image, runtime }) => {
+        hosts: async () => apiState.containerHostsResult || ({
+          ok: true,
+          data: { status: 'connected', hosts: [{ id: 'configured-docker-host', label: 'Linux Docker', runtime: 'ssh-docker', connected: true }] },
+        }),
+        add: async (payload) => {
+          const { name, image, host, runtime } = payload;
+          apiState.lastContainerAddPayload = structuredClone(payload);
           apiState.containerCalls.add = (apiState.containerCalls.add || 0) + 1;
           if (apiState.containerAddDelay) await Promise.resolve();
           const container = {
             id: `container-${apiState.containers.length + 1}`,
             name,
             image,
+            host,
             status: 'running',
             deviceId: `managed-device-${apiState.containers.length + 1}`,
             runtime: { ...runtime, dockerName: runtime?.dockerName || `war-${apiState.containers.length + 1}`, privileged: false },

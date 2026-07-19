@@ -29,6 +29,7 @@ export const IPC_CHANNELS = deepFreeze({
   },
   containers: {
     list: `${CHANNEL_PREFIX}containers:list`,
+    hosts: `${CHANNEL_PREFIX}containers:hosts`,
     add: `${CHANNEL_PREFIX}containers:add`,
     start: `${CHANNEL_PREFIX}containers:start`,
     stop: `${CHANNEL_PREFIX}containers:stop`,
@@ -88,6 +89,7 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.settings.update,
   IPC_CHANNELS.sessions.list,
   IPC_CHANNELS.containers.list,
+  IPC_CHANNELS.containers.hosts,
   IPC_CHANNELS.containers.add,
   IPC_CHANNELS.containers.start,
   IPC_CHANNELS.containers.stop,
@@ -147,6 +149,7 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.settings.update, objectSchema({ locale: 'optionalString', workspace: 'optionalObject' })],
   [IPC_CHANNELS.sessions.list, LIST_PAYLOAD],
   [IPC_CHANNELS.containers.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.containers.hosts, NO_PAYLOAD],
   [IPC_CHANNELS.containers.add, objectSchema({ name: 'id', image: 'optionalString', host: 'optionalString', deviceId: 'optionalString', runtime: 'optionalObject' })],
   [IPC_CHANNELS.containers.start, objectSchema({ containerId: 'id' })],
   [IPC_CHANNELS.containers.stop, objectSchema({ containerId: 'id' })],

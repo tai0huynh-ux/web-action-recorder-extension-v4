@@ -67,6 +67,7 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.settings.update, (payload) => application.updateSettings(payload)],
     [IPC_CHANNELS.sessions.list, () => application.listSessions()],
     [IPC_CHANNELS.containers.list, () => application.listContainers()],
+    [IPC_CHANNELS.containers.hosts, () => application.listContainerHosts()],
     [IPC_CHANNELS.containers.add, (payload) => application.addContainer(payload)],
     [IPC_CHANNELS.containers.start, (payload) => application.startContainer(payload)],
     [IPC_CHANNELS.containers.stop, (payload) => application.stopContainer(payload)],

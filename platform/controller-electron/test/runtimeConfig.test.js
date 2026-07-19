@@ -95,6 +95,7 @@ test('public runtime config redacts managed container paths and target details',
       WAR_CONTROLLER_TLS_CERT_PATH: cert,
       WAR_CONTROLLER_TLS_KEY_PATH: key,
       WAR_CONTAINER_RUNTIME: 'ssh-docker',
+      WAR_CONTAINER_HOST_LABEL: 'Linux Docker phòng làm việc',
       WAR_CONTAINER_SSH_TARGET: 'root@192.0.2.20',
       WAR_CONTAINER_SSH_IDENTITY_FILE: identity,
       WAR_CONTAINER_CONTROLLER_CA_PATH: ca,
@@ -104,6 +105,8 @@ test('public runtime config redacts managed container paths and target details',
   });
   const dto = toPublicRuntimeConfig(config);
   assert.equal(dto.containers.enabled, true);
+  assert.equal(dto.containers.hostId, 'configured-docker-host');
+  assert.equal(dto.containers.hostLabel, 'Linux Docker phòng làm việc');
   assert.equal(dto.containers.sshIdentityConfigured, true);
   assert.equal(dto.containers.controllerCa, 'ca.pem');
   assert.equal(dto.containers.seccompProfile, 'chromium-userns-seccomp.json');
@@ -112,6 +115,12 @@ test('public runtime config redacts managed container paths and target details',
   assert.equal(JSON.stringify(dto).includes('root@192.0.2.20'), false);
   assert.equal(JSON.stringify(dto).includes('id_ed25519'), false);
   assert.equal(JSON.stringify(dto).includes(dir), false);
+});
+
+test('runtime config rejects unsafe managed host labels', () => {
+  const invalid = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_HOST_LABEL: 'host\nforged' } });
+  assert.equal(invalid.degraded, true);
+  assert.match(invalid.errors.join(' '), /host label is invalid/);
 });
 
 test('runtime config validates an optional static managed IPv6 /64 prefix', () => {

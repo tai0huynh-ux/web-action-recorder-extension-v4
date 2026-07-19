@@ -85,9 +85,11 @@ function containersPane(refresh, active = false) {
         el('h2', { text: t('workspace.containers.title') }),
         el('p', { className: 'muted', text: status }),
       ]),
-      button(`+ ${t('workspace.containers.add')}`, () => {
-        store.workspace.addContainerOpen = !store.workspace.addContainerOpen;
-        refresh();
+      button(`+ ${t('workspace.containers.add')}`, async () => {
+        const opening = !store.workspace.addContainerOpen;
+        store.workspace.addContainerOpen = opening;
+        if (opening) await loadContainerHosts(refresh);
+        else refresh();
       }, { className: 'button primary' }),
     ]),
     search,
@@ -132,6 +134,32 @@ function containerFilterPanel(refresh) {
   return el('div', { className: 'filter-panel' }, [field(t('workspace.containers.filter'), filter)]);
 }
 
+async function loadContainerHosts(refresh) {
+  if (store.workspace.containerHostStatus === 'loading') return;
+  store.workspace.containerHostStatus = 'loading';
+  store.workspace.containerNotice = t('workspace.containers.hostChecking');
+  refresh();
+  try {
+    const result = await window.warController.containers.hosts();
+    const data = unwrap(result) || {};
+    store.workspace.containerHosts = Array.isArray(data.hosts) ? data.hosts.filter((host) => host?.connected && host.id) : [];
+    store.workspace.containerHostStatus = data.status || (store.workspace.containerHosts.length ? 'connected' : 'unavailable');
+    if (!store.workspace.containerHosts.some((host) => host.id === store.workspace.containerHostId)) {
+      store.workspace.containerHostId = store.workspace.containerHosts[0]?.id || '';
+    }
+    store.workspace.containerNotice = store.workspace.containerHosts.length
+      ? t('workspace.containers.hostConnected')
+      : t('workspace.containers.hostUnavailable');
+  } catch (error) {
+    store.workspace.containerHosts = [];
+    store.workspace.containerHostId = '';
+    store.workspace.containerHostStatus = 'unavailable';
+    store.workspace.containerNotice = t('workspace.containers.hostUnavailable');
+  } finally {
+    refresh();
+  }
+}
+
 function addContainerForm(refresh) {
   const initialPrefix = store.workspace.containerNamePrefix.trim() || latestContainerNamePrefix(store.containers) || 'Agent';
   const suggestedSequence = nextContainerSequence(initialPrefix, store.containers);
@@ -160,8 +188,15 @@ function addContainerForm(refresh) {
     updateNamePreview();
   });
   updateNamePreview();
-  const image = el('input', { type: 'text', value: 'war-browser-agent:phase1', placeholder: t('workspace.containers.imagePlaceholder') });
-  const dockerName = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.dockerNamePlaceholder') });
+  const hosts = store.workspace.containerHosts || [];
+  const host = el('select', { ariaLabel: t('workspace.containers.host') }, [
+    el('option', { value: '', text: hosts.length ? t('workspace.containers.selectHost') : t('workspace.containers.noHost') }),
+    ...hosts.map((item) => el('option', { value: item.id, text: containerHostLabel(item) })),
+  ]);
+  host.value = store.workspace.containerHostId || '';
+  host.addEventListener('change', () => {
+    store.workspace.containerHostId = host.value;
+  });
   const ipv4Enabled = el('input', { type: 'checkbox', checked: true });
   const ipv6Enabled = el('input', { type: 'checkbox', checked: false });
   const ipv6Suffix = el('input', { type: 'text', value: '', placeholder: t('workspace.containers.ipv6SuffixPlaceholder'), disabled: true, ariaLabel: t('workspace.containers.ipv6Suffix') });
@@ -174,16 +209,16 @@ function addContainerForm(refresh) {
     ipv6Suffix.disabled = !ipv6Enabled.checked;
   });
   const status = el('p', { className: 'status', text: store.workspace.containerNotice || '', ariaLive: 'polite' });
-  const createDisabled = store.workspace.addContainerPending === true;
+  const createDisabled = store.workspace.addContainerPending === true || !hosts.length;
   return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
     el('strong', { text: t('workspace.containers.add') }),
+    field(t('workspace.containers.host'), host),
     el('div', { className: 'form-grid container-name-grid' }, [
       field(t('workspace.containers.namePrefix'), namePrefix),
       field(t('workspace.containers.nameSequence'), nameSequence),
     ]),
     namePreview,
-    field(t('workspace.containers.image'), image),
-    field(t('workspace.containers.dockerName'), dockerName),
+    el('p', { className: 'muted', text: t('workspace.containers.autoProvisionHelp') }),
     field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
     field(t('workspace.containers.ipv6Enabled'), ipv6Enabled),
     el('div', { className: 'field' }, [
@@ -198,14 +233,18 @@ function addContainerForm(refresh) {
         const sequenceNumber = parseContainerSequence(nameSequence.value);
         const payload = {
           name: fixedName && sequenceNumber ? containerDisplayName(fixedName, sequenceNumber) : '',
-          image: image.value.trim() || undefined,
+          host: host.value,
           runtime: {
-            ...(dockerName.value.trim() ? { dockerName: dockerName.value.trim() } : {}),
             ipv4Enabled: ipv4Enabled.checked,
             ipv6Enabled: ipv6Enabled.checked,
             ipv6Suffix: ipv6Enabled.checked ? ipv6Suffix.value.trim() : null,
           },
         };
+        if (!payload.host) {
+          store.workspace.containerNotice = t('workspace.containers.hostRequired');
+          status.textContent = store.workspace.containerNotice;
+          return;
+        }
         if (!fixedName) {
           store.workspace.containerNotice = t('workspace.containers.nameRequired');
           status.textContent = store.workspace.containerNotice;
@@ -236,7 +275,7 @@ function addContainerForm(refresh) {
             status.textContent = store.workspace.containerNotice;
             return;
           }
-          store.workspace.containerNotice = t('workspace.containers.createRequested');
+          store.workspace.containerNotice = t('workspace.containers.createdAndAdded');
           await refreshAll();
           store.workspace.containerNamePrefix = fixedName;
           store.workspace.containerNameSequence = nextContainerSequence(fixedName, store.containers);
@@ -586,6 +625,14 @@ function validContainerSequence(value) {
 
 function containerDisplayName(prefix, sequence) {
   return `${normalizeContainerNamePrefix(prefix)} ${sequence}`;
+}
+
+function containerHostLabel(host) {
+  if (host.label) return `${host.label} - ${t('workspace.containers.hostConnectedShort')}`;
+  const runtime = host.runtime === 'local-docker'
+    ? t('workspace.containers.localDockerHost')
+    : t('workspace.containers.sshDockerHost');
+  return `${runtime} - ${t('workspace.containers.hostConnectedShort')}`;
 }
 
 function randomIpv6Eui64Suffix() {

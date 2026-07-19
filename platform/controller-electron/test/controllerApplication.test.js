@@ -85,6 +85,41 @@ test('application runtime status reports the actual bound WSS port', async () =>
   assert.equal(status.port, 49152);
 });
 
+test('application exposes only a probed configured Docker host and owns container defaults', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  const config = managedRuntimeConfig();
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, config, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  const hosts = await app.listContainerHosts();
+  assert.deepEqual(hosts.data, {
+    status: 'connected',
+    hosts: [{ id: 'configured-docker-host', label: 'Reviewed Linux host', runtime: 'ssh-docker', connected: true }],
+  });
+
+  const added = await app.addContainer({ name: 'Agent One', host: 'configured-docker-host', runtime: { ipv4Enabled: true } });
+  assert.equal(added.data.container.host, 'configured-docker-host');
+  assert.equal(added.data.container.image, 'war-browser-agent:reviewed');
+  assert.match(added.data.container.runtime.dockerName, /^war-Agent-One-[0-9a-f]{8}$/);
+  await assert.rejects(
+    () => app.addContainer({ name: 'Wrong Host', host: 'renderer-selected-host' }),
+    (error) => error.code === 'INVALID_CONTAINER_HOST',
+  );
+});
+
+test('application re-probes the selected Docker host before provisioning a container', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  adapter.probe = async () => { throw new Error('host offline'); };
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, config: managedRuntimeConfig(), now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  await assert.rejects(
+    () => app.addContainer({ name: 'Agent Offline', host: 'configured-docker-host' }),
+    (error) => error.code === 'CONTAINER_HOST_UNAVAILABLE',
+  );
+  assert.deepEqual(core.containers.listContainers().containers, []);
+});
+
 test('application manages container lifecycle through a bounded adapter', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
@@ -422,7 +457,8 @@ function fakeTransport({ failDispatch = false, failDispatchDeviceId = null, fail
 function fakeContainerAdapter() {
   return {
     calls: [],
-    async create(container) { this.calls.push({ action: 'create', id: container.id }); return { runtime: { ...container.runtime, dockerName: container.runtime.dockerName || container.id, privileged: false } }; },
+    async probe() { this.calls.push({ action: 'probe' }); return { connected: true }; },
+    async create(container) { this.calls.push({ action: 'create', id: container.id, container: structuredClone(container) }); return { runtime: { ...container.runtime, dockerName: container.runtime.dockerName || container.id, privileged: false } }; },
     async start(container) { this.calls.push({ action: 'start', id: container.id }); return {}; },
     async stop(container) { this.calls.push({ action: 'stop', id: container.id }); return {}; },
     async restart(container) { this.calls.push({ action: 'restart', id: container.id }); return {}; },
@@ -440,6 +476,23 @@ function fakeContainerAdapter() {
       };
     },
     async delete(container) { this.calls.push({ action: 'delete', id: container.id }); return {}; },
+  };
+}
+
+function managedRuntimeConfig() {
+  return {
+    dataPath: 'data',
+    degraded: false,
+    errors: [],
+    wss: { enabled: true, requested: true, status: 'enabled', host: '127.0.0.1', port: 47651, tls: {} },
+    containers: {
+      enabled: true,
+      runtime: 'ssh-docker',
+      hostId: 'configured-docker-host',
+      hostDisplayName: 'Reviewed Linux host',
+      hostLabel: 'ssh-docker',
+      image: 'war-browser-agent:reviewed',
+    },
   };
 }
 

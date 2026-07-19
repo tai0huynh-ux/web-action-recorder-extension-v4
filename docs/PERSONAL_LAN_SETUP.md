@@ -21,6 +21,7 @@ $env:WAR_CONTROLLER_ALLOW_LAN="1"
 $env:WAR_CONTROLLER_TLS_CERT_PATH="<certificate-path>"
 $env:WAR_CONTROLLER_TLS_KEY_PATH="<private-key-path>"
 $env:WAR_CONTAINER_RUNTIME="ssh-docker"
+$env:WAR_CONTAINER_HOST_LABEL="Máy Linux phòng làm việc"
 $env:WAR_CONTAINER_SSH_TARGET="<dedicated-agent-host>"
 $env:WAR_CONTAINER_SSH_IDENTITY_FILE="$env:USERPROFILE\.ssh\id_ed25519"
 $env:WAR_CONTAINER_CONTROLLER_HOST="<controller-address-reachable-by-agent>"
@@ -29,7 +30,9 @@ $env:WAR_CONTAINER_SECCOMP_PROFILE_PATH="/etc/war/security/chromium-userns-secco
 $env:WAR_CONTAINER_IPV6_INTERFACE="<linux-interface-with-global-ipv6-64>"
 ```
 
-The managed adapter invokes SSH with `-F NUL`, the configured identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10`; it never relies on the user SSH config. Do not place credentials, private keys, personal IP addresses, or SSH keys in source files. Pair each Agent through the Controller UI and store the one-time credential only in the managed Agent data volume.
+`WAR_CONTAINER_HOST_LABEL` is the safe display name shown in the **Máy chạy container** selector. The Controller never exposes the SSH target or identity path to the renderer. Opening **Thêm container** probes Docker first; only a successful configured host can be selected. Creating a container re-runs the probe, chooses the approved image and a unique Docker name, provisions the managed Agent credential and data volume, applies WSS, resource, AppArmor/seccomp, and sandbox settings, then adds the result to the application list.
+
+The managed adapter invokes SSH with `-F NUL`, the configured identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10`; it never relies on the user SSH config. Do not place credentials, private keys, personal IP addresses, or SSH keys in source files. The one-time managed Agent credential is written only to its isolated data volume.
 
 `WAR_CONTAINER_IPV6_INTERFACE` is optional when the Docker host has exactly one unique global `/64` prefix; the adapter discovers its interface. Configure it when the host has multiple global prefixes. The default driver is `macvlan`. Use `WAR_CONTAINER_IPV6_DRIVER=bridge` only with a separately routed/delegated `/64`, normally together with `WAR_CONTAINER_IPV6_PREFIX=<prefix>/64`. Automatic provider-prefix changes require interface discovery rather than a static override.
 
