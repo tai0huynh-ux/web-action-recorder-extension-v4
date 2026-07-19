@@ -1,6 +1,6 @@
 # Project State - Web Action Recorder v4
 
-Updated: 2026-07-18
+Updated: 2026-07-19
 Source of truth: the checked-out repository root.
 
 ## Current Status
@@ -11,17 +11,30 @@ Phase 2: Complete with persistent native X11 backend; Native X11 Gate passed thr
 
 Current Gate: Active Chromium Sandbox and Container Real-World Gate: PASS.
 
-Current milestone: Phase 9 documentation and exact-head regression acceptance.
+Current milestone: Phase 10 final personal-LAN acceptance.
 
-Next milestone: Phase 10 final clean MVP acceptance and soak.
+Next milestone: post-MVP maintenance after exact-final-SHA GitHub workflow confirmation.
 
 Controller dispatch reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate passes a controlled local search/copy workflow with the active Chromium user-namespace sandbox, TLS WSS dispatch, result uplink, terminal replay protection, cancel, and cleanup. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+
+## Phase 10 Final Personal-LAN Acceptance
+
+Updated: 2026-07-19
+
+Status: Product path, security verification, soak, local regression, release gates, and cleanup PASS. Final decision is conditioned only on all three GitHub workflows passing on the exact documentation commit.
+
+- Persistent reviewed AppArmor and seccomp installation verified by path, owner, mode, hash, JSON parse, enforce state, and disposable container startup.
+- Managed Controller lifecycle PASS: Add, status, Stop, Start, Restart, Duplicate, Delete, authenticated online state, bounded resources, and exact SSH identity/options without user SSH config.
+- Product acceptance PASS: real Chromium/MV3/Native Messaging execution, origin synchronization and idempotency, graph revision preservation/execution, grouped text/table/cell dispatch, clipboard exact match, cancel/duplicate cancel, offline same-job replay exactly once, and Controller/Agent restart persistence.
+- Soak PASS: 20 successful dispatches, 5 Agent restarts, 3 Controller restarts, 5 offline replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases.
+- Zero unexpected duplicates, lost terminal results, duplicate devices/sessions, synchronization duplicates, revision overwrites, credential exposures, or unsandboxed executions were observed.
+- Local `npm.cmd ci`, `test:all`, WSS negative gate, Edge E2E, Electron/package/release integrity and release gate PASS.
 
 ## Phase 9 Active Chromium Sandbox Acceptance
 
 Updated: 2026-07-18
 
-Status: PASS on GitHub-hosted `ubuntu-24.04`. Final MVP acceptance remains pending Phase 10.
+Status: PASS on GitHub-hosted `ubuntu-24.04`; superseded by the Phase 10 final acceptance section above.
 
 - Exact accepted implementation SHA: `995233b21f89a3376bf2631a5f69e91329cbdbd4`.
 - Container Real World Gate run: `29653528313`.

@@ -28,7 +28,7 @@ Latest accepted sandbox run: GitHub Actions `29653528313`.
 
 The gate verifies a non-root, resource-bounded Browser Agent container; exact AppArmor and constrained seccomp policies; Chromium's authoritative `chrome://sandbox` status; MV3 Extension; Native Messaging; TLS WSS Controller dispatch; controlled search/copy execution; result uplink; terminal replay protection; cancel; and cleanup. Chromium reported SUID false with user, PID, network, seccomp-BPF, TSYNC, and overall sandbox status true.
 
-Run the host probe with `npm.cmd run probe:chromium-sandbox-host` on a reviewed Linux Docker host. See `docs/PERSONAL_LAN_SETUP.md`, `docs/MVP_ACCEPTANCE.md`, and `docs/TROUBLESHOOTING.md`. Final personal-LAN readiness still requires Phase 10 acceptance and soak; the container gate alone is not that claim.
+Run the host probe with `npm.cmd run probe:chromium-sandbox-host` on a reviewed Linux Docker host. See `docs/PERSONAL_LAN_SETUP.md`, `docs/MVP_ACCEPTANCE.md`, and `docs/TROUBLESHOOTING.md`. Phase 10 managed-product acceptance and soak pass on the reviewed host; the final readiness claim remains bound to all three GitHub workflows passing on the exact release/documentation SHA.
 
 ## Release Packaging
 

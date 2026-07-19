@@ -33,6 +33,12 @@ The packaged Controller must complete the supported path: startup, TLS WSS, mana
 
 Required zero counts: duplicate executions, lost terminal results, credential exposures, duplicate devices, duplicate authoritative sessions, synchronization duplicates, unexpected revision overwrites, and unsandboxed Chromium executions.
 
+## Phase 10 execution result
+
+The reviewed Linux host and implementation checkpoint `8fe2706c8803f04cedfc092babbe7b004b8f3f79` pass the persistent AppArmor/seccomp verification, disposable policy probe, managed lifecycle, complete product path, negative security cases, cleanup, local regression, packaging, and required soak matrix. The managed product run covers origin synchronization, repeated-pull idempotency, graph revision preservation/execution, grouped text/table/cell dispatch, exact clipboard verification, cancellation, offline exactly-once replay, and Controller/Agent restart persistence.
+
+The final readiness claim remains bound to one additional condition: CI, Container Real World Gate, and Windows Release Gate must all pass on the exact commit containing this acceptance documentation. Runtime evidence under `artifacts/physical-lan-pilot/` is intentionally ignored and must not be committed.
+
 ## Classification
 
 - `PASS`: every required exact-SHA gate and soak case passes.

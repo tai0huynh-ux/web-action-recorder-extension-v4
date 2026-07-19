@@ -1,6 +1,6 @@
 # Chromium Control Platform State
 
-Updated: 2026-07-18
+Updated: 2026-07-19
 
 ## Phase
 
@@ -8,7 +8,14 @@ Phase 1 - Browser Agent minimal container gate is complete on a reviewed Linux D
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Active Chromium Sandbox and Container Real-World Gate: PASS. Final personal-LAN decision remains pending Phase 10.
+Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS. Final decision awaits exact-final-SHA GitHub workflow confirmation.
+
+## Phase 10 Reviewed Host Acceptance
+
+- Installed AppArmor and seccomp policies match the repository-reviewed hashes and are root-owned, non-symlink, non-group/world-writable regular files.
+- A disposable non-root container starts with `war-browser-agent (enforce)` and seccomp mode `2` without privileged, host network/PID, mounts, capabilities, unconfined options, or sandbox bypass.
+- Managed lifecycle and the complete product path pass using explicit SSH identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10` with `-F NUL`.
+- Managed Chromium executes without `WAR_BROWSER_NO_SANDBOX=1`, `--no-sandbox`, or equivalent bypass; the required Phase 10 soak matrix passes with zero unsandboxed cycles.
 
 ## Phase 9 Managed Chromium Sandbox
 
@@ -37,7 +44,7 @@ Historical Phase 1/2 sections below describe older hosts and are retained as his
 - Failure evidence upload now runs with `if: always()` and includes sanitized timeline/result/event artifacts.
 - Physical two-machine LAN pilot: `NOT_RUN_NO_PHYSICAL_MACHINES`.
 - Production signing: `BLOCKED_EXTERNAL_SIGNING_CREDENTIAL`.
-- Historical decision was `READY_FOR_PHYSICAL_LAN_PILOT`; current final readiness remains pending Phase 10.
+- Historical decision was `READY_FOR_PHYSICAL_LAN_PILOT`; the Phase 10 reviewed-host acceptance above supersedes this historical state.
 
 ## Production Packaging and Release Gate
 

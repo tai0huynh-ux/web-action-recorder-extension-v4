@@ -161,6 +161,13 @@ Recommendation: use native messaging for local privileged companion communicatio
 - `no-new-privileges` is not set for this container because it blocks the reviewed AppArmor profile transition on Ubuntu 24.04; this exception does not add capabilities or disable AppArmor/seccomp.
 - Accepted medium limitations: broad extension host permission, no generic high-risk action classifier, unsigned development packages without external signing material, and no public-Internet deployment support.
 
+## Phase 10 final security acceptance
+
+- Reviewed host policy installation is persistent and independently verified by exact path, owner, mode, SHA-256, JSON parsing, AppArmor enforce state, and a disposable policy-bound container.
+- Managed runtime verification confirms non-root user, bridge/private PID namespaces, bounded memory/CPU/PIDs, loopback-only control port, exact AppArmor and canonical seccomp, no Docker socket or host-home mount, no added capabilities, no privileged/unconfined mode, and no Chromium sandbox bypass.
+- Negative WSS acceptance now requires rejection of missing trust, wrong TLS hostname, missing authorization, wrong credential, unpaired Agent, and revoked credential.
+- The full product path and soak complete with zero credential exposures, duplicate authoritative sessions, duplicate executions, lost terminal results, or unsandboxed executions.
+
 ## Non-goals / prohibited defaults
 
 - No public internet listener.

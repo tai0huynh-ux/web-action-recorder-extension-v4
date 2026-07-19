@@ -1,22 +1,27 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 10 - Final packaged-product acceptance and soak
+Phase 10 - Final packaged-product acceptance and soak complete; exact-head workflow synchronization remains the final gate.
 
 Current subphase:
-Phase 10 step 5 Docker recovery; SSH access is restored but the reviewed Linux security policy is not installed.
+Final documentation checkpoint and all three GitHub workflows on that exact commit.
 
-Last green commit:
-56304b03d58441d2a3c5ad9b317727493830768f
+Phase 10 implementation checkpoint:
+8fe2706c8803f04cedfc092babbe7b004b8f3f79
 
-HEAD:
-56304b03d58441d2a3c5ad9b317727493830768f
+Working tree before this documentation update:
+Clean; `HEAD == origin/main == 8fe2706c8803f04cedfc092babbe7b004b8f3f79`.
 
-origin/main:
-56304b03d58441d2a3c5ad9b317727493830768f
+## Phase 10 final acceptance evidence
 
-Working tree:
-Clean before this execution-state update.
+- Persistent host policy verification: PASS. AppArmor `/etc/apparmor.d/containers/war-browser-agent` is root-owned mode `0644`, SHA-256 `0d28cf5e412992d3cb1bc8759bb6cf9cf1602e9aee54ebef52046f3f9b9b710d`, loaded as `war-browser-agent (enforce)`. Seccomp `/etc/war/security/chromium-userns-seccomp.json` is root-owned mode `0644`, parses as JSON, and has SHA-256 `e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d`.
+- Disposable policy-bound probe: PASS with non-root UID `1001`, AppArmor enforce, seccomp mode `2`, bridge network, private PID namespace, no mounts, no capability additions, no privileged mode, and no unconfined/bypass option.
+- Managed-container lifecycle: PASS for Add, status, Stop, Start, Restart, Duplicate, Delete, authenticated WSS online state, exact SSH identity options, exact policy paths, bounded resources, loopback-only published control port, and cleanup. Evidence: ignored runtime artifact `phase10-managed-acceptance-1784443609836.json`.
+- Managed product path: PASS for real Browser Agent/Chromium/MV3/Native Messaging execution, exact clipboard match, cancel and duplicate cancel, grouped text/table/cell dispatch, three graph revision save/execute cycles with every previous revision preserved, three origin pull cycles including repeated-pull idempotency, offline same-job replay exactly once, Agent restart persistence, Controller restart persistence, and cleanup. Evidence: ignored runtime artifact `phase10-managed-product-1784445868094.json`.
+- Required soak matrix: PASS for 20 successful dispatches, 5 Agent/container restarts, 3 Controller restarts, 5 offline replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases. Duplicate execution/device/session, lost terminal result, and unsandboxed-cycle counts are zero. Evidence: ignored runtime artifact `phase10-soak-1784444918548.json`.
+- Negative security: PASS for wrong TLS trust, wrong TLS hostname/endpoint, missing authorization, wrong credential, unpaired Agent, revoked credential, terminal replay count zero, and cleanup. The WSS gate now makes these cases mandatory.
+- Local final regression: `npm.cmd ci`, `npm.cmd run test:all`, WSS gate, Controller-to-Extension Edge E2E, Electron smoke, package generation, packaged smoke, release bundle, release integrity, and release gate all pass. Release integrity checks 79 artifacts with tamper detection and secret scan PASS.
+- Source repairs pushed during Phase 10: `29e20aa68de6da640791141b119e47a493074ba6` adds explicit managed-Docker SSH identity/options and redacted runtime configuration; `8fe2706c8803f04cedfc092babbe7b004b8f3f79` expands mandatory WSS negative acceptance.
 
 Phase 8 result:
 PHASE_8_COMPLETE.
@@ -50,26 +55,26 @@ Phase 9 local verification after documentation:
 - `npm.cmd audit`: PASS; 0 vulnerabilities.
 - `npm.cmd ls --depth=0`: PASS; only the approved top-level runtime packages are present.
 - Local Windows `test:container-real-world`: `BLOCKED_INFRASTRUCTURE` because Docker CLI is unavailable; the GitHub-hosted exact-SHA gate remains mandatory and is not replaced by this local result.
-- Remote Docker recovery: SSH batch authentication PASS with the explicit identity; Docker server `29.4.2`, approved image present, no `war-phase10-*` resources found.
-- Remote host preflight: required AppArmor profile and `/etc/war/security/chromium-userns-seccomp.json` are missing; non-interactive sudo is unavailable. No managed container was created.
+- Historical recovery checkpoint: SSH batch authentication passed with the explicit identity and Docker server `29.4.2`, but the reviewed policy was not yet installed at that time.
+- Resolution: the reviewed AppArmor/seccomp files were subsequently installed persistently and the complete Phase 10 managed-container acceptance above passed.
 - Phase 10 local WSS gate: PASS; TLS verification, replay, revocation, and cleanup passed on `9a0ee7563ad3ffe06ac1e99278cd431bbb462ef5`.
 - Phase 10 local Controller-to-Extension Edge E2E: PASS; real Browser Agent/Chromium/MV3, grouped input, graph edit, execution, cancel, replay, and cleanup passed.
 - Phase 10 local Electron smoke, packaged smoke, release integrity, and release gate: PASS.
 - Phase 10 local Browser Agent soak: `BLOCKED_INFRASTRUCTURE` with `spawn docker ENOENT`; no soak success is claimed.
 
 Final acceptance:
-Phase 10 is partially verified and blocked. Packaged Controller, secure WSS/TLS, Edge Controller-to-Extension E2E, Electron smoke, package integrity, packaged smoke, and release gate pass. Managed-container active-sandbox execution and the required soak matrix cannot start until the remote host has the reviewed AppArmor/seccomp policy installed.
+The complete secure Phase 10 product path, soak matrix, local regression, release gates, cleanup, and Git synchronization pass. `MVP_READY_FOR_PERSONAL_LAN_USE` may be returned only after CI, Container Real World Gate, and Windows Release Gate pass on the exact final documentation commit.
 
 Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29654213429` passed at exact SHA `9fa0c1af53921d7e887c71d3fa63da9854aebc73` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
 - The Windows credential-file regression is repaired with a platform-aware identity comparison that retains strict type, symlink, size, and POSIX permission checks; CI and Windows full tests now pass.
-- Phase 10 managed-container and soak are blocked by missing remote host security policy and unavailable non-interactive sudo. This is an infrastructure/privilege blocker, not a product failure. Do not replace it with unconfined security options or an unsandboxed Chromium run.
+- No remaining Phase 10 product or infrastructure blocker. Production signing material and public-Internet deployment remain outside the personal-LAN MVP scope.
 
 Next exact action:
-Have an administrator install and load the reviewed AppArmor profile and seccomp policy on the remote Linux Docker host, then rerun the bounded preflight and Phase 10 acceptance.
+Commit and push this documentation checkpoint, run all three GitHub workflows on that exact SHA, verify Git synchronization/cleanliness, and return the final decision.
 
 Remaining MVP work:
-- Phase 10 clean packaged-product acceptance, soak, final regression, workflows, documentation, and cleanup.
+- Exact-final-SHA GitHub CI, Container Real World Gate, and Windows Release Gate only.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad
