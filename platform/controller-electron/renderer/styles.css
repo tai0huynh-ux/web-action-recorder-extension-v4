@@ -406,6 +406,41 @@ th {
   background: #ffffff;
   color: var(--text);
   text-align: left;
+  cursor: pointer;
+}
+
+.device-card:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent), transparent 45%);
+  outline-offset: 2px;
+}
+
+.device-card-head {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-card-delete {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.device-card-delete:hover,
+.device-card-delete:focus-visible {
+  border-color: var(--danger);
+  background: #fff1f1;
 }
 
 .network-settings {

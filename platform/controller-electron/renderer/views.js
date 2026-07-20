@@ -521,14 +521,34 @@ function deviceCard(device, devices, index, refresh) {
   const name = device.displayName || device.name || id || t('workspace.containers.unknown');
   const selected = store.workspace.selection.selectedIds.has(id);
   const group = groupNames(device.groupIds || []);
-  const card = el('button', {
+  const managedContainer = device.managedContainer
+    ? store.containers.find((container) => container.id === device.containerId)
+      || { id: device.containerId, name: device.containerName || name, status: device.status }
+    : null;
+  const deleteDisabled = !managedContainer
+    || managedContainer.status === 'deleted'
+    || managedContainer.status === 'deleting'
+    || Boolean(store.workspace.containerPending?.[managedContainer.id]);
+  const card = el('article', {
     className: selected ? 'device-card selected' : 'device-card',
     role: 'option',
     ariaSelected: selected,
     ariaLabel: `${name} ${t(`status.${status}`)}`,
+    tabIndex: 0,
   }, [
-    el('span', { className: 'device-name', text: name }),
-    el('span', { className: `status-pill ${status}`, text: t(`status.${status}`) }),
+    el('div', { className: 'device-card-head' }, [
+      el('span', { className: 'device-name', text: name }),
+      el('span', { className: `status-pill ${status}`, text: t(`status.${status}`) }),
+      managedContainer ? button('×', async (event) => {
+        event.stopPropagation?.();
+        await containerAction('delete', managedContainer, refresh);
+      }, {
+        className: 'device-card-delete',
+        disabled: deleteDisabled,
+        ariaLabel: t('workspace.containers.deleteConfirm', { name, id: managedContainer.id }),
+        title: t('workspace.containers.delete'),
+      }) : null,
+    ]),
     el('span', { className: 'device-meta', text: shortId(id) }),
     el('span', { className: 'device-meta', text: versionSummary(device) }),
     group ? el('span', { className: 'device-meta', text: group }) : null,

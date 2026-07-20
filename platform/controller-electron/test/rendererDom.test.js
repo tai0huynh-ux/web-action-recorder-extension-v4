@@ -182,7 +182,7 @@ test('workspace selected machine count updates', async () => {
   state.store.view = 'workspace';
   state.store.devices = [deviceFixture('dev-a', 'Máy 1'), deviceFixture('dev-b', 'Máy 2')];
   let current = views.renderView(() => { current = views.renderView(() => {}); });
-  await clickButton(current, 'Máy 1Trực tuyếndev-aAgent 0.1 / Ext 0.1Chưa có dữ liệuGốc');
+  await all(current, (node) => node.getAttribute('role') === 'option' && node.textContent.includes('Máy 1'))[0].click();
   assert.equal(state.store.workspace.selection.selectedIds.has('dev-a'), true);
   current = views.renderView(() => {});
   assert.ok(current.textContent.includes('Đã chọn 1 máy'));
@@ -202,7 +202,7 @@ test('workspace device filter changes the visible device list', async () => {
   filter.value = 'containers';
   await fire(filter, 'change');
 
-  const cards = all(current, (node) => node.className.includes('device-card') && !node.className.includes('managed-container'));
+  const cards = all(current, (node) => node.className === 'device-card' && node.getAttribute('role') === 'option');
   assert.equal(cards.length, 1);
   assert.ok(cards[0].textContent.includes('Agent One'));
 });
@@ -214,7 +214,7 @@ test('workspace text, grid, and cell picker controls retain editable draft state
   let current;
   const refresh = () => { current = views.renderView(refresh); };
   current = views.renderView(refresh);
-  await clickButton(current, all(current, (node) => node.className.includes('device-card'))[0].textContent);
+  await all(current, (node) => node.className.includes('device-card'))[0].click();
 
   const textarea = first(current, 'textarea');
   textarea.value = 'a|b\nc';
@@ -336,6 +336,35 @@ test('workspace action graph connects output and input ports in edit mode', asyn
   await fire(input, 'pointerup');
   assert.equal(state.store.workspace.graphConnectingFrom, '');
   assert.ok(state.store.workspace.graphDraftEdges.some((edge) => edge.from === 'sample-switch' && edge.to === 'sample-input'));
+});
+
+test('workspace action graph drags a node only in edit mode and persists its position', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  const node = all(current, (item) => item.getAttribute('data-node-id') === 'sample-switch')[0];
+  const header = all(node, (item) => item.className === 'graph-node-header')[0];
+  await fireWithEvent(header, 'pointerdown', { clientX: 100, clientY: 100 });
+  await dispatchGlobal('pointermove', { clientX: 180, clientY: 150 });
+  await dispatchGlobal('pointerup', { clientX: 180, clientY: 150 });
+
+  const moved = state.store.workspace.graphDraftNodes.find((item) => item.id === 'sample-switch');
+  assert.equal(moved.x, 190);
+  assert.equal(moved.y, 104);
+
+  await clickButton(current, i18n.t('workspace.graph.editing'));
+  const lockedNode = all(current, (item) => item.getAttribute('data-node-id') === 'sample-switch')[0];
+  const lockedHeader = all(lockedNode, (item) => item.className === 'graph-node-header')[0];
+  await fireWithEvent(lockedHeader, 'pointerdown', { clientX: 100, clientY: 100 });
+  await dispatchGlobal('pointermove', { clientX: 240, clientY: 220 });
+  await dispatchGlobal('pointerup', { clientX: 240, clientY: 220 });
+  const stillLocked = state.store.workspace.graphDraftNodes.find((item) => item.id === 'sample-switch');
+  assert.equal(stillLocked.x, 190);
+  assert.equal(stillLocked.y, 104);
 });
 
 test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
@@ -499,6 +528,26 @@ test('managed container delete calls the Controller and refreshes terminal statu
   await clickButton(current, i18n.t('workspace.containers.delete'));
   assert.equal(apiState.containerCalls.delete, 1);
   assert.equal(apiState.containers[0].status, 'deleted');
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.actionDone')));
+});
+
+test('managed container card exposes a direct delete control without changing selection', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One' })];
+  state.store.containers = apiState.containers;
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  const card = all(current, (node) => node.className === 'device-card')[0];
+  const deleteButton = all(card, (node) => node.localName === 'button' && node.className === 'device-card-delete')[0];
+  assert.ok(deleteButton);
+  await deleteButton.click();
+
+  assert.equal(apiState.containerCalls.delete, 1);
+  assert.equal(state.store.workspace.selection.selectedIds.size, 0);
   assert.ok(current.textContent.includes(i18n.t('workspace.containers.actionDone')));
 });
 
@@ -966,6 +1015,7 @@ test('jobs dispatch transport warning remains visible after refresh', async () =
 
 function resetStore() {
   views.clearPairingSecret();
+  globalThis.__fakeGlobalListeners?.clear();
   apiState.groups = [];
   apiState.containers = [];
   apiState.containerCalls = {};
@@ -1082,6 +1132,18 @@ function findButton(root, label) {
 async function fire(node, type) {
   for (const listener of node.listeners.get(type) || []) {
     await listener({ currentTarget: node, target: node });
+  }
+}
+
+async function fireWithEvent(node, type, event = {}) {
+  for (const listener of node.listeners.get(type) || []) {
+    await listener({ currentTarget: node, target: node, ...event });
+  }
+}
+
+async function dispatchGlobal(type, event = {}) {
+  for (const listener of globalThis.__fakeGlobalListeners?.get(type) || []) {
+    await listener(event);
   }
 }
 
@@ -1399,6 +1461,16 @@ function graphFixture(overrides = {}) {
 
 function installFakeDom() {
   globalThis.Node = FakeNode;
+  globalThis.__fakeGlobalListeners = new Map();
+  globalThis.addEventListener = (type, listener) => {
+    const listeners = globalThis.__fakeGlobalListeners.get(type) || [];
+    listeners.push(listener);
+    globalThis.__fakeGlobalListeners.set(type, listeners);
+  };
+  globalThis.removeEventListener = (type, listener) => {
+    const listeners = globalThis.__fakeGlobalListeners.get(type) || [];
+    globalThis.__fakeGlobalListeners.set(type, listeners.filter((item) => item !== listener));
+  };
   globalThis.document = {
     documentElement: new FakeElement('html'),
     createElement: (tag) => new FakeElement(tag),
