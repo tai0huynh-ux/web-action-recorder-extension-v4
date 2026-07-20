@@ -123,7 +123,7 @@ function containersPane(refresh, active = false) {
     store.workspace.filterOpen ? containerFilterPanel(refresh) : null,
     store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
-    store.containers.length ? managedContainerActions(refresh) : null,
+    activeManagedContainers().length ? managedContainerActions(refresh) : null,
   ]);
 }
 
@@ -315,7 +315,7 @@ function addContainerForm(refresh) {
 
 function managedContainerActions(refresh) {
   return el('div', { className: 'device-list', ariaLabel: t('workspace.containers.managed') },
-    store.containers.map((container) => {
+    activeManagedContainers().map((container) => {
       const pendingAction = store.workspace.containerPending?.[container.id] || '';
       const displayStatus = pendingAction ? pendingStatus(pendingAction) : normalizeDeviceStatus(container);
       const terminalDisabled = container.status === 'deleted' || container.status === 'deleting';
@@ -629,13 +629,17 @@ function visibleWorkspaceDevices() {
 }
 
 function allWorkspaceDevices() {
-  const managedByDevice = new Map(store.containers.map((container) => [container.deviceId, container]));
-  const devices = store.devices.map((device) => {
+  const activeContainers = activeManagedContainers();
+  const deletedDeviceIds = new Set(store.containers
+    .filter((container) => container.status === 'deleted' && container.deviceId)
+    .map((container) => container.deviceId));
+  const managedByDevice = new Map(activeContainers.map((container) => [container.deviceId, container]));
+  const devices = store.devices.filter((device) => !deletedDeviceIds.has(device.id || device.deviceId)).map((device) => {
     const container = managedByDevice.get(device.id || device.deviceId);
     return container ? { ...device, managedContainer: true, containerId: container.id, containerName: container.name, containerHost: container.host } : device;
   });
   const known = new Set(devices.map((device) => device.id || device.deviceId));
-  return [...devices, ...store.containers.filter((container) => !known.has(container.deviceId)).map((container) => ({
+  return [...devices, ...activeContainers.filter((container) => !known.has(container.deviceId)).map((container) => ({
     ...container,
     id: container.deviceId || container.id,
     displayName: container.name,
@@ -648,6 +652,10 @@ function allWorkspaceDevices() {
     containerName: container.name,
     containerHost: container.host,
   }))];
+}
+
+function activeManagedContainers() {
+  return store.containers.filter((container) => container.status !== 'deleted');
 }
 
 function selectionStatus() {
@@ -1013,6 +1021,7 @@ function graphToolbar(canvas, nodes, refresh) {
     button(t('workspace.graph.undo'), () => undoWorkspaceGraph(refresh), { className: 'button compact', disabled: !editing || !store.workspace.graphHistory.length }),
     button(t('workspace.graph.redo'), () => redoWorkspaceGraph(refresh), { className: 'button compact', disabled: !editing || !store.workspace.graphFuture.length }),
     el('span', { className: 'graph-zoom-status', text: `${Math.round(viewport.scale * 100)}%` }),
+    el('span', { className: 'graph-pan-help', text: t('workspace.graph.panHelp') }),
   ]);
 }
 
@@ -1026,6 +1035,20 @@ function graphCanvas(nodes, refresh) {
   stage.style?.setProperty('--graph-offset-x', `${viewport.offsetX}px`);
   stage.style?.setProperty('--graph-offset-y', `${viewport.offsetY}px`);
   const canvas = el('div', { className: 'graph-canvas', tabIndex: 0, ariaLabel: t('workspace.graph.title') }, [stage]);
+  installGraphCanvasPan(canvas, stage, refresh);
+  canvas.addEventListener('wheel', (event) => {
+    if (graphControlConsumesPointer(event.target)) return;
+    const deltaY = Number(event.deltaY);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    event.preventDefault?.();
+    const rect = canvas.getBoundingClientRect?.() || { left: 0, top: 0 };
+    const clientX = Number(event.clientX);
+    const clientY = Number(event.clientY);
+    zoomGraphViewport(canvas, deltaY < 0 ? 0.1 : -0.1, refresh, {
+      x: Number.isFinite(clientX) ? clientX - Number(rect.left || 0) : undefined,
+      y: Number.isFinite(clientY) ? clientY - Number(rect.top || 0) : undefined,
+    });
+  }, { passive: false });
   canvas.addEventListener('keydown', (event) => {
     if (event.key === '+' || event.key === '=') {
       event.preventDefault();
@@ -1121,7 +1144,7 @@ function graphNode(node, refresh) {
     outputPort.addEventListener('pointerdown', (event) => startGraphConnection(node.id, event, refresh));
   }
   item.addEventListener('click', () => {
-    if (!editing && node.type === 'input') toggleGraphGroupNode(node.id, refresh);
+    if (!editing && graphNodeAcceptsGroupedInput(node)) toggleGraphGroupNode(node.id, refresh);
     else selectGraphNode(node.id, refresh);
   });
   installGraphNodeDrag(item, node, refresh, editing);
@@ -1129,8 +1152,10 @@ function graphNode(node, refresh) {
     if (event.target !== item) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    selectGraphNode(node.id, refresh);
+    if (!editing && graphNodeAcceptsGroupedInput(node)) toggleGraphGroupNode(node.id, refresh);
+    else selectGraphNode(node.id, refresh);
   });
+  item.setAttribute('data-groupable', String(graphNodeAcceptsGroupedInput(node)));
   return item;
 }
 
@@ -1281,7 +1306,7 @@ function addGraphGroup(refresh) {
 
 function toggleGraphGroupNode(nodeId, refresh) {
   const node = workspaceGraphNodes().find((item) => item.id === nodeId);
-  if (!node || node.type !== 'input') {
+  if (!graphNodeAcceptsGroupedInput(node)) {
     selectGraphNode(nodeId, refresh);
     return;
   }
@@ -1294,6 +1319,10 @@ function toggleGraphGroupNode(nodeId, refresh) {
   store.workspace.graphInputGroups = next;
   store.workspace.graphSelectedNodeId = nodeId;
   refresh();
+}
+
+function graphNodeAcceptsGroupedInput(node) {
+  return Boolean(node && Object.prototype.hasOwnProperty.call(node, 'body'));
 }
 
 function graphNodeBadge(node) {
@@ -1403,17 +1432,71 @@ function normalizeGraphViewport(value = {}) {
   };
 }
 
-function zoomGraphViewport(canvas, delta, refresh) {
+function installGraphCanvasPan(canvas, stage, refresh) {
+  canvas.addEventListener('pointerdown', (event) => {
+    if (event.target !== canvas && event.target !== stage) return;
+    event.preventDefault?.();
+    const startX = Number(event.clientX) || 0;
+    const startY = Number(event.clientY) || 0;
+    const original = normalizeGraphViewport(store.workspace.graphViewport);
+    let latest = original;
+    let moved = false;
+    canvas.className = `${canvas.className} panning`;
+
+    const move = (moveEvent) => {
+      const x = Number(moveEvent.clientX) || 0;
+      const y = Number(moveEvent.clientY) || 0;
+      moved ||= x !== startX || y !== startY;
+      latest = normalizeGraphViewport({
+        ...original,
+        offsetX: original.offsetX + x - startX,
+        offsetY: original.offsetY + y - startY,
+      });
+      stage.style?.setProperty('--graph-offset-x', `${latest.offsetX}px`);
+      stage.style?.setProperty('--graph-offset-y', `${latest.offsetY}px`);
+    };
+    const finish = () => {
+      globalThis.removeEventListener?.('pointermove', move);
+      globalThis.removeEventListener?.('pointerup', finish);
+      globalThis.removeEventListener?.('pointercancel', cancel);
+      canvas.className = canvas.className.replace(/\s+panning\b/g, '');
+      if (!moved) return;
+      store.workspace.graphViewport = latest;
+      store.workspace.graphViewportInitialized = true;
+      refresh();
+    };
+    const cancel = () => {
+      globalThis.removeEventListener?.('pointermove', move);
+      globalThis.removeEventListener?.('pointerup', finish);
+      globalThis.removeEventListener?.('pointercancel', cancel);
+      canvas.className = canvas.className.replace(/\s+panning\b/g, '');
+      stage.style?.setProperty('--graph-offset-x', `${original.offsetX}px`);
+      stage.style?.setProperty('--graph-offset-y', `${original.offsetY}px`);
+    };
+    globalThis.addEventListener?.('pointermove', move);
+    globalThis.addEventListener?.('pointerup', finish, { once: true });
+    globalThis.addEventListener?.('pointercancel', cancel, { once: true });
+  });
+}
+
+function graphControlConsumesPointer(target) {
+  return ['input', 'button', 'select', 'textarea'].includes(target?.localName)
+    || Boolean(target?.getAttribute?.('data-port'));
+}
+
+function zoomGraphViewport(canvas, delta, refresh, anchor = null) {
   const current = normalizeGraphViewport(store.workspace.graphViewport);
   const scale = Math.max(0.5, Math.min(1.6, Number((current.scale + delta).toFixed(2))));
   const width = Number(canvas?.clientWidth) || 900;
   const height = Number(canvas?.clientHeight) || 620;
   const ratio = scale / current.scale;
-  store.workspace.graphViewport = {
+  const anchorX = Number.isFinite(Number(anchor?.x)) ? Number(anchor.x) : width / 2;
+  const anchorY = Number.isFinite(Number(anchor?.y)) ? Number(anchor.y) : height / 2;
+  store.workspace.graphViewport = normalizeGraphViewport({
     scale,
-    offsetX: width / 2 - ((width / 2) - current.offsetX) * ratio,
-    offsetY: height / 2 - ((height / 2) - current.offsetY) * ratio,
-  };
+    offsetX: anchorX - (anchorX - current.offsetX) * ratio,
+    offsetY: anchorY - (anchorY - current.offsetY) * ratio,
+  });
   store.workspace.graphViewportInitialized = true;
   refresh();
 }
@@ -1986,6 +2069,271 @@ function graphNodePatch(node, name, value) {
   return patch;
 }
 
+function taskPackagePanel(refresh) {
+  const taskState = taskPackageState();
+  const devices = taskPackageDevices();
+  const workflows = taskPackageWorkflows();
+  if (!taskState.deviceSelectionInitialized) {
+    const selected = store.workspace.selection?.selectedIds || new Set();
+    taskState.selectedDeviceIds = devices.map((device) => device.id).filter((id) => selected.has(id));
+    taskState.deviceSelectionInitialized = true;
+  }
+
+  const name = el('input', { type: 'text', value: taskState.name, placeholder: t('taskPackage.namePlaceholder') });
+  const mode = el('select', { ariaLabel: t('taskPackage.mode') }, [
+    el('option', { value: 'matrix', text: t('taskPackage.matrixMode') }),
+    el('option', { value: 'paired', text: t('taskPackage.pairedMode') }),
+  ]);
+  mode.value = taskState.mode || 'matrix';
+  const workflowSelect = el('select', {
+    multiple: true,
+    size: Math.max(3, Math.min(8, workflows.length || 3)),
+    ariaLabel: t('taskPackage.workflows'),
+  }, workflows.map((workflow) => {
+    const option = el('option', { value: workflow.key, text: workflow.label });
+    option.selected = taskState.selectedWorkflowKeys.includes(workflow.key);
+    return option;
+  }));
+  const deviceSelect = el('select', {
+    multiple: true,
+    size: Math.max(3, Math.min(8, devices.length || 3)),
+    ariaLabel: t('taskPackage.devices'),
+  }, devices.map((device) => {
+    const option = el('option', { value: device.id, text: device.label });
+    option.selected = taskState.selectedDeviceIds.includes(device.id);
+    return option;
+  }));
+  const inputs = el('textarea', { rows: 5, value: taskState.inputs, placeholder: '{"query":"value"}' });
+  inputs.value = taskState.inputs || '';
+  const deadline = el('input', { type: 'number', min: 10, max: 86400, step: 1, value: taskState.deadlineSeconds ?? 300 });
+  let dispatchButton = null;
+  const invalidate = () => {
+    store.taskPackagePreview = null;
+    store.taskPackageResult = null;
+    taskState.notice = '';
+    taskState.error = '';
+    if (dispatchButton) dispatchButton.disabled = true;
+  };
+  name.addEventListener('input', () => { taskState.name = name.value; invalidate(); });
+  mode.addEventListener('change', () => { taskState.mode = mode.value; invalidate(); refresh(); });
+  workflowSelect.addEventListener('change', () => { taskState.selectedWorkflowKeys = selectedOptionValues(workflowSelect); invalidate(); });
+  deviceSelect.addEventListener('change', () => { taskState.selectedDeviceIds = selectedOptionValues(deviceSelect); invalidate(); });
+  inputs.addEventListener('input', () => { taskState.inputs = inputs.value; invalidate(); });
+  deadline.addEventListener('input', () => { taskState.deadlineSeconds = Number(deadline.value); invalidate(); });
+
+  const previewButton = button(t('taskPackage.preview'), () => {
+    if (taskState.pending) return;
+    try {
+      const plan = buildTaskPackagePlan();
+      store.taskPackagePreview = plan;
+      store.taskPackageResult = null;
+      taskState.error = '';
+      taskState.notice = t('taskPackage.previewReady', { count: plan.assignments.length });
+    } catch (error) {
+      store.taskPackagePreview = null;
+      taskState.notice = '';
+      taskState.error = error.message;
+    }
+    refresh();
+  }, { disabled: taskState.pending });
+  dispatchButton = button(t('taskPackage.dispatch'), () => dispatchTaskPackage(refresh), {
+    className: 'button primary',
+    disabled: taskState.pending || !store.taskPackagePreview,
+  });
+  const status = el('p', {
+    className: taskState.error ? 'status error' : 'status',
+    text: taskState.error || taskState.notice || '',
+    ariaLive: 'polite',
+  });
+
+  return el('section', { className: 'details task-package', ariaLabel: t('taskPackage.title') }, [
+    el('div', { className: 'task-package-heading' }, [
+      el('div', {}, [
+        el('h3', { text: t('taskPackage.title') }),
+        el('p', { className: 'muted', text: t('taskPackage.guidance') }),
+      ]),
+      el('span', { className: 'task-package-mode', text: mode.value === 'paired' ? t('taskPackage.pairedMode') : t('taskPackage.matrixMode') }),
+    ]),
+    el('div', { className: 'form-grid task-package-grid' }, [
+      field(t('taskPackage.name'), name),
+      field(t('taskPackage.mode'), mode),
+      field(t('taskPackage.workflows'), workflowSelect),
+      field(t('taskPackage.devices'), deviceSelect),
+      field(t('taskPackage.inputs'), inputs),
+      field(t('taskPackage.deadline'), deadline),
+    ]),
+    el('div', { className: 'toolbar' }, [previewButton, dispatchButton]),
+    status,
+    store.taskPackagePreview ? taskPackagePlanPanel(store.taskPackagePreview) : null,
+    store.taskPackageResult ? taskPackageResultPanel(store.taskPackageResult) : null,
+  ]);
+}
+
+function taskPackageState() {
+  store.taskPackage ||= {
+    name: '',
+    mode: 'matrix',
+    selectedWorkflowKeys: [],
+    selectedDeviceIds: [],
+    deviceSelectionInitialized: false,
+    inputs: '',
+    deadlineSeconds: 300,
+    pending: false,
+    notice: '',
+    error: '',
+  };
+  return store.taskPackage;
+}
+
+function taskPackageDevices() {
+  const seen = new Set();
+  const devices = [];
+  for (const device of allWorkspaceDevices()) {
+    const id = device.id || device.deviceId;
+    if (!id || seen.has(id)) continue;
+    const name = device.displayName || device.name || id;
+    const host = hostLabelFromId(device.containerHost, device);
+    const item = { id, label: host ? `${name} (${host})` : name, status: normalizeDeviceStatus(device) };
+    seen.add(id);
+    if (item.status !== 'revoked') devices.push(item);
+  }
+  return devices;
+}
+
+function taskPackageWorkflows() {
+  return store.workflows.map((workflow) => ({
+    key: `${workflow.workflowId}:${workflow.revision}`,
+    workflowId: workflow.workflowId,
+    revision: workflow.revision,
+    name: workflow.name || workflow.workflowId,
+    label: `${workflow.name || workflow.workflowId} - rev ${workflow.revision}`,
+  }));
+}
+
+function buildTaskPackagePlan() {
+  const taskState = taskPackageState();
+  const name = String(taskState.name || '').trim();
+  if (!name) throw new Error(t('taskPackage.nameRequired'));
+  if (name.length > 120) throw new Error(t('taskPackage.nameTooLong'));
+  const workflowKeys = [...new Set(taskState.selectedWorkflowKeys)];
+  const deviceIds = [...new Set(taskState.selectedDeviceIds)];
+  const workflows = workflowKeys.map((key) => taskPackageWorkflows().find((workflow) => workflow.key === key));
+  if (!workflows.length) throw new Error(t('taskPackage.workflowRequired'));
+  const devices = deviceIds.map((id) => taskPackageDevices().find((device) => device.id === id));
+  if (!devices.length) throw new Error(t('taskPackage.deviceRequired'));
+  if (workflows.some((workflow) => !workflow) || devices.some((device) => !device)) throw new Error(t('taskPackage.invalidSelection'));
+  const deadlineSeconds = Number(taskState.deadlineSeconds);
+  if (!Number.isInteger(deadlineSeconds) || deadlineSeconds < 10 || deadlineSeconds > 86400) throw new Error(t('taskPackage.invalidDeadline'));
+  const mode = taskState.mode === 'paired' ? 'paired' : 'matrix';
+  if (mode === 'paired' && workflows.length !== devices.length) throw new Error(t('taskPackage.pairedCountMismatch'));
+  const inputs = parseJsonInput(taskState.inputs);
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw new Error(t('taskPackage.invalidInputs'));
+  const assignments = mode === 'paired'
+    ? workflows.map((workflow, index) => ({ workflow, device: devices[index] }))
+    : workflows.flatMap((workflow) => devices.map((device) => ({ workflow, device })));
+  if (assignments.length > 200) throw new Error(t('taskPackage.planTooLarge', { count: 200 }));
+  return {
+    name,
+    mode,
+    workflows,
+    devices,
+    inputs,
+    deadlineSeconds,
+    assignments,
+    signature: JSON.stringify({ name, mode, workflowKeys: workflows.map((item) => item.key), deviceIds: devices.map((item) => item.id), inputs, deadlineSeconds }),
+  };
+}
+
+async function dispatchTaskPackage(refresh) {
+  const taskState = taskPackageState();
+  if (taskState.pending) return;
+  let plan;
+  try {
+    plan = buildTaskPackagePlan();
+    if (!store.taskPackagePreview || store.taskPackagePreview.signature !== plan.signature) throw new Error(t('taskPackage.previewRequired'));
+  } catch (error) {
+    taskState.error = error.message;
+    taskState.notice = '';
+    refresh();
+    return;
+  }
+  taskState.pending = true;
+  taskState.error = '';
+  taskState.notice = t('taskPackage.dispatching', { name: plan.name });
+  refresh();
+  try {
+    const items = await Promise.all(plan.assignments.map(async ({ workflow, device }) => {
+      try {
+        const result = await window.warController.jobs.dispatch({
+          deviceId: device.id,
+          workflowId: workflow.workflowId,
+          revision: workflow.revision,
+          inputs: plan.inputs,
+          deadlineSeconds: plan.deadlineSeconds,
+        });
+        if (result?.ok === false) throw new Error(safeError(result));
+        const data = unwrap(result);
+        if (data?.job?.id && data.transport) store.jobTransports[data.job.id] = data.transport;
+        return {
+          deviceId: device.id,
+          device: device.label,
+          workflow: workflow.name,
+          revision: workflow.revision,
+          jobId: data?.job?.id || '',
+          ok: true,
+          status: data?.transport?.delivered === false ? t('taskPackage.persistedOffline') : t('taskPackage.submitted'),
+        };
+      } catch (error) {
+        return {
+          deviceId: device.id,
+          device: device.label,
+          workflow: workflow.name,
+          revision: workflow.revision,
+          jobId: '',
+          ok: false,
+          status: `${t('taskPackage.failed')}: ${String(error.message || error).slice(0, 300)}`,
+        };
+      }
+    }));
+    const succeeded = items.filter((item) => item.ok).length;
+    const failed = items.length - succeeded;
+    store.taskPackageResult = { name: plan.name, mode: plan.mode, requested: items.length, succeeded, failed, items };
+    taskState.notice = t('taskPackage.dispatchDone', { succeeded, failed });
+    taskState.error = failed === items.length ? taskState.notice : '';
+    await refreshAll();
+  } catch (error) {
+    taskState.error = String(error.message || error).slice(0, 500);
+    taskState.notice = '';
+  } finally {
+    taskState.pending = false;
+    refresh();
+  }
+}
+
+function taskPackagePlanPanel(plan) {
+  return el('div', { className: 'task-package-plan' }, [
+    el('strong', { text: `${t('taskPackage.task')}: ${plan.name}` }),
+    table([
+      { key: 'device', label: t('taskPackage.machine') },
+      { key: 'workflow', label: t('taskPackage.workflow') },
+      { key: 'revision', label: t('taskPackage.revision') },
+    ], plan.assignments.map(({ device, workflow }) => ({ device: device.label, workflow: workflow.name, revision: workflow.revision }))),
+  ]);
+}
+
+function taskPackageResultPanel(result) {
+  return el('div', { className: 'task-package-result' }, [
+    el('strong', { text: `${t('taskPackage.task')}: ${result.name}` }),
+    table([
+      { key: 'device', label: t('taskPackage.machine') },
+      { key: 'workflow', label: t('taskPackage.workflow') },
+      { key: 'revision', label: t('taskPackage.revision') },
+      { key: 'jobId', label: t('taskPackage.job') },
+      { key: 'status', label: t('taskPackage.status') },
+    ], result.items),
+  ]);
+}
+
 function jobsView(refresh) {
   const device = select('Device', store.devices.map((item) => [item.id, item.name || item.id]));
   const workflow = select('Workflow', store.workflows.map((item) => [`${item.workflowId}:${item.revision}`, `${item.workflowId} rev ${item.revision}`]));
@@ -2036,6 +2384,7 @@ function jobsView(refresh) {
   const groupedPending = Boolean(groupedState.pending);
   const canDispatchGrouped = Boolean(store.groupedInputPreview) && !groupedPending && !groupedState.error;
   return section('Jobs', [
+    taskPackagePanel(refresh),
     el('div', { className: 'form-grid' }, [
       device.label,
       workflow.label,

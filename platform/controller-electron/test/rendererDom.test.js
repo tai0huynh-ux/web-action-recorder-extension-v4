@@ -271,6 +271,41 @@ test('workspace action graph zoom, fit, reset, and node selection update rendere
   assert.ok(all(current, (item) => item.className.includes('graph-node'))[0].className.includes('selected'));
 });
 
+test('workspace action graph pans on empty canvas and wheel-zooms around the pointer', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  const canvas = all(current, (node) => node.className === 'graph-canvas')[0];
+  canvas.clientWidth = 1000;
+  canvas.clientHeight = 600;
+  canvas.getBoundingClientRect = () => ({ left: 100, top: 50, width: 1000, height: 600 });
+
+  await fireWithEvent(canvas, 'pointerdown', { clientX: 200, clientY: 180, preventDefault() {} });
+  await dispatchGlobal('pointermove', { clientX: 260, clientY: 220 });
+  await dispatchGlobal('pointerup', { clientX: 260, clientY: 220 });
+  assert.deepEqual(state.store.workspace.graphViewport, { scale: 1, offsetX: 60, offsetY: 40 });
+
+  const zoomCanvas = all(current, (node) => node.className === 'graph-canvas')[0];
+  zoomCanvas.clientWidth = 1000;
+  zoomCanvas.clientHeight = 600;
+  zoomCanvas.getBoundingClientRect = () => ({ left: 100, top: 50, width: 1000, height: 600 });
+  let prevented = false;
+  await fireWithEvent(zoomCanvas, 'wheel', { deltaY: -120, clientX: 600, clientY: 350, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(state.store.workspace.graphViewport.scale, 1.1);
+  assert.equal(Math.round(state.store.workspace.graphViewport.offsetX), 16);
+  assert.equal(Math.round(state.store.workspace.graphViewport.offsetY), 14);
+
+  state.store.workspace.graphViewport = { scale: 1.6, offsetX: 0, offsetY: 0 };
+  current = views.renderView(refresh);
+  const clampedCanvas = all(current, (node) => node.className === 'graph-canvas')[0];
+  await fireWithEvent(clampedCanvas, 'wheel', { deltaY: -120, clientX: 100, clientY: 100, preventDefault() {} });
+  assert.equal(state.store.workspace.graphViewport.scale, 1.6);
+});
+
 test('workspace action graph supports edit, delete, undo, redo, add, and restore', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -296,7 +331,7 @@ test('workspace action graph supports edit, delete, undo, redo, add, and restore
   assert.deepEqual(state.store.workspace.graphDraftNodes.map((node) => node.id), workspaceState.WORKSPACE_SAMPLE_NODES.map((node) => node.id));
 });
 
-test('workspace action graph switches to grouped selection mode and orders input nodes', async () => {
+test('workspace action graph groups every node with an editable value in selection order', async () => {
   resetStore();
   state.store.view = 'workspace';
   state.store.workspace.activePane = 'graph';
@@ -311,10 +346,13 @@ test('workspace action graph switches to grouped selection mode and orders input
   const addGroup = all(groups, (node) => node.localName === 'button' && node.textContent === '+')[0];
   await addGroup.click();
   assert.equal(state.store.workspace.graphInputGroups.length, 2);
-  const inputNodes = all(current, (node) => node.className.includes('graph-node') && node.className.includes('input'));
-  await inputNodes[0].click();
-  assert.deepEqual(state.store.workspace.graphInputGroups[1].nodeIds, ['sample-input']);
-  assert.ok(all(current, (node) => node.className.includes('graph-node') && node.textContent.includes(`1 : ${i18n.t('workspace.graph.groupDefault')} 2`)).length >= 1);
+  for (const nodeId of ['sample-switch', 'sample-click', 'sample-input']) {
+    const node = all(current, (item) => item.getAttribute('data-node-id') === nodeId)[0];
+    assert.equal(node.getAttribute('data-groupable'), 'true');
+    await node.click();
+  }
+  assert.deepEqual(state.store.workspace.graphInputGroups[1].nodeIds, ['sample-switch', 'sample-click', 'sample-input']);
+  assert.ok(all(current, (node) => node.className.includes('graph-node') && node.textContent.includes(`3 : ${i18n.t('workspace.graph.groupDefault')} 2`)).length >= 1);
   await clickButton(current, i18n.t('workspace.graph.editMode'));
   await clickButton(current, i18n.t('workspace.graph.undo'));
   assert.equal(state.store.workspace.graphInputGroups.length, 1);
@@ -551,6 +589,34 @@ test('managed container card exposes a direct delete control without changing se
   assert.ok(current.textContent.includes(i18n.t('workspace.containers.actionDone')));
 });
 
+test('deleting the first managed container removes it and previously deleted containers from the active list', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [
+    containerFixture({ id: 'container-old', name: 'Old Agent', deviceId: 'managed-old', status: 'deleted' }),
+    containerFixture({ id: 'container-1', name: 'Agent One', deviceId: 'managed-one' }),
+    containerFixture({ id: 'container-2', name: 'Agent Two', deviceId: 'managed-two' }),
+  ];
+  state.store.containers = apiState.containers;
+  state.store.devices = [
+    { id: 'managed-old', name: 'Old Agent', status: 'revoked' },
+    { id: 'managed-one', name: 'Agent One', status: 'online' },
+    { id: 'managed-two', name: 'Agent Two', status: 'online' },
+  ];
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  assert.equal(current.textContent.includes('Old Agent'), false);
+
+  const firstCard = all(current, (node) => node.className === 'device-card' && node.textContent.includes('Agent One'))[0];
+  const deleteButton = all(firstCard, (node) => node.className === 'device-card-delete')[0];
+  await deleteButton.click();
+  assert.equal(apiState.containerCalls.delete, 1);
+  assert.equal(current.textContent.includes('Agent One'), false);
+  assert.equal(current.textContent.includes('Agent Two'), true);
+});
+
 test('managed container failed action preserves safe error and success clears it', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -680,9 +746,8 @@ test('grouped input mode switching clears transient preview while retaining type
   setGroupedFixtures();
   state.store.groupedInputPreview = groupedPlanFixture();
   const rendered = views.renderView(() => {});
-  const selects = all(rendered, (node) => node.localName === 'select');
-  const mode = selects[3];
-  const groupedText = all(rendered, (node) => node.localName === 'textarea')[1];
+  const mode = all(rendered, (node) => node.getAttribute('aria-label') === i18n.t('groupedInput.mode'))[0];
+  const groupedText = all(rendered, (node) => node.localName === 'textarea').at(-1);
   groupedText.value = 'hôm nay thật vui';
   await fire(groupedText, 'input');
   mode.value = 'cell';
@@ -690,6 +755,118 @@ test('grouped input mode switching clears transient preview while retaining type
   assert.equal(state.store.groupedInput.mode, 'cell');
   assert.equal(state.store.groupedInput.text, 'hôm nay thật vui');
   assert.equal(state.store.groupedInputPreview, null);
+});
+
+test('task package previews and dispatches a deterministic workflow-machine matrix', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setTaskPackageFixtures();
+  apiState.jobDispatchResult = (request, index) => ({
+    ok: true,
+    data: { job: { id: `job-task-${index + 1}` }, transport: { delivered: true } },
+  });
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  const panel = all(current, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.title'))[0];
+  const name = all(panel, (node) => node.localName === 'input' && node.type === 'text')[0];
+  name.value = 'Morning checks';
+  await fire(name, 'input');
+  const workflowSelect = all(panel, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.workflows'))[0];
+  workflowSelect.options.forEach((option) => { option.selected = true; });
+  await fire(workflowSelect, 'change');
+  const deviceSelect = all(panel, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.devices'))[0];
+  deviceSelect.options.forEach((option) => { option.selected = true; });
+  await fire(deviceSelect, 'change');
+  const taskInputs = all(panel, (node) => node.localName === 'textarea')[0];
+  taskInputs.value = '{"query":"war"}';
+  await fire(taskInputs, 'input');
+  const taskDeadline = all(panel, (node) => node.localName === 'input' && node.type === 'number')[0];
+  taskDeadline.value = '600';
+  await fire(taskDeadline, 'input');
+
+  await clickButton(current, i18n.t('taskPackage.preview'));
+  assert.equal(state.store.taskPackagePreview.assignments.length, 4);
+  await clickButton(current, i18n.t('taskPackage.dispatch'));
+  assert.deepEqual(apiState.jobDispatchRequests, [
+    { deviceId: 'dev-a', workflowId: 'wf-a', revision: 1, inputs: { query: 'war' }, deadlineSeconds: 600 },
+    { deviceId: 'dev-b', workflowId: 'wf-a', revision: 1, inputs: { query: 'war' }, deadlineSeconds: 600 },
+    { deviceId: 'dev-a', workflowId: 'wf-b', revision: 2, inputs: { query: 'war' }, deadlineSeconds: 600 },
+    { deviceId: 'dev-b', workflowId: 'wf-b', revision: 2, inputs: { query: 'war' }, deadlineSeconds: 600 },
+  ]);
+  assert.equal(state.store.taskPackageResult.succeeded, 4);
+  assert.equal(state.store.taskPackageResult.failed, 0);
+});
+
+test('task package validates paired counts and prevents duplicate dispatch while pending', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setTaskPackageFixtures();
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  let panel = all(current, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.title'))[0];
+  const name = all(panel, (node) => node.localName === 'input' && node.type === 'text')[0];
+  name.value = 'Paired checks';
+  await fire(name, 'input');
+  const mode = all(panel, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.mode'))[0];
+  mode.value = 'paired';
+  await fire(mode, 'change');
+  panel = all(current, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.title'))[0];
+  const workflowSelect = all(panel, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.workflows'))[0];
+  workflowSelect.options.forEach((option) => { option.selected = true; });
+  await fire(workflowSelect, 'change');
+  const deviceSelect = all(panel, (node) => node.getAttribute('aria-label') === i18n.t('taskPackage.devices'))[0];
+  deviceSelect.options[0].selected = true;
+  await fire(deviceSelect, 'change');
+  await clickButton(current, i18n.t('taskPackage.preview'));
+  assert.equal(state.store.taskPackage.error, i18n.t('taskPackage.pairedCountMismatch'));
+  assert.equal(apiState.jobDispatchRequests.length, 0);
+
+  state.store.taskPackage.selectedWorkflowKeys = ['wf-a:1'];
+  state.store.taskPackage.selectedDeviceIds = ['dev-a'];
+  state.store.taskPackage.inputs = '[]';
+  state.store.taskPackage.error = '';
+  current = views.renderView(refresh);
+  await clickButton(current, i18n.t('taskPackage.preview'));
+  assert.equal(state.store.taskPackage.error, i18n.t('taskPackage.invalidInputs'));
+
+  state.store.taskPackage.inputs = '';
+  state.store.taskPackage.error = '';
+  current = views.renderView(refresh);
+  await clickButton(current, i18n.t('taskPackage.preview'));
+  let releaseDispatch;
+  apiState.jobDispatchGate = new Promise((resolve) => { releaseDispatch = resolve; });
+  const run = findButton(current, i18n.t('taskPackage.dispatch'));
+  const firstClick = run.click();
+  await Promise.resolve();
+  await run.click();
+  assert.equal(apiState.jobDispatchRequests.length, 1);
+  releaseDispatch();
+  await firstClick;
+});
+
+test('task package keeps successful dispatches when another assignment fails safely', async () => {
+  resetStore();
+  state.store.view = 'jobs';
+  setTaskPackageFixtures();
+  Object.assign(state.store.taskPackage, {
+    name: 'Partial checks',
+    selectedWorkflowKeys: ['wf-a:1'],
+    selectedDeviceIds: ['dev-a', 'dev-b'],
+    deviceSelectionInitialized: true,
+  });
+  apiState.jobDispatchResult = (_request, index) => index === 1
+    ? { ok: false, code: 'SESSION_OFFLINE', message: 'Target offline' }
+    : { ok: true, data: { job: { id: 'job-partial' }, transport: { delivered: true } } };
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, i18n.t('taskPackage.preview'));
+  await clickButton(current, i18n.t('taskPackage.dispatch'));
+  assert.equal(state.store.taskPackageResult.succeeded, 1);
+  assert.equal(state.store.taskPackageResult.failed, 1);
+  assert.ok(current.textContent.includes('SESSION_OFFLINE'));
 });
 
 test('grouped input preview preserves Vietnamese text and uses normalized backend plan', async () => {
@@ -1037,6 +1214,10 @@ function resetStore() {
   apiState.graphRequests = [];
   apiState.graphSaveDelay = false;
   apiState.workflows = [];
+  apiState.devices = [];
+  apiState.jobDispatchRequests = [];
+  apiState.jobDispatchResult = null;
+  apiState.jobDispatchGate = null;
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
   Object.assign(state.store, {
@@ -1062,10 +1243,20 @@ function resetStore() {
       addContainerPending: false,
       containerPending: {},
       containerErrors: {},
+      containerAllPending: false,
+      hostNicknameDraft: '',
       containerNetworkOpenId: '',
       graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
       graphViewportInitialized: false,
       graphSelectedNodeId: '',
+      graphEditMode: true,
+      graphDraftEdges: [
+        { from: 'sample-switch', to: 'sample-click' },
+        { from: 'sample-click', to: 'sample-input' },
+      ],
+      graphConnectingFrom: '',
+      graphInputGroups: [{ id: 'group-1', name: '', nodeIds: [] }],
+      graphActiveGroupId: 'group-1',
       graphDraftNodes: workspaceState.WORKSPACE_SAMPLE_NODES.map((node) => ({ ...node })),
       graphHistory: [],
       graphFuture: [],
@@ -1103,6 +1294,20 @@ function resetStore() {
     },
     groupedInputPreview: null,
     groupedInputResult: null,
+    taskPackage: {
+      name: '',
+      mode: 'matrix',
+      selectedWorkflowKeys: [],
+      selectedDeviceIds: [],
+      deviceSelectionInitialized: false,
+      inputs: '',
+      deadlineSeconds: 300,
+      pending: false,
+      notice: '',
+      error: '',
+    },
+    taskPackagePreview: null,
+    taskPackageResult: null,
     graphEditor: {
       workflowId: '',
       revision: 0,
@@ -1194,6 +1399,10 @@ const apiState = {
   graphRequests: [],
   graphSaveDelay: false,
   workflows: [],
+  devices: [],
+  jobDispatchRequests: [],
+  jobDispatchResult: null,
+  jobDispatchGate: null,
   groupCreateResult: null,
   settingsUpdates: [],
 };
@@ -1213,7 +1422,7 @@ function installControllerApi() {
         reject: async () => ({ ok: true, data: {} }),
         revoke: async () => ({ ok: true, data: {} }),
       },
-      devices: { list: async () => ({ ok: true, data: { devices: [] } }) },
+      devices: { list: async () => ({ ok: true, data: { devices: apiState.devices } }) },
       settings: {
         get: async () => ({ ok: true, data: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } } }),
         update: async (payload) => {
@@ -1325,7 +1534,14 @@ function installControllerApi() {
       },
       jobs: {
         list: async () => ({ ok: true, data: { jobs: [] } }),
-        dispatch: async () => ({ ok: true, data: { job: { id: 'job-offline' }, transport: { delivered: false, warningCode: 'SESSION_OFFLINE' } } }),
+        dispatch: async (request) => {
+          const index = apiState.jobDispatchRequests.length;
+          apiState.jobDispatchRequests.push(structuredClone(request));
+          if (apiState.jobDispatchGate) await apiState.jobDispatchGate;
+          return typeof apiState.jobDispatchResult === 'function'
+            ? apiState.jobDispatchResult(request, index)
+            : apiState.jobDispatchResult || { ok: true, data: { job: { id: 'job-offline' }, transport: { delivered: false, warningCode: 'SESSION_OFFLINE' } } };
+        },
         groupedPreview: async (request) => {
           apiState.groupedCalls.preview = (apiState.groupedCalls.preview || 0) + 1;
           apiState.groupedRequests.push(request);
@@ -1409,12 +1625,27 @@ function setGroupedFixtures() {
   state.store.workflows = [{ workflowId: 'wf-a', revision: 1, name: 'Workflow A' }];
 }
 
+function setTaskPackageFixtures() {
+  apiState.devices = [
+    { id: 'dev-a', name: 'Agent A', status: 'online' },
+    { id: 'dev-b', name: 'Agent B', status: 'online' },
+  ];
+  apiState.workflows = [
+    { workflowId: 'wf-a', revision: 1, name: 'Workflow A' },
+    { workflowId: 'wf-b', revision: 2, name: 'Workflow B' },
+  ];
+  state.store.devices = apiState.devices;
+  state.store.workflows = apiState.workflows;
+}
+
 async function prepareGroupedForm(root, { text, mode }) {
-  const selects = all(root, (node) => node.localName === 'select');
-  selects[1].value = 'wf-a:1';
-  selects[2].options[0].selected = true;
-  selects[3].value = mode;
-  const groupedText = all(root, (node) => node.localName === 'textarea')[1];
+  const workflow = all(root, (node) => node.localName === 'select' && !node.multiple && node.options.some((option) => option.value === 'wf-a:1'))[0];
+  const devices = all(root, (node) => node.getAttribute('aria-label') === i18n.t('groupedInput.devices'))[0];
+  const groupedMode = all(root, (node) => node.getAttribute('aria-label') === i18n.t('groupedInput.mode'))[0];
+  workflow.value = 'wf-a:1';
+  devices.options[0].selected = true;
+  groupedMode.value = mode;
+  const groupedText = all(root, (node) => node.localName === 'textarea').at(-1);
   groupedText.value = text;
   Object.assign(state.store.groupedInput, {
     mode,
