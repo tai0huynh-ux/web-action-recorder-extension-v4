@@ -167,7 +167,8 @@ function registerProtocolHandler(state) {
 }
 
 function createMainWindow(state) {
-  const win = new state.BrowserWindow(secureWindowOptions(state.preloadPath));
+  const iconPath = state.path.join(state.rendererRoot, 'assets', 'war-controller-icon.svg');
+  const win = new state.BrowserWindow(secureWindowOptions(state.preloadPath, iconPath));
   win.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
   win.webContents.on?.('will-navigate', (event, target) => {
     try {

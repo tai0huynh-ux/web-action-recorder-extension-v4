@@ -32,6 +32,12 @@ export function createControllerSettingsStore({ fs, path, filePath }) {
 
 export function normalizeSettings(value = {}) {
   const workspace = value.workspace && typeof value.workspace === 'object' ? value.workspace : {};
+  const aliases = value.hostAliases && typeof value.hostAliases === 'object' && !Array.isArray(value.hostAliases)
+    ? Object.fromEntries(Object.entries(value.hostAliases)
+      .filter(([key, alias]) => /^[A-Za-z0-9_.:-]{1,120}$/.test(key) && typeof alias === 'string')
+      .map(([key, alias]) => [key, alias.trim().slice(0, 120)])
+      .filter(([, alias]) => alias))
+    : {};
   return {
     locale: value.locale === 'en' ? 'en' : 'vi',
     workspace: {
@@ -39,6 +45,7 @@ export function normalizeSettings(value = {}) {
       centerWidth: clampInteger(workspace.centerWidth, 320, 600, DEFAULT_CONTROLLER_SETTINGS.workspace.centerWidth),
       graphCollapsed: Boolean(workspace.graphCollapsed),
     },
+    ...(Object.keys(aliases).length ? { hostAliases: aliases } : {}),
   };
 }
 

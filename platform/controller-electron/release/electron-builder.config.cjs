@@ -27,6 +27,7 @@ module.exports = {
     'companion/store.js',
     'platform/controller-electron/src/**/*',
     'platform/controller-electron/renderer/**/*',
+    'build/icon.svg',
     'platform/controller-electron/release/packagedSmoke.js',
     'platform/controller-core/src/**/*',
     'platform/controller-wss/src/**/*',

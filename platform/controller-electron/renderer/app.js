@@ -31,7 +31,15 @@ function render() {
     if (active) item.setAttribute('aria-current', 'page');
     return item;
   }));
+  const scrollRoot = document.scrollingElement || document.documentElement || document.body;
+  const scrollTop = Number(scrollRoot?.scrollTop) || 0;
+  const scrollLeft = Number(scrollRoot?.scrollLeft) || 0;
   main.replaceChildren(renderView(refresh));
+  if (scrollRoot && (scrollTop || scrollLeft)) {
+    const restoreScroll = () => scrollRoot.scrollTo?.({ top: scrollTop, left: scrollLeft, behavior: 'auto' });
+    if (typeof globalThis.requestAnimationFrame === 'function') globalThis.requestAnimationFrame(restoreScroll);
+    else globalThis.queueMicrotask?.(restoreScroll);
+  }
   title.textContent = t('app.title');
   banner.textContent = `${t('app.banner')} - ${store.runtime?.status || 'loading'}`;
 }

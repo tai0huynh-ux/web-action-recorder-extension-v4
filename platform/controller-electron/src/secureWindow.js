@@ -5,6 +5,6 @@ export function buildSecureWebPreferences(overrides = {}) {
   return Object.freeze({ ...REQUIRED, preload: overrides.preload });
 }
 
-export function secureWindowOptions(preload) {
-  return { width: 1100, height: 760, show: false, webPreferences: buildSecureWebPreferences({ preload }) };
+export function secureWindowOptions(preload, icon) {
+  return { width: 1100, height: 760, show: false, ...(icon ? { icon } : {}), webPreferences: buildSecureWebPreferences({ preload }) };
 }

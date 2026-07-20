@@ -1,4 +1,4 @@
-import { button, codeBlock, el, field, parseJsonInput, section, setStatus, stableJson, table } from './dom.js';
+import { button, codeBlock, el, field, parseJsonInput, section, setStatus, stableJson, svgEl, table } from './dom.js';
 import { refreshAll, refreshJob, refreshWorkflow, store, unwrap } from './state.js';
 import { t } from './i18n.js';
 import {
@@ -85,13 +85,21 @@ function containersPane(refresh, active = false) {
         el('h2', { text: t('workspace.containers.title') }),
         el('p', { className: 'muted', text: status }),
       ]),
-      button(`+ ${t('workspace.containers.add')}`, async () => {
-        const opening = !store.workspace.addContainerOpen;
-        store.workspace.addContainerOpen = opening;
-        if (opening) await loadContainerHosts(refresh);
-        else refresh();
-      }, { className: 'button primary' }),
+      el('div', { className: 'toolbar tight' }, [
+        button(t('workspace.containers.checkAll'), () => refreshAllContainers(refresh), { className: 'button compact', disabled: store.workspace.containerAllPending || !store.containers.length }),
+        button(`+ ${t('workspace.containers.add')}`, async () => {
+          const opening = !store.workspace.addContainerOpen;
+          store.workspace.addContainerOpen = opening;
+          if (opening) await loadContainerHosts(refresh);
+          else refresh();
+        }, { className: 'button primary' }),
+      ]),
     ]),
+    el('p', {
+      className: 'status container-pane-status',
+      text: store.workspace.containerNotice || '',
+      ariaLive: 'polite',
+    }),
     search,
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.all'), () => {
@@ -196,6 +204,13 @@ function addContainerForm(refresh) {
   host.value = store.workspace.containerHostId || '';
   host.addEventListener('change', () => {
     store.workspace.containerHostId = host.value;
+    nickname.value = store.settings?.hostAliases?.[host.value] || hostLabelFromId(host.value);
+  });
+  const nickname = el('input', {
+    type: 'text',
+    value: store.settings?.hostAliases?.[store.workspace.containerHostId] || hostLabelFromId(store.workspace.containerHostId),
+    placeholder: t('workspace.containers.hostNicknamePlaceholder'),
+    ariaLabel: t('workspace.containers.hostNickname'),
   });
   const ipv4Enabled = el('input', { type: 'checkbox', checked: true });
   const ipv6Enabled = el('input', { type: 'checkbox', checked: false });
@@ -217,6 +232,7 @@ function addContainerForm(refresh) {
       field(t('workspace.containers.namePrefix'), namePrefix),
       field(t('workspace.containers.nameSequence'), nameSequence),
     ]),
+    field(t('workspace.containers.hostNickname'), nickname),
     namePreview,
     el('p', { className: 'muted', text: t('workspace.containers.autoProvisionHelp') }),
     field(t('workspace.containers.ipv4Enabled'), ipv4Enabled),
@@ -275,6 +291,12 @@ function addContainerForm(refresh) {
             status.textContent = store.workspace.containerNotice;
             return;
           }
+          const hostAlias = nickname.value.trim();
+          if (host.value && hostAlias) {
+            const hostAliases = { ...(store.settings?.hostAliases || {}), [host.value]: hostAlias };
+            await window.warController.settings.update({ hostAliases });
+            store.settings = { ...store.settings, hostAliases };
+          }
           store.workspace.containerNotice = t('workspace.containers.createdAndAdded');
           await refreshAll();
           store.workspace.containerNamePrefix = fixedName;
@@ -301,7 +323,7 @@ function managedContainerActions(refresh) {
       const error = store.workspace.containerErrors?.[container.id] || container.lastError;
       const agentOnline = isContainerAgentOnline(container);
       return el('article', { className: 'device-card managed-container' }, [
-        el('span', { className: 'device-name', text: container.name || container.id }),
+        el('span', { className: 'device-name', text: `${container.name || container.id} (${containerHostName(container)})` }),
         el('span', { className: `status-pill ${displayStatus}`, text: t(`status.${displayStatus}`) }),
         el('span', { className: agentOnline ? 'status-pill online' : 'status-pill offline', text: agentOnline ? t('workspace.containers.agentOnline') : t('workspace.containers.agentOffline') }),
         el('span', { className: 'device-meta', text: container.runtime?.dockerName || shortId(container.id) }),
@@ -426,6 +448,37 @@ async function containerAction(action, container, refresh) {
   } finally {
     const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
     store.workspace.containerPending = remainingPending;
+    refresh();
+  }
+}
+
+async function refreshAllContainers(refresh) {
+  if (store.workspace.containerAllPending || !store.containers.length) return;
+  store.workspace.containerAllPending = true;
+  store.workspace.containerNotice = t('workspace.containers.checkingAll');
+  refresh();
+  const failures = [];
+  try {
+    for (const container of store.containers) {
+      if (container.status === 'deleted') continue;
+      store.workspace.containerPending = { ...store.workspace.containerPending, [container.id]: 'refresh' };
+      refresh();
+      try {
+        const result = await window.warController.containers.refresh({ containerId: container.id });
+        if (result?.ok === false || result?.data?.operation?.ok === false) failures.push(container.name || container.id);
+      } catch {
+        failures.push(container.name || container.id);
+      } finally {
+        const { [container.id]: _removed, ...remaining } = store.workspace.containerPending || {};
+        store.workspace.containerPending = remaining;
+      }
+    }
+    await refreshAll();
+    store.workspace.containerNotice = failures.length
+      ? t('workspace.containers.checkAllPartial', { count: failures.length })
+      : t('workspace.containers.checkAllDone');
+  } finally {
+    store.workspace.containerAllPending = false;
     refresh();
   }
 }
@@ -556,18 +609,25 @@ function visibleWorkspaceDevices() {
 }
 
 function allWorkspaceDevices() {
-  return [
-    ...store.devices,
-    ...store.containers.map((container) => ({
-      ...container,
-      displayName: container.name,
-      status: isContainerAgentOnline(container) ? 'online' : 'offline',
-      agentVersion: container.image,
-      groupIds: [],
-      lastSeenAt: container.updatedAt,
-      managedContainer: true,
-    })),
-  ];
+  const managedByDevice = new Map(store.containers.map((container) => [container.deviceId, container]));
+  const devices = store.devices.map((device) => {
+    const container = managedByDevice.get(device.id || device.deviceId);
+    return container ? { ...device, managedContainer: true, containerId: container.id, containerName: container.name, containerHost: container.host } : device;
+  });
+  const known = new Set(devices.map((device) => device.id || device.deviceId));
+  return [...devices, ...store.containers.filter((container) => !known.has(container.deviceId)).map((container) => ({
+    ...container,
+    id: container.deviceId || container.id,
+    displayName: container.name,
+    status: isContainerAgentOnline(container) ? 'online' : 'offline',
+    agentVersion: container.image,
+    groupIds: [],
+    lastSeenAt: container.updatedAt,
+    managedContainer: true,
+    containerId: container.id,
+    containerName: container.name,
+    containerHost: container.host,
+  }))];
 }
 
 function selectionStatus() {
@@ -633,6 +693,24 @@ function containerHostLabel(host) {
     ? t('workspace.containers.localDockerHost')
     : t('workspace.containers.sshDockerHost');
   return `${runtime} - ${t('workspace.containers.hostConnectedShort')}`;
+}
+
+function hostLabelFromId(hostId, container = null) {
+  if (!hostId) return '';
+  const host = (store.workspace.containerHosts || []).find((item) => item.id === hostId);
+  return host?.label
+    || container?.hostLabel
+    || container?.runtime?.hostLabel
+    || container?.runtime?.host
+    || store.runtime?.containers?.hostLabel
+    || store.runtime?.containers?.host
+    || hostId;
+}
+
+function containerHostName(container) {
+  return store.settings?.hostAliases?.[container?.host]
+    || hostLabelFromId(container?.host, container)
+    || t('workspace.containers.unknown');
 }
 
 function randomIpv6Eui64Suffix() {
@@ -850,8 +928,27 @@ function graphPane(refresh, active = false) {
       toggle,
     ]),
     graphResizeHandle(refresh),
+    graphGroupToolbar(refresh),
     graphToolbar(canvas, nodes, refresh),
     layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : canvas,
+  ]);
+}
+
+function graphGroupToolbar(refresh) {
+  const editing = store.workspace.graphEditMode !== false;
+  const groups = graphInputGroups();
+  return el('div', { className: 'graph-groups', role: 'toolbar', ariaLabel: t('workspace.graph.groups') }, [
+    el('span', { className: 'graph-groups-label', text: t('workspace.graph.groups') }),
+    ...groups.map((group) => {
+      const active = group.id === (store.workspace.graphActiveGroupId || groups[0]?.id);
+      const chip = button(`${group.name} (${group.nodeIds.length})`, () => {
+        store.workspace.graphActiveGroupId = group.id;
+        refresh();
+      }, { className: `button chip${active ? ' active' : ''}`, disabled: editing });
+      chip.setAttribute('aria-pressed', String(active));
+      return chip;
+    }),
+    button('+', () => addGraphGroup(refresh), { className: 'button chip graph-group-add', disabled: editing, ariaLabel: t('workspace.graph.addGroup') }),
   ]);
 }
 
@@ -880,15 +977,21 @@ function graphResizeHandle(refresh) {
 
 function graphToolbar(canvas, nodes, refresh) {
   const viewport = normalizeGraphViewport(store.workspace.graphViewport);
+  const editing = store.workspace.graphEditMode !== false;
   return el('div', { className: 'graph-toolbar', role: 'toolbar', ariaLabel: t('workspace.graph.title') }, [
-    button(t('workspace.graph.addStep'), () => addWorkspaceGraphNode(refresh), { className: 'button compact primary' }),
+    button(editing ? t('workspace.graph.editing') : t('workspace.graph.editMode'), () => {
+      store.workspace.graphEditMode = !editing;
+      store.workspace.graphConnectingFrom = '';
+      refresh();
+    }, { className: `button compact ${editing ? 'primary' : ''}` }),
+    button(t('workspace.graph.addStep'), () => addWorkspaceGraphNode(refresh), { className: 'button compact primary', disabled: !editing }),
     button(t('workspace.graph.zoomIn'), () => zoomGraphViewport(canvas, 0.1, refresh), { className: 'button compact' }),
     button(t('workspace.graph.zoomOut'), () => zoomGraphViewport(canvas, -0.1, refresh), { className: 'button compact' }),
     button(t('workspace.graph.fit'), () => fitGraphViewport(canvas, refresh, nodes), { className: 'button compact' }),
     button(t('workspace.graph.reset'), () => resetGraphViewport(refresh), { className: 'button compact' }),
-    button(t('workspace.graph.restore'), () => restoreWorkspaceGraph(refresh), { className: 'button compact' }),
-    button(t('workspace.graph.undo'), () => undoWorkspaceGraph(refresh), { className: 'button compact', disabled: !store.workspace.graphHistory.length }),
-    button(t('workspace.graph.redo'), () => redoWorkspaceGraph(refresh), { className: 'button compact', disabled: !store.workspace.graphFuture.length }),
+    button(t('workspace.graph.restore'), () => restoreWorkspaceGraph(refresh), { className: 'button compact', disabled: !editing }),
+    button(t('workspace.graph.undo'), () => undoWorkspaceGraph(refresh), { className: 'button compact', disabled: !editing || !store.workspace.graphHistory.length }),
+    button(t('workspace.graph.redo'), () => redoWorkspaceGraph(refresh), { className: 'button compact', disabled: !editing || !store.workspace.graphFuture.length }),
     el('span', { className: 'graph-zoom-status', text: `${Math.round(viewport.scale * 100)}%` }),
   ]);
 }
@@ -920,22 +1023,31 @@ function graphCanvas(nodes, refresh) {
 }
 
 function edgeLayer(nodes) {
-  const edges = [];
-  if (nodes.length >= 2) edges.push(el('span', { className: 'graph-edge edge-one', text: '' }));
-  if (nodes.length >= 3) edges.push(el('span', { className: 'graph-edge edge-two', text: '' }));
-  return el('div', { className: 'graph-edges', ariaLabel: '' }, edges);
+  const lookup = new Map(nodes.map((node) => [node.id, node]));
+  const paths = graphEdges().map((edge) => {
+    const from = lookup.get(edge.from);
+    const to = lookup.get(edge.to);
+    if (!from || !to) return null;
+    return svgEl('path', { class: 'graph-edge', d: graphEdgePath(from, to), 'data-from': edge.from, 'data-to': edge.to });
+  }).filter(Boolean);
+  return svgEl('svg', { class: 'graph-edges', width: 2400, height: 1600, viewBox: '0 0 2400 1600', 'aria-label': t('workspace.graph.connections') }, [
+    svgEl('defs', {}, [svgEl('marker', { id: 'graph-arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse' }, [svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: 'currentColor' })])]),
+    ...paths,
+    store.workspace.graphConnectingFrom ? svgEl('path', { class: 'graph-edge graph-preview', d: graphEdgePath(lookup.get(store.workspace.graphConnectingFrom), { x: 760, y: 320 }) }) : null,
+  ]);
 }
 
 function graphNode(node, refresh) {
   const selected = store.workspace.graphSelectedNodeId === node.id;
-  const title = el('input', { type: 'text', value: node.title, ariaLabel: t('workspace.graph.stepName') });
-  const delay = el('input', { type: 'number', value: node.delay, min: 0, max: 3600000, step: 50, ariaLabel: t('workspace.graph.delay') });
-  const body = el('input', { type: 'text', value: node.body, ariaLabel: t('workspace.graph.body') });
+  const editing = store.workspace.graphEditMode !== false;
+  const title = el('input', { type: 'text', value: node.title, ariaLabel: t('workspace.graph.stepName'), disabled: !editing });
+  const delay = el('input', { type: 'number', value: node.delay, min: 0, max: 3600000, step: 50, ariaLabel: t('workspace.graph.delay'), disabled: !editing });
+  const body = el('input', { type: 'text', value: node.body, ariaLabel: t('workspace.graph.body'), disabled: !editing });
   const removeLabel = t('workspace.graph.deleteAction', { name: node.title });
   const remove = button('×', (event) => {
     event.stopPropagation?.();
     removeWorkspaceGraphNode(node.id, refresh);
-  }, { className: 'node-delete' });
+  }, { className: 'node-delete', disabled: !editing });
   remove.title = removeLabel;
   remove.setAttribute('aria-label', removeLabel);
   for (const control of [title, delay, body, remove]) {
@@ -945,7 +1057,7 @@ function graphNode(node, refresh) {
   delay.addEventListener('change', () => updateWorkspaceGraphNode(node.id, { delay: normalizeGraphDelay(delay.value) }, refresh));
   body.addEventListener('change', () => updateWorkspaceGraphNode(node.id, { body: body.value }, refresh));
   const item = el('article', {
-    className: `graph-node ${node.type}${selected ? ' selected' : ''}`,
+    className: `graph-node ${node.type}${selected ? ' selected' : ''}${editing ? ' edit-mode' : ' select-mode'}`,
     role: 'group',
     tabIndex: 0,
     ariaLabel: `${t('workspace.graph.step')} ${node.title}`,
@@ -962,7 +1074,7 @@ function graphNode(node, refresh) {
         delay,
         el('span', { text: 'ms' }),
       ]),
-      el('span', { className: 'order-badge', text: node.badge }),
+      el('span', { className: 'order-badge', text: graphNodeBadge(node) }),
       body,
       el('span', { className: 'port output-port', text: '' }),
     ]),
@@ -971,7 +1083,28 @@ function graphNode(node, refresh) {
     item.style.setProperty('--node-x', `${node.x}px`);
     item.style.setProperty('--node-y', `${node.y}px`);
   }
-  item.addEventListener('click', () => selectGraphNode(node.id, refresh));
+  item.setAttribute('data-node-id', node.id);
+  const inputPort = item.childNodes?.[1]?.childNodes?.[0];
+  const outputPort = item.childNodes?.[1]?.childNodes?.[4];
+  if (inputPort) {
+    inputPort.setAttribute('data-port', 'input');
+    inputPort.setAttribute('role', 'button');
+    inputPort.setAttribute('aria-label', t('workspace.graph.connectInput', { name: node.title }));
+    inputPort.tabIndex = editing ? 0 : -1;
+    inputPort.addEventListener('pointerup', (event) => finishGraphConnection(node.id, event, refresh));
+  }
+  if (outputPort) {
+    outputPort.setAttribute('data-port', 'output');
+    outputPort.setAttribute('role', 'button');
+    outputPort.setAttribute('aria-label', t('workspace.graph.connectOutput', { name: node.title }));
+    outputPort.tabIndex = editing ? 0 : -1;
+    outputPort.addEventListener('pointerdown', (event) => startGraphConnection(node.id, event, refresh));
+  }
+  item.addEventListener('click', () => {
+    if (!editing && node.type === 'input') toggleGraphGroupNode(node.id, refresh);
+    else selectGraphNode(node.id, refresh);
+  });
+  installGraphNodeDrag(item, node, refresh, editing);
   item.addEventListener('keydown', (event) => {
     if (event.target !== item) return;
     if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -983,22 +1116,35 @@ function graphNode(node, refresh) {
 
 function workspaceGraphNodes() {
   const nodes = Array.isArray(store.workspace.graphDraftNodes) ? store.workspace.graphDraftNodes : [];
-  return nodes.map((node, index) => ({ ...node, badge: `${index + 1} : group 1` }));
-}
-
-function graphSnapshot(nodes = workspaceGraphNodes()) {
   return nodes.map((node) => ({ ...node }));
 }
 
-function commitWorkspaceGraph(nextNodes, refresh) {
+function graphSnapshot(nodes = workspaceGraphNodes()) {
+  return {
+    nodes: nodes.map((node) => ({ ...node })),
+    edges: graphEdges().map((edge) => ({ ...edge })),
+    groups: graphInputGroups().map((group) => ({ ...group, nodeIds: [...group.nodeIds] })),
+  };
+}
+
+function commitWorkspaceGraph(nextNodes, refresh, nextEdges = graphEdges(), nextGroups = graphInputGroups(), activeGroupId = '') {
   const current = graphSnapshot();
-  const next = graphSnapshot(nextNodes);
+  const next = {
+    nodes: nextNodes.map((node) => ({ ...node })),
+    edges: nextEdges.map((edge) => ({ ...edge })),
+    groups: nextGroups.map((group) => ({ ...group, nodeIds: [...group.nodeIds] })),
+  };
   if (JSON.stringify(current) === JSON.stringify(next)) return;
   store.workspace.graphHistory = [...store.workspace.graphHistory.slice(-49), current];
   store.workspace.graphFuture = [];
-  store.workspace.graphDraftNodes = next;
-  if (!next.some((node) => node.id === store.workspace.graphSelectedNodeId)) {
-    store.workspace.graphSelectedNodeId = next[0]?.id || '';
+  store.workspace.graphDraftNodes = next.nodes;
+  store.workspace.graphDraftEdges = next.edges;
+  store.workspace.graphInputGroups = next.groups;
+  if (activeGroupId && next.groups.some((group) => group.id === activeGroupId)) {
+    store.workspace.graphActiveGroupId = activeGroupId;
+  }
+  if (!next.nodes.some((node) => node.id === store.workspace.graphSelectedNodeId)) {
+    store.workspace.graphSelectedNodeId = next.nodes[0]?.id || '';
   }
   refresh();
 }
@@ -1008,7 +1154,9 @@ function updateWorkspaceGraphNode(nodeId, patch, refresh) {
 }
 
 function removeWorkspaceGraphNode(nodeId, refresh) {
-  commitWorkspaceGraph(workspaceGraphNodes().filter((node) => node.id !== nodeId), refresh);
+  const nextGroups = graphInputGroups().map((group) => ({ ...group, nodeIds: group.nodeIds.filter((id) => id !== nodeId) }));
+  const nextEdges = graphEdges().filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
+  commitWorkspaceGraph(workspaceGraphNodes().filter((node) => node.id !== nodeId), refresh, nextEdges, nextGroups);
 }
 
 function addWorkspaceGraphNode(refresh) {
@@ -1028,20 +1176,28 @@ function addWorkspaceGraphNode(refresh) {
     y: 54 + row * 220,
   };
   store.workspace.graphSelectedNodeId = node.id;
-  commitWorkspaceGraph([...nodes, node], refresh);
+  commitWorkspaceGraph([...nodes, node], refresh, graphEdges(), graphInputGroups());
 }
 
 function restoreWorkspaceGraph(refresh) {
-  commitWorkspaceGraph(WORKSPACE_SAMPLE_NODES, refresh);
+  const groups = [{ id: 'group-1', name: `${t('workspace.graph.groupDefault')} 1`, nodeIds: [] }];
+  commitWorkspaceGraph(WORKSPACE_SAMPLE_NODES, refresh, [
+    { from: 'sample-switch', to: 'sample-click' },
+    { from: 'sample-click', to: 'sample-input' },
+  ], groups);
 }
 
 function undoWorkspaceGraph(refresh) {
   if (!store.workspace.graphHistory.length) return;
   const history = [...store.workspace.graphHistory];
   const previous = history.pop();
-  store.workspace.graphFuture = [graphSnapshot(), ...store.workspace.graphFuture].slice(0, 50);
+  const current = graphSnapshot();
+  store.workspace.graphFuture = [current, ...store.workspace.graphFuture].slice(0, 50);
   store.workspace.graphHistory = history;
-  store.workspace.graphDraftNodes = graphSnapshot(previous);
+  const snapshot = normalizeGraphSnapshot(previous);
+  store.workspace.graphDraftNodes = snapshot.nodes;
+  store.workspace.graphDraftEdges = snapshot.edges;
+  store.workspace.graphInputGroups = snapshot.groups;
   reconcileGraphSelection(store.workspace.graphDraftNodes);
   refresh();
 }
@@ -1051,7 +1207,10 @@ function redoWorkspaceGraph(refresh) {
   const [next, ...future] = store.workspace.graphFuture;
   store.workspace.graphHistory = [...store.workspace.graphHistory.slice(-49), graphSnapshot()];
   store.workspace.graphFuture = future;
-  store.workspace.graphDraftNodes = graphSnapshot(next);
+  const snapshot = normalizeGraphSnapshot(next);
+  store.workspace.graphDraftNodes = snapshot.nodes;
+  store.workspace.graphDraftEdges = snapshot.edges;
+  store.workspace.graphInputGroups = snapshot.groups;
   reconcileGraphSelection(store.workspace.graphDraftNodes);
   refresh();
 }
@@ -1071,6 +1230,146 @@ function normalizeGraphDelay(value) {
 function selectGraphNode(nodeId, refresh) {
   store.workspace.graphSelectedNodeId = nodeId;
   refresh();
+}
+
+function graphEdges() {
+  return Array.isArray(store.workspace.graphDraftEdges) ? store.workspace.graphDraftEdges : [];
+}
+
+function graphInputGroups() {
+  const groups = Array.isArray(store.workspace.graphInputGroups) && store.workspace.graphInputGroups.length
+    ? store.workspace.graphInputGroups
+    : [{ id: 'group-1', name: '', nodeIds: [] }];
+  store.workspace.graphInputGroups = groups.map((group, index) => ({
+    id: group.id || `group-${index + 1}`,
+    name: group.name || `${t('workspace.graph.groupDefault')} ${index + 1}`,
+    nodeIds: Array.isArray(group.nodeIds) ? [...new Set(group.nodeIds)] : [],
+  }));
+  if (!store.workspace.graphActiveGroupId || !store.workspace.graphInputGroups.some((group) => group.id === store.workspace.graphActiveGroupId)) {
+    store.workspace.graphActiveGroupId = store.workspace.graphInputGroups[0].id;
+  }
+  return store.workspace.graphInputGroups;
+}
+
+function addGraphGroup(refresh) {
+  if (store.workspace.graphEditMode !== false) return;
+  const groups = graphInputGroups();
+  const id = `group-${groups.length + 1}`;
+  const next = [...groups, { id, name: `${t('workspace.graph.groupDefault')} ${groups.length + 1}`, nodeIds: [] }];
+  commitWorkspaceGraph(workspaceGraphNodes(), refresh, graphEdges(), next, id);
+}
+
+function toggleGraphGroupNode(nodeId, refresh) {
+  const node = workspaceGraphNodes().find((item) => item.id === nodeId);
+  if (!node || node.type !== 'input') {
+    selectGraphNode(nodeId, refresh);
+    return;
+  }
+  const groups = graphInputGroups();
+  const activeId = store.workspace.graphActiveGroupId || groups[0].id;
+  const active = groups.find((group) => group.id === activeId) || groups[0];
+  const alreadyInActive = active.nodeIds.includes(nodeId);
+  const next = groups.map((group) => ({ ...group, nodeIds: group.nodeIds.filter((id) => id !== nodeId) }));
+  if (!alreadyInActive) next.find((group) => group.id === active.id).nodeIds.push(nodeId);
+  store.workspace.graphInputGroups = next;
+  store.workspace.graphSelectedNodeId = nodeId;
+  refresh();
+}
+
+function graphNodeBadge(node) {
+  const group = graphInputGroups().find((item) => item.nodeIds.includes(node.id));
+  if (!group) return t('workspace.graph.unassigned');
+  return `${group.nodeIds.indexOf(node.id) + 1} : ${group.name}`;
+}
+
+function normalizeGraphSnapshot(snapshot) {
+  if (Array.isArray(snapshot)) return { nodes: snapshot.map((node) => ({ ...node })), edges: graphEdges(), groups: graphInputGroups() };
+  return {
+    nodes: Array.isArray(snapshot?.nodes) ? snapshot.nodes.map((node) => ({ ...node })) : [],
+    edges: Array.isArray(snapshot?.edges) ? snapshot.edges.map((edge) => ({ ...edge })) : [],
+    groups: Array.isArray(snapshot?.groups) ? snapshot.groups.map((group) => ({ ...group, nodeIds: [...(group.nodeIds || [])] })) : graphInputGroups(),
+  };
+}
+
+function graphPortPoint(node, side) {
+  return { x: node.x + (side === 'output' ? 364 : -4), y: node.y + 88 };
+}
+
+function graphEdgePath(from, to) {
+  if (!from || !to) return '';
+  const start = graphPortPoint(from, 'output');
+  const end = graphPortPoint(to, 'input');
+  const bend = Math.max(80, Math.abs(end.x - start.x) * 0.45);
+  return `M ${start.x} ${start.y} C ${start.x + bend} ${start.y}, ${end.x - bend} ${end.y}, ${end.x} ${end.y}`;
+}
+
+function installGraphNodeDrag(item, node, refresh, editing) {
+  if (!editing) return;
+  const header = item.childNodes?.[0];
+  header?.addEventListener?.('pointerdown', (event) => {
+    if (event.target?.localName === 'input' || event.target?.localName === 'button') return;
+    event.preventDefault?.();
+    const scale = normalizeGraphViewport(store.workspace.graphViewport).scale;
+    const startX = Number(event.clientX) || 0;
+    const startY = Number(event.clientY) || 0;
+    const original = { x: node.x, y: node.y };
+    let moved = false;
+    const move = (moveEvent) => {
+      moved = true;
+      const x = Math.max(12, original.x + ((Number(moveEvent.clientX) || 0) - startX) / scale);
+      const y = Math.max(12, original.y + ((Number(moveEvent.clientY) || 0) - startY) / scale);
+      item.style?.setProperty('--node-x', `${x}px`);
+      item.style?.setProperty('--node-y', `${y}px`);
+    };
+    const up = (upEvent) => {
+      globalThis.removeEventListener?.('pointermove', move);
+      globalThis.removeEventListener?.('pointerup', up);
+      if (!moved) return;
+      const x = Math.max(12, original.x + ((Number(upEvent.clientX) || 0) - startX) / scale);
+      const y = Math.max(12, original.y + ((Number(upEvent.clientY) || 0) - startY) / scale);
+      updateWorkspaceGraphNode(node.id, { x, y }, refresh);
+    };
+    globalThis.addEventListener?.('pointermove', move);
+    globalThis.addEventListener?.('pointerup', up, { once: true });
+  });
+}
+
+function startGraphConnection(nodeId, event, refresh) {
+  if (store.workspace.graphEditMode === false) return;
+  event.preventDefault?.();
+  store.workspace.graphConnectingFrom = nodeId;
+  refresh();
+  const move = (moveEvent) => {
+    const preview = document.querySelector?.('.graph-preview');
+    const from = workspaceGraphNodes().find((node) => node.id === nodeId);
+    if (!preview || !from) return;
+    const canvas = document.querySelector?.('.graph-canvas');
+    const rect = canvas?.getBoundingClientRect?.();
+    if (!rect) return;
+    const viewport = normalizeGraphViewport(store.workspace.graphViewport);
+    const target = { x: (moveEvent.clientX - rect.left - viewport.offsetX) / viewport.scale, y: (moveEvent.clientY - rect.top - viewport.offsetY) / viewport.scale };
+    preview.setAttribute('d', graphEdgePath(from, target));
+  };
+  const cancel = () => {
+    globalThis.removeEventListener?.('pointermove', move);
+    globalThis.removeEventListener?.('pointerup', up);
+    globalThis.removeEventListener?.('pointercancel', cancel);
+    store.workspace.graphConnectingFrom = '';
+    refresh();
+  };
+  const up = () => cancel();
+  globalThis.addEventListener?.('pointermove', move);
+  globalThis.addEventListener?.('pointerup', up, { once: true });
+  globalThis.addEventListener?.('pointercancel', cancel, { once: true });
+}
+
+function finishGraphConnection(nodeId, _event, refresh) {
+  const from = store.workspace.graphConnectingFrom;
+  if (!from || from === nodeId || store.workspace.graphEditMode === false) return;
+  store.workspace.graphConnectingFrom = '';
+  if (!graphEdges().some((edge) => edge.from === from && edge.to === nodeId)) {
+    commitWorkspaceGraph(workspaceGraphNodes(), refresh, [...graphEdges(), { from, to: nodeId }], graphInputGroups());
+  }
 }
 
 function normalizeGraphViewport(value = {}) {

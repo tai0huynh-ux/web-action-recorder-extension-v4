@@ -296,6 +296,48 @@ test('workspace action graph supports edit, delete, undo, redo, add, and restore
   assert.deepEqual(state.store.workspace.graphDraftNodes.map((node) => node.id), workspaceState.WORKSPACE_SAMPLE_NODES.map((node) => node.id));
 });
 
+test('workspace action graph switches to grouped selection mode and orders input nodes', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, i18n.t('workspace.graph.editing'));
+  assert.equal(state.store.workspace.graphEditMode, false);
+  assert.equal(all(current, (node) => node.localName === 'input' && node.getAttribute('aria-label') === i18n.t('workspace.graph.stepName'))[0].disabled, true);
+  const groups = all(current, (node) => node.className.includes('graph-groups'))[0];
+  const addGroup = all(groups, (node) => node.localName === 'button' && node.textContent === '+')[0];
+  await addGroup.click();
+  assert.equal(state.store.workspace.graphInputGroups.length, 2);
+  const inputNodes = all(current, (node) => node.className.includes('graph-node') && node.className.includes('input'));
+  await inputNodes[0].click();
+  assert.deepEqual(state.store.workspace.graphInputGroups[1].nodeIds, ['sample-input']);
+  assert.ok(all(current, (node) => node.className.includes('graph-node') && node.textContent.includes(`1 : ${i18n.t('workspace.graph.groupDefault')} 2`)).length >= 1);
+  await clickButton(current, i18n.t('workspace.graph.editMode'));
+  await clickButton(current, i18n.t('workspace.graph.undo'));
+  assert.equal(state.store.workspace.graphInputGroups.length, 1);
+});
+
+test('workspace action graph connects output and input ports in edit mode', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.activePane = 'graph';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  const output = all(current, (node) => node.getAttribute('data-port') === 'output')[0];
+  await fire(output, 'pointerdown');
+  assert.equal(state.store.workspace.graphConnectingFrom, 'sample-switch');
+  const input = all(current, (node) => node.getAttribute('data-port') === 'input' && node.parentNode?.parentNode?.getAttribute?.('data-node-id') === 'sample-input')[0]
+    || all(current, (node) => node.getAttribute('data-port') === 'input')[2];
+  await fire(input, 'pointerup');
+  assert.equal(state.store.workspace.graphConnectingFrom, '');
+  assert.ok(state.store.workspace.graphDraftEdges.some((edge) => edge.from === 'sample-switch' && edge.to === 'sample-input'));
+});
+
 test('workspace add container uses the Controller containers API and refreshes managed list', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -380,6 +422,22 @@ test('workspace random IPv6 enables IPv6 and generates a valid EUI-64 suffix', a
   assert.match(suffix.value, /^[0-9a-f]{1,4}:[0-9a-f]{1,2}ff:fe[0-9a-f]{1,2}:[0-9a-f]{1,4}$/);
 });
 
+test('managed container check-all refreshes every container and preserves host nickname', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.containerHosts = [{ id: 'configured-docker-host', label: 'Linux Docker', runtime: 'ssh-docker', connected: true }];
+  apiState.containers = [
+    containerFixture({ id: 'container-1', name: 'Agent One', host: 'configured-docker-host' }),
+    containerFixture({ id: 'container-2', name: 'Agent Two', host: 'configured-docker-host' }),
+  ];
+  state.store.containers = apiState.containers;
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, i18n.t('workspace.containers.checkAll'));
+  assert.equal(apiState.containerCalls.refresh, 2);
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.checkAllDone')));
+  assert.ok(current.textContent.includes('Agent One (Linux Docker)'));
+});
+
 test('managed container pending lifecycle disables conflicting actions', () => {
   resetStore();
   state.store.view = 'workspace';
@@ -427,6 +485,21 @@ test('managed container delete requires exact confirmation', async () => {
   assert.equal(apiState.containerCalls.delete || 0, 0);
   assert.ok(confirmText.includes('Agent One'));
   assert.ok(confirmText.includes('container-1'));
+});
+
+test('managed container delete calls the Controller and refreshes terminal status', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One' })];
+  state.store.containers = apiState.containers;
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, i18n.t('workspace.containers.delete'));
+  assert.equal(apiState.containerCalls.delete, 1);
+  assert.equal(apiState.containers[0].status, 'deleted');
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.actionDone')));
 });
 
 test('managed container failed action preserves safe error and success clears it', async () => {

@@ -41,6 +41,18 @@ export function el(tag, options = {}, children = []) {
   return node;
 }
 
+export function svgEl(tag, options = {}, children = []) {
+  const node = document.createElementNS
+    ? document.createElementNS('http' + '://www.w3.org/2000/svg', tag)
+    : document.createElement(tag);
+  for (const [key, value] of Object.entries(options)) {
+    if (value === undefined || value === null) continue;
+    node.setAttribute(key, String(value));
+  }
+  node.replaceChildren(...asNodes(children));
+  return node;
+}
+
 export function text(value) {
   return document.createTextNode(value === undefined || value === null ? '' : String(value));
 }
@@ -67,6 +79,7 @@ export function field(label, control) {
 
 export function button(label, action, options = {}) {
   const item = el('button', { type: 'button', className: options.className || 'button', text: label, disabled: options.disabled });
+  if (options.ariaLabel) item.setAttribute('aria-label', String(options.ariaLabel));
   item.addEventListener('click', action);
   return item;
 }
