@@ -49,6 +49,7 @@ async function runControllerSmoke(exe, label) {
   const env = {
     ...process.env,
     WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT: smokeOutput,
+    WAR_CONTROLLER_PACKAGED_SMOKE_USER_DATA_PATH: path.join(smokeRoot, 'electron-user-data'),
     WAR_CONTROLLER_ELECTRON_DATA_PATH: path.join(smokeRoot, 'state'),
     WAR_CONTROLLER_WSS_ENABLED: '1',
     WAR_CONTROLLER_WSS_HOST: '127.0.0.1',

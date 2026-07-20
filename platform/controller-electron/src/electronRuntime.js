@@ -64,6 +64,10 @@ export function createElectronControllerRuntime(dependencies = {}) {
         state.app.enableSandbox();
         state.protocol.registerSchemesAsPrivileged?.([{ scheme: 'war-controller', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
       }
+      const smokeUserDataPath = state.env?.WAR_CONTROLLER_PACKAGED_SMOKE_USER_DATA_PATH;
+      if (state.env?.WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT && smokeUserDataPath && typeof state.app.setPath === 'function') {
+        state.app.setPath('userData', smokeUserDataPath);
+      }
       if (state.app.requestSingleInstanceLock && !state.app.requestSingleInstanceLock()) {
         state.app.quit?.();
         return this;

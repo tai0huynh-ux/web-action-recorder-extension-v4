@@ -32,6 +32,21 @@ test('electron runtime does not auto-start on import or factory creation', () =>
   assert.deepEqual(calls, []);
 });
 
+test('packaged smoke can isolate its Electron user-data lock', async () => {
+  const calls = [];
+  const deps = fakeRuntimeDeps(calls, {
+    env: {
+      WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT: 'C:/smoke/packaged-smoke.json',
+      WAR_CONTROLLER_PACKAGED_SMOKE_USER_DATA_PATH: 'C:/smoke/electron-user-data',
+    },
+  });
+  const runtime = createElectronControllerRuntime(deps);
+  await runtime.start();
+  assert.ok(calls.includes('app.setPath:userData:C:/smoke/electron-user-data'));
+  assert.ok(calls.indexOf('app.setPath:userData:C:/smoke/electron-user-data') < calls.indexOf('requestSingleInstanceLock'));
+  await runtime.shutdown();
+});
+
 test('electron runtime surfaces degraded WSS config without starting WSS runtime', async () => {
   const calls = [];
   const deps = fakeRuntimeDeps(calls, { env: { WAR_CONTROLLER_WSS_ENABLED: '1' } });
@@ -95,6 +110,7 @@ function fakeRuntimeDeps(calls, options = {}) {
   return {
     app: {
       enableSandbox: () => calls.push('enableSandbox'),
+      setPath: (name, value) => calls.push(`app.setPath:${name}:${value}`),
       requestSingleInstanceLock: () => {
         calls.push('requestSingleInstanceLock');
         return options.singleInstance !== false;
