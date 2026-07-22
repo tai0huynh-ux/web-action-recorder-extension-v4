@@ -2319,7 +2319,7 @@ function remoteTile(device, refresh) {
   image.addEventListener('keydown', (event) => handleRemoteKey(event));
   image.addEventListener('keyup', (event) => {
     if (shortcutForKeyboardEvent(event) || printableTextForKeyboardEvent(event)) return;
-    sendRemoteCommand('input.keyUp', { key: mapRemoteKey(event.key) });
+    sendRemoteCommand('input.keyUp', { key: mapRemoteKey(event.key), space: 'browser' });
   });
   return el('article', { className: `remote-tile${store.remote.activeDeviceId === id ? ' active' : ''}` }, [
     el('div', { className: 'remote-tile-heading' }, [
@@ -2439,23 +2439,23 @@ function handleRemoteKey(event) {
     event.preventDefault?.();
     if (shortcut === 'CTRL+V' && globalThis.navigator?.clipboard?.readText) {
       globalThis.navigator.clipboard.readText().then((text) => {
-        if (text) sendRemoteCommand('input.insertText', { text });
-      }).catch(() => sendRemoteCommand('input.shortcut', { keys: shortcut }));
+        if (text) sendRemoteCommand('input.insertText', { text, space: 'browser' });
+      }).catch(() => sendRemoteCommand('input.shortcut', { keys: shortcut, space: 'browser' }));
     } else {
-      sendRemoteCommand('input.shortcut', { keys: shortcut });
+      sendRemoteCommand('input.shortcut', { keys: shortcut, space: 'browser' });
     }
     return;
   }
   const text = printableTextForKeyboardEvent(event);
   if (text) {
     event.preventDefault?.();
-    sendRemoteCommand('input.insertText', { text });
+    sendRemoteCommand('input.insertText', { text, space: 'browser' });
     return;
   }
   const key = mapRemoteKey(event.key);
   if (key) {
     event.preventDefault?.();
-    sendRemoteCommand('input.keyDown', { key });
+    sendRemoteCommand('input.keyDown', { key, space: 'browser' });
   }
 }
 

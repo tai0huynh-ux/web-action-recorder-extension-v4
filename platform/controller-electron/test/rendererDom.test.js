@@ -1573,6 +1573,25 @@ test('remote pointer remains safe when the first frame arrives during a drag', a
   assert.deepEqual(apiState.remoteCalls.map((call) => call.command), ['input.mouseMove', 'input.mouseUp']);
 });
 
+test('remote keyboard control uses the Chromium browser input space', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+
+  const current = views.renderView(() => {});
+  const image = first(current, 'img');
+  await fireWithEvent(image, 'keydown', { key: 'l', ctrlKey: true, preventDefault() {} });
+  await fireWithEvent(image, 'keyup', { key: 'Enter', preventDefault() {} });
+
+  assert.deepEqual(apiState.remoteCalls.map((call) => call.payload), [
+    { keys: 'CTRL+L', space: 'browser' },
+    { key: 'Enter', space: 'browser' },
+  ]);
+});
+
 test('remote live view shows automatic Agent update and clears it when the first frame arrives', async () => {
   resetStore();
   state.store.view = 'remote';
