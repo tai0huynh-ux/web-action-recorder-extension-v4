@@ -109,6 +109,13 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
       });
+      state.wssRuntime?.adapter?.on?.('session', (event) => {
+        state.application?.invalidate?.('sessions', {
+          deviceId: event.deviceId,
+          generation: event.generation,
+          status: event.status,
+        });
+      });
       state.ipcRegistration = registerControllerIpcHandlers({
         ipcMain: state.ipcMain,
         mainWindow: () => state.mainWindow,

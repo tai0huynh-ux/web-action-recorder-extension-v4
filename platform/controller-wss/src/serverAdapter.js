@@ -31,6 +31,11 @@ export class ControllerWssServerAdapter extends EventEmitter {
       if (state.session) {
         this.unregisterActiveConnection(state.session.deviceId, state.session.generation, connection);
         this.sessionManager.disconnect(state.session.deviceId, state.session.generation, 'offline');
+        this.emit('session', {
+          deviceId: state.session.deviceId,
+          generation: state.session.generation,
+          status: 'offline',
+        });
       }
     };
     connection.on?.('close', cleanup);
@@ -54,6 +59,11 @@ export class ControllerWssServerAdapter extends EventEmitter {
         state.connection?.markAuthenticated?.();
         this.sessionManager.attachClose(state.session.deviceId, state.session.generation, close);
         this.registerActiveConnection(state.session, state.connection || null);
+        this.emit('session', {
+          deviceId: state.session.deviceId,
+          generation: state.session.generation,
+          status: state.session.status,
+        });
         return this.response(envelope, { ok: true, session: state.session, replay: await this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });
       }
       if (!state.session) throw publicError('unauthenticated', 'Agent session is not authenticated', 401);
