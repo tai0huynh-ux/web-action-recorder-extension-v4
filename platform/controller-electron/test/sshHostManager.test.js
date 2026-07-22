@@ -97,8 +97,69 @@ test('SSH host manager reports unreadable key without invoking SSH', async () =>
   const result = await manager.checkHost('ssh-bad');
 
   assert.equal(result.connected, false);
-  assert.match(result.diagnostics.error, /identity file/i);
+  assert.match(result.diagnostics.error, /private key/i);
   assert.equal(calls, 0);
+});
+
+test('SSH host repair returns a stable code when the remote command fails', async () => {
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async () => {
+      const error = new Error('ssh exited with code 255');
+      error.code = 255;
+      error.stderr = 'Permission denied (publickey).';
+      throw error;
+    },
+  });
+  await manager.load();
+
+  await assert.rejects(() => manager.repairHost('ssh-existing'), (error) => {
+    assert.equal(error.code, 'SSH_AUTH_FAILED');
+    assert.match(error.message, /authentication failed/i);
+    return true;
+  });
+});
+
+test('SSH host probes turn transient network failures into an actionable diagnostic', async () => {
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async () => {
+      const error = new Error('ssh: connect to host: Unknown error');
+      error.code = 255;
+      error.stderr = 'ssh: connect to host 192.168.1.201 port 22: Unknown error';
+      throw error;
+    },
+  });
+  await manager.load();
+
+  const result = await manager.checkHost('ssh-existing');
+  assert.equal(result.connected, false);
+  assert.equal(result.diagnostics.error, 'The Linux host is unreachable on the network');
+});
+
+test('SSH host repair distinguishes a repaired Linux host from missing Controller WSS', async () => {
+  const noWssConfig = { ...config(), wss: { enabled: false, host: '127.0.0.1', port: 0 } };
+  const manager = new SshContainerHostManager({
+    config: noWssConfig,
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async (_file, args) => ({
+      stdout: args.at(-1).includes('repair=1')
+        ? 'repair=1\n'
+        : 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n',
+      stderr: '',
+    }),
+  });
+  await manager.load();
+
+  await assert.rejects(() => manager.repairHost('ssh-existing'), (error) => {
+    assert.equal(error.code, 'CONTROLLER_WSS_NOT_CONFIGURED');
+    return true;
+  });
 });
 
 test('SSH host manager moves hosts to persistent trash and restores or purges them', async () => {

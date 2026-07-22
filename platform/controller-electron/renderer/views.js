@@ -1,4 +1,5 @@
 import { button, codeBlock, el, field, parseJsonInput, section, setStatus, stableJson, svgEl, table } from './dom.js';
+import { controllerError, safeError } from './errors.js';
 import { mergeConfiguredContainerHosts, refreshAll, refreshJob, refreshWorkflow, store, unwrap } from './state.js';
 import { t } from './i18n.js';
 import {
@@ -184,6 +185,7 @@ async function loadContainerHosts(refresh) {
   refresh();
   try {
     const result = await window.warController.containers.hosts();
+    if (result?.ok === false) throw controllerError(result, 'SSH_HOST_LIST_FAILED');
     const data = unwrap(result) || {};
     store.workspace.containerHosts = mergeConfiguredContainerHosts(data.hosts, store.settings?.containerHosts);
     store.workspace.containerHostStatus = data.status || (store.workspace.containerHosts.length ? 'connected' : 'unavailable');
@@ -195,10 +197,10 @@ async function loadContainerHosts(refresh) {
       ? t('workspace.containers.hostConnected')
       : t('workspace.containers.hostUnavailable');
   } catch (error) {
-    store.workspace.containerHosts = [];
+    store.workspace.containerHosts = mergeConfiguredContainerHosts([], store.settings?.containerHosts);
     store.workspace.containerHostId = '';
     store.workspace.containerHostStatus = 'unavailable';
-    store.workspace.containerNotice = t('workspace.containers.hostUnavailable');
+    store.workspace.containerNotice = safeError(error, 'SSH_HOST_LIST_FAILED');
   } finally {
     refresh();
   }
@@ -314,11 +316,11 @@ async function submitHostSetup(mode, status, refresh) {
     const savedResult = editing
       ? await window.warController.containers.updateHost({ hostId: store.workspace.hostEditorId, ...payload })
       : await window.warController.containers.addHost(payload);
-    if (savedResult?.ok === false) throw new Error(safeError(savedResult));
+    if (savedResult?.ok === false) throw controllerError(savedResult, 'SSH_HOST_SAVE_FAILED');
     let host = unwrap(savedResult) || {};
     if (mode === 'repair') {
       const repairResult = await window.warController.containers.repairHost({ hostId: host.id });
-      if (repairResult?.ok === false) throw new Error(safeError(repairResult));
+      if (repairResult?.ok === false) throw controllerError(repairResult, 'SSH_HOST_REPAIR_FAILED');
       host = unwrap(repairResult) || host;
     }
     await refreshAll();
@@ -331,7 +333,8 @@ async function submitHostSetup(mode, status, refresh) {
       : t('workspace.containers.hostRepairRequired');
     store.workspace.hostError = '';
   } catch (error) {
-    store.workspace.hostError = safeError({ code: error?.code || 'SSH_HOST_ERROR', message: error?.message || String(error) });
+    await loadContainerHosts(refresh);
+    store.workspace.hostError = safeError(error, 'SSH_HOST_ERROR');
     store.workspace.containerNotice = store.workspace.hostError;
   } finally {
     store.workspace.hostPending = '';
@@ -354,7 +357,7 @@ function hostDiagnosticsList(refresh) {
     }, [
       el('div', { className: 'host-card-title' }, [
         el('strong', { text: host.label || host.id }),
-        el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: host.connected ? t('workspace.containers.hostReady') : t('workspace.containers.hostRepairRequired') }),
+        el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: hostStatusText(host) }),
       ]),
       el('span', { className: 'device-meta', text: host.target || '' }),
       el('span', { className: 'device-meta', text: t('workspace.containers.hostCheckSummary', {
@@ -367,6 +370,7 @@ function hostDiagnosticsList(refresh) {
       el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerHost')}: ${config.controllerHost || t('workspace.containers.unknown')}` }),
       el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerCaPath')}: ${config.controllerCaPath || t('workspace.containers.unknown')}` }),
       el('span', { className: 'device-meta', text: `${t('workspace.containers.image')}: ${config.image || host.image || t('workspace.containers.unknown')} · ${config.identityFile ? t('workspace.containers.hostIdentityStored') : t('workspace.containers.sshKeyRequired')}` }),
+      checks.error ? el('span', { className: 'device-meta host-diagnostic-error', text: checks.error }) : null,
       el('span', { className: 'host-card-hint', text: selected ? t('workspace.containers.editingHost') : t('workspace.containers.selectHostToEdit') }),
     ]);
     select.addEventListener('click', () => selectHostForEdit(host, refresh));
@@ -387,6 +391,14 @@ function hostDiagnosticsList(refresh) {
 
 function checkMark(value) {
   return value ? 'OK' : '--';
+}
+
+function hostStatusText(host) {
+  if (host.connected) return t('workspace.containers.hostReady');
+  if (host.status === 'controller-required' || (host.diagnostics?.linuxReady && host.diagnostics?.wss === false)) {
+    return t('workspace.containers.hostControllerRequired');
+  }
+  return t('workspace.containers.hostRepairRequired');
 }
 
 function trashView(refresh) {
@@ -470,7 +482,7 @@ async function trashHost(host, refresh) {
   refresh();
   try {
     const result = await window.warController.containers.trashHost({ hostId });
-    if (result?.ok === false) throw new Error(safeError(result));
+    if (result?.ok === false) throw controllerError(result, 'HOST_TRASH_FAILED');
     store.workspace.containerNotice = t('workspace.containers.movedToTrash');
     if (store.workspace.hostEditorId === hostId) {
       store.workspace.hostEditorId = '';
@@ -480,7 +492,7 @@ async function trashHost(host, refresh) {
     await loadContainerHosts(refresh);
     await refreshAll();
   } catch (error) {
-    store.workspace.trashError = safeError({ code: error?.code || 'HOST_TRASH_FAILED', message: error?.message || String(error) });
+    store.workspace.trashError = safeError(error, 'HOST_TRASH_FAILED');
     store.workspace.containerNotice = store.workspace.trashError;
   } finally {
     const { [`host:${hostId}`]: _removed, ...remaining } = store.workspace.trashPending || {};
@@ -505,12 +517,12 @@ async function trashHostAction(action, host, refresh, successNotice) {
   refresh();
   try {
     const result = await window.warController.containers[action]({ hostId: host.id });
-    if (result?.ok === false) throw new Error(safeError(result));
+    if (result?.ok === false) throw controllerError(result, 'HOST_TRASH_ACTION_FAILED');
     store.workspace.containerNotice = successNotice;
     await loadContainerHosts(refresh);
     await refreshAll();
   } catch (error) {
-    store.workspace.trashError = safeError({ code: error?.code || 'HOST_TRASH_ACTION_FAILED', message: error?.message || String(error) });
+    store.workspace.trashError = safeError(error, 'HOST_TRASH_ACTION_FAILED');
     store.workspace.containerNotice = store.workspace.trashError;
   } finally {
     const { [key]: _removed, ...remaining } = store.workspace.trashPending || {};
@@ -535,11 +547,11 @@ async function trashContainerAction(action, container, refresh, successNotice) {
   refresh();
   try {
     const result = await window.warController.containers[action]({ containerId: container.id });
-    if (result?.ok === false || result?.data?.operation?.ok === false) throw new Error(safeError(result?.data?.operation || result));
+    if (result?.ok === false || result?.data?.operation?.ok === false) throw controllerError(result?.data?.operation || result, 'CONTAINER_TRASH_ACTION_FAILED');
     store.workspace.containerNotice = successNotice;
     await refreshAll();
   } catch (error) {
-    store.workspace.trashError = safeError({ code: error?.code || 'CONTAINER_TRASH_ACTION_FAILED', message: error?.message || String(error) });
+    store.workspace.trashError = safeError(error, 'CONTAINER_TRASH_ACTION_FAILED');
     store.workspace.containerNotice = store.workspace.trashError;
   } finally {
     const { [key]: _removed, ...remaining } = store.workspace.trashPending || {};
@@ -688,7 +700,7 @@ function addContainerForm(refresh) {
           store.workspace.containerNamePrefix = fixedName;
           store.workspace.containerNameSequence = nextContainerSequence(fixedName, store.containers);
         } catch (error) {
-          store.workspace.containerNotice = safeError({ code: 'ERROR', message: error.message });
+          store.workspace.containerNotice = safeError(error);
         } finally {
           store.workspace.addContainerPending = false;
           refresh();
@@ -799,7 +811,7 @@ async function updateContainerNetwork(container, network, refresh) {
       await refreshAll();
     }
   } catch (error) {
-    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(error) };
   } finally {
     const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
     store.workspace.containerPending = remainingPending;
@@ -832,7 +844,7 @@ async function containerAction(action, container, refresh) {
       await refreshAll();
     }
   } catch (error) {
-    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(error) };
     store.workspace.containerNotice = store.workspace.containerErrors[containerId];
   } finally {
     const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
@@ -890,7 +902,7 @@ async function duplicateContainer(container, refresh) {
       await refreshAll();
     }
   } catch (error) {
-    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError({ code: 'ERROR', message: error.message }) };
+    store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(error) };
     store.workspace.containerNotice = store.workspace.containerErrors[containerId];
   } finally {
     const { [containerId]: _clearedPending, ...remainingPending } = store.workspace.containerPending || {};
@@ -1193,12 +1205,6 @@ function pendingStatus(action) {
   if (action === 'duplicate') return 'creating';
   if (action === 'network') return 'restarting';
   return 'creating';
-}
-
-function safeError(result) {
-  const detail = result?.message || result?.error || 'Request failed';
-  const code = result?.code || (/^[A-Z][A-Z0-9_]{2,80}$/.test(detail) ? detail : 'ERROR');
-  return (code === detail ? code : `${code}: ${detail}`).slice(0, 300);
 }
 
 function inputModeContent(selected, refresh) {
@@ -2330,7 +2336,7 @@ async function originSyncAction(action, { originDevice, conflictPolicy, refresh 
     }
     store.originSync.error = '';
   } catch (error) {
-    store.originSync.error = safeError({ code: 'ERROR', message: error.message });
+    store.originSync.error = safeError(error);
     store.originSync.notice = '';
   } finally {
     store.originSync.pending = '';
@@ -2501,7 +2507,7 @@ async function graphAction(action, { workflow, refresh }) {
     store.graphEditor.selectedNodeId = store.graphEditor.selectedNodeId || store.graphEditor.graph?.nodes?.[0]?.id || '';
     store.graphEditor.error = '';
   } catch (error) {
-    store.graphEditor.error = safeError({ code: error.code || 'ERROR', message: error.message });
+    store.graphEditor.error = safeError(error);
     store.graphEditor.notice = '';
   } finally {
     store.graphEditor.pending = '';
@@ -2745,7 +2751,7 @@ async function dispatchTaskPackage(refresh) {
           inputs: plan.inputs,
           deadlineSeconds: plan.deadlineSeconds,
         });
-        if (result?.ok === false) throw new Error(safeError(result));
+        if (result?.ok === false) throw controllerError(result, 'JOB_DISPATCH_FAILED');
         const data = unwrap(result);
         if (data?.job?.id && data.transport) store.jobTransports[data.job.id] = data.transport;
         return {
@@ -2765,7 +2771,7 @@ async function dispatchTaskPackage(refresh) {
           revision: workflow.revision,
           jobId: '',
           ok: false,
-          status: `${t('taskPackage.failed')}: ${String(error.message || error).slice(0, 300)}`,
+          status: `${t('taskPackage.failed')}: ${safeError(error)}`,
         };
       }
     }));
@@ -2776,7 +2782,7 @@ async function dispatchTaskPackage(refresh) {
     taskState.error = failed === items.length ? taskState.notice : '';
     await refreshAll();
   } catch (error) {
-    taskState.error = String(error.message || error).slice(0, 500);
+    taskState.error = safeError(error);
     taskState.notice = '';
   } finally {
     taskState.pending = false;
@@ -2965,7 +2971,7 @@ async function groupedInputAction(action, { workflow, deadline, groupedDevices, 
     store.groupedInput.error = '';
     if (action === 'dispatch') await refreshAll();
   } catch (error) {
-    store.groupedInput.error = safeError({ code: error.code || 'ERROR', message: error.message });
+    store.groupedInput.error = safeError(error);
     store.groupedInput.notice = '';
   } finally {
     store.groupedInput.pending = '';

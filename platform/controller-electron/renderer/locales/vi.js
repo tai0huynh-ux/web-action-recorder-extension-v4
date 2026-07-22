@@ -193,6 +193,7 @@ export default {
       hostWorking: 'Đang xử lý',
       hostRepairing: 'Đang cài hoặc sửa Docker, ứng dụng Agent, image và chính sách bảo mật trên Linux.',
       hostRepairRequired: 'Cần cài / sửa',
+      hostControllerRequired: 'Linux đã sẵn sàng · cần bật Controller WSS',
       hostReady: 'Sẵn sàng',
       noHostConfigured: 'Chưa lưu máy Linux nào.',
       hostCheckSummary: 'Docker {docker} · Image {image} · App {app} · Policy {policy} · CA {ca}',

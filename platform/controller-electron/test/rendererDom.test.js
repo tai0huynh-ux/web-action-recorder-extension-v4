@@ -95,6 +95,7 @@ installFakeDom();
 installControllerApi();
 
 const dom = await import('../renderer/dom.js');
+const errors = await import('../renderer/errors.js');
 const i18n = await import('../renderer/i18n.js');
 const state = await import('../renderer/state.js');
 const views = await import('../renderer/views.js');
@@ -118,6 +119,15 @@ test('table header retains visible text', () => {
 test('empty state retains visible text', () => {
   const node = dom.table([{ key: 'id', label: 'Job' }], []);
   assert.equal(first(node, 'td').textContent, 'No records');
+});
+
+test('nested IPC errors keep their code and message without object coercion', () => {
+  const result = { ok: false, error: { code: 'SSH_AUTH_FAILED', message: 'SSH authentication failed' } };
+  assert.equal(errors.safeError(result), 'SSH_AUTH_FAILED: SSH authentication failed');
+  assert.equal(errors.safeError(result).includes('[object Object]'), false);
+  const error = errors.controllerError(result, 'SSH_HOST_ERROR');
+  assert.equal(error.code, 'SSH_AUTH_FAILED');
+  assert.equal(error.message, 'SSH authentication failed');
 });
 
 test('text-only element is not cleared by child replacement default', () => {
@@ -566,6 +576,66 @@ test('selecting a Linux host restores saved fields and updates it in place', asy
   assert.equal(apiState.hostCalls.update, 1);
   assert.equal(apiState.hostRequests.at(-1).hostId, 'ssh-host-1');
   assert.equal(apiState.hostRequests.at(-1).identityFile, 'C:/Users/test/.ssh/id_ed25519');
+});
+
+test('Linux host repair surfaces nested IPC errors and can be retried successfully', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const host = { id: 'ssh-host-1', label: 'Linux da duyet', name: 'Linux da duyet', target: 'root@192.168.1.201', image: 'war-browser-agent:phase1', connected: false, diagnostics: {} };
+  state.store.settings.containerHosts = [{
+    id: host.id,
+    name: host.name,
+    target: host.target,
+    identityFile: 'C:/Users/test/.ssh/id_ed25519',
+    controllerHost: '192.168.1.206',
+    controllerCaPath: '/opt/war/war-controller-pilot-ca.crt',
+    image: host.image,
+  }];
+  state.store.workspace.containerHosts = [host];
+  apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [host] } };
+  apiState.hostRepairResult = { ok: false, error: { code: 'SSH_AUTH_FAILED', message: 'SSH authentication failed; verify the Linux account and private key' } };
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await all(current, (node) => node.className === 'host-card-select')[0].click();
+  await clickButton(current, i18n.t('workspace.containers.updateRepairAndConnectHost'));
+
+  assert.equal(apiState.hostCalls.update, 1);
+  assert.equal(apiState.hostCalls.repair, 1);
+  assert.ok(state.store.workspace.hostError.includes('SSH_AUTH_FAILED: SSH authentication failed'));
+  assert.equal(state.store.workspace.hostError.includes('[object Object]'), false);
+  assert.equal(state.store.workspace.hostPending, '');
+  assert.equal(findButton(current, i18n.t('workspace.containers.updateRepairAndConnectHost')).disabled, false);
+
+  apiState.hostRepairResult = null;
+  await clickButton(current, i18n.t('workspace.containers.updateRepairAndConnectHost'));
+  assert.equal(apiState.hostCalls.update, 2);
+  assert.equal(apiState.hostCalls.repair, 2);
+  assert.equal(state.store.workspace.hostError, '');
+  assert.equal(state.store.workspace.containerHosts[0].connected, true);
+});
+
+test('Linux host repair ignores duplicate clicks while a request is pending', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const host = { id: 'ssh-host-1', label: 'Linux', name: 'Linux', target: 'root@192.168.1.201', image: 'war-browser-agent:phase1', connected: false, diagnostics: {} };
+  state.store.settings.containerHosts = [{ id: host.id, name: host.name, target: host.target, identityFile: 'C:/key', controllerHost: '192.168.1.206', controllerCaPath: '/opt/war/ca.crt', image: host.image }];
+  state.store.workspace.containerHosts = [host];
+  apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [host] } };
+  let release;
+  apiState.hostUpdateGate = new Promise((resolve) => { release = resolve; });
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await all(current, (node) => node.className === 'host-card-select')[0].click();
+  const repairButton = findButton(current, i18n.t('workspace.containers.updateRepairAndConnectHost'));
+  const firstRequest = repairButton.click();
+  const secondRequest = repairButton.click();
+  assert.equal(apiState.hostCalls.update, 1);
+  release();
+  await Promise.all([firstRequest, secondRequest]);
+  assert.equal(apiState.hostCalls.update, 1);
+  assert.equal(apiState.hostCalls.repair, 1);
 });
 
 test('workspace add container requires a successfully probed Docker host', async () => {
@@ -1439,6 +1509,9 @@ function resetStore() {
   apiState.trashHosts = [];
   apiState.hostCalls = {};
   apiState.hostRequests = [];
+  apiState.hostUpdateResult = null;
+  apiState.hostRepairResult = null;
+  apiState.hostUpdateGate = null;
   apiState.lastContainerAddPayload = null;
   apiState.containerAddDelay = false;
   apiState.originCalls = {};
@@ -1636,6 +1709,9 @@ const apiState = {
   trashHosts: [],
   hostCalls: {},
   hostRequests: [],
+  hostUpdateResult: null,
+  hostRepairResult: null,
+  hostUpdateGate: null,
   lastContainerAddPayload: null,
   containerAddDelay: false,
   originCalls: {},
@@ -1700,6 +1776,8 @@ function installControllerApi() {
         updateHost: async ({ hostId, ...payload }) => {
           apiState.hostCalls.update = (apiState.hostCalls.update || 0) + 1;
           apiState.hostRequests.push(structuredClone({ hostId, ...payload }));
+          if (apiState.hostUpdateGate) await apiState.hostUpdateGate;
+          if (apiState.hostUpdateResult) return apiState.hostUpdateResult;
           const hosts = apiState.containerHostsResult?.data?.hosts || [];
           const current = hosts.find((item) => item.id === hostId) || { id: hostId };
           const updated = { ...current, ...payload, id: hostId, label: payload.name, connected: false };
@@ -1709,6 +1787,7 @@ function installControllerApi() {
         checkHost: async ({ hostId }) => ({ ok: true, data: { id: hostId, label: 'Reviewed Linux', target: 'root@192.168.1.201', connected: false } }),
         repairHost: async ({ hostId }) => {
           apiState.hostCalls.repair = (apiState.hostCalls.repair || 0) + 1;
+          if (apiState.hostRepairResult) return apiState.hostRepairResult;
           apiState.containerHostsResult = { ok: true, data: { status: 'connected', hosts: [{ id: hostId, label: 'Reviewed Linux', name: 'Reviewed Linux', target: 'root@192.168.1.201', runtime: 'ssh-docker', connected: true, diagnostics: { ready: true } }] } };
           return { ok: true, data: { id: hostId, label: 'Reviewed Linux', connected: true } };
         },

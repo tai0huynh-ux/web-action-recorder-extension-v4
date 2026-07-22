@@ -31,7 +31,7 @@ const REPAIR_SCRIPT = [
   'if ! command -v git >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1 || ! command -v apparmor_parser >/dev/null 2>&1 || ! command -v aa-status >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then $SUDO apt-get update; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends git docker.io apparmor apparmor-utils python3; fi',
   '$SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true',
   '$SUDO mkdir -p /opt/war',
-  `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then git -C ${DEFAULT_SOURCE_ROOT} fetch --depth 1 origin main; git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
+  `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then if git -C ${DEFAULT_SOURCE_ROOT} fetch --depth 1 origin main >/dev/null 2>&1; then git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD >/dev/null 2>&1 || true; else printf "source_update=skipped\\n"; fi; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
   `$SUDO mkdir -p /etc/apparmor.d/containers ${DEFAULT_SECCOMP_PATH.substring(0, DEFAULT_SECCOMP_PATH.lastIndexOf('/'))}`,
   `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor /etc/apparmor.d/containers/war-browser-agent`,
   `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json ${DEFAULT_SECCOMP_PATH}`,
@@ -167,8 +167,20 @@ export class SshContainerHostManager {
   async repairHost(hostId) {
     const host = this.requireHost(hostId);
     this.assertIdentity(host.identityFile);
-    await this.remote(host, withEnvironment(REPAIR_SCRIPT, host.image, host.controllerCaPath));
-    return this.describeHost(host);
+    await this.remote(host, withEnvironment(REPAIR_SCRIPT, host.image, host.controllerCaPath), 'repair');
+    const checked = await this.describeHost(host);
+    const diagnostics = checked.diagnostics || {};
+    if (!diagnostics.ssh) {
+      throw codedError('SSH_HOST_REPAIR_VERIFY_FAILED', diagnostics.error || 'Linux host could not be verified after repair');
+    }
+    if (!diagnostics.wss) {
+      throw codedError('CONTROLLER_WSS_NOT_CONFIGURED', 'Controller WSS is not configured for this Linux host');
+    }
+    const failedChecks = ['docker', 'image', 'source', 'apparmor', 'seccomp', 'ca'].filter((key) => diagnostics[key] !== true);
+    if (failedChecks.length) {
+      throw codedError('SSH_HOST_REPAIR_INCOMPLETE', `Linux repair completed but checks still fail: ${failedChecks.join(', ')}`, { failedChecks });
+    }
+    return checked;
   }
 
   getHost(hostId) {
@@ -214,18 +226,21 @@ export class SshContainerHostManager {
     const base = publicHost(host);
     try {
       this.assertIdentity(host.identityFile);
-      const result = await this.remote(host, withEnvironment(PROBE_SCRIPT, host.image, host.controllerCaPath));
+      const result = await this.remote(host, withEnvironment(PROBE_SCRIPT, host.image, host.controllerCaPath), 'probe');
       const diagnostics = parseProbe(result.stdout);
+      const linuxReady = diagnostics.ready === true;
+      diagnostics.linuxReady = linuxReady;
       diagnostics.wss = Boolean(this.config.wss?.enabled && this.config.wss?.port && (host.controllerHost || this.config.wss.host));
-      diagnostics.ready = diagnostics.ready === true && diagnostics.wss;
+      diagnostics.ready = linuxReady && diagnostics.wss;
       if (!diagnostics.wss) diagnostics.error = 'Controller WSS is not configured for this host';
-      return { ...base, connected: diagnostics.ready === true, status: diagnostics.ready ? 'ready' : 'repair-required', diagnostics, checkedAt: this.now() };
+      const status = diagnostics.ready ? 'ready' : (linuxReady && !diagnostics.wss ? 'controller-required' : 'repair-required');
+      return { ...base, connected: diagnostics.ready === true, status, diagnostics, checkedAt: this.now() };
     } catch (error) {
       return { ...base, connected: false, status: 'unavailable', diagnostics: { ssh: false, ready: false, error: sanitizeError(error) }, checkedAt: this.now() };
     }
   }
 
-  async remote(host, command) {
+  async remote(host, command, operation = 'probe') {
     const args = [
       '-F', 'NUL',
       '-i', host.identityFile,
@@ -235,14 +250,18 @@ export class SshContainerHostManager {
       host.target,
       '--', command,
     ];
-    return this.execFile('ssh', args, { timeout: 15 * 60 * 1000, maxBuffer: MAX_OUTPUT_BYTES, env: { ...process.env, WAR_IMAGE: host.image, WAR_SOURCE: DEFAULT_SOURCE_ROOT } });
+    try {
+      return await this.execFile('ssh', args, { timeout: 15 * 60 * 1000, maxBuffer: MAX_OUTPUT_BYTES, env: { ...process.env, WAR_IMAGE: host.image, WAR_SOURCE: DEFAULT_SOURCE_ROOT } });
+    } catch (error) {
+      throw mapSshCommandError(error, operation);
+    }
   }
 
   assertIdentity(identityFile) {
-    if (typeof identityFile !== 'string' || identityFile.length < 1 || identityFile.length > 1024 || /[\r\n]/.test(identityFile)) throw new Error('SSH identity file is invalid');
-    if (!this.fs.existsSync(identityFile)) throw new Error('SSH identity file is not readable');
+    if (typeof identityFile !== 'string' || identityFile.length < 1 || identityFile.length > 1024 || /[\r\n]/.test(identityFile)) throw codedError('SSH_IDENTITY_INVALID', 'SSH private key path is invalid');
+    if (!this.fs.existsSync(identityFile)) throw codedError('SSH_IDENTITY_NOT_READABLE', 'SSH private key file is not readable');
     const stat = this.fs.statSync(identityFile);
-    if (!stat.isFile()) throw new Error('SSH identity file is not a regular file');
+    if (!stat.isFile()) throw codedError('SSH_IDENTITY_NOT_FILE', 'SSH private key path is not a regular file');
   }
 
   requireHost(hostId) {
@@ -342,6 +361,37 @@ function remotePath(value, fallback) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function mapSshCommandError(error, operation) {
+  const raw = `${error?.stderr || ''} ${error?.message || ''}`.toLowerCase();
+  if (error?.code === 'ENOENT') return codedError('SSH_CLIENT_MISSING', 'The ssh client is not available on the Controller');
+  if (error?.code === 'ETIMEDOUT' || error?.killed || error?.signal === 'SIGTERM' || raw.includes('timed out')) {
+    return codedError('SSH_TIMEOUT', 'SSH connection or remote command timed out');
+  }
+  if (raw.includes('permission denied') || raw.includes('no supported authentication methods')) {
+    return codedError('SSH_AUTH_FAILED', 'SSH authentication failed; verify the Linux account and private key');
+  }
+  if (raw.includes('could not resolve hostname') || raw.includes('name or service not known') || raw.includes('getaddrinfo')) {
+    return codedError('SSH_DNS_FAILED', 'The Linux host name could not be resolved');
+  }
+  if (raw.includes('connection refused') || raw.includes('no route to host') || raw.includes('network is unreachable') || raw.includes('unknown error')) {
+    return codedError('SSH_UNREACHABLE', 'The Linux host is unreachable on the network');
+  }
+  if (operation === 'repair' && raw.includes('root_or_passwordless_sudo_required')) {
+    return codedError('SSH_SUDO_REQUIRED', 'Repair requires root or passwordless sudo on the Linux host');
+  }
+  if (operation === 'repair') {
+    return codedError('SSH_REPAIR_COMMAND_FAILED', 'The remote repair command failed; verify package, Docker, and repository access');
+  }
+  return codedError('SSH_HOST_COMMAND_FAILED', 'The remote Linux host check failed');
+}
+
+function codedError(code, message, details) {
+  const error = new Error(message);
+  error.code = code;
+  if (details !== undefined) error.details = details;
+  return error;
 }
 
 function sanitizeError(error) {

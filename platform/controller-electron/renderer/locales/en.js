@@ -193,6 +193,7 @@ export default {
       hostWorking: 'Working',
       hostRepairing: 'Installing or repairing Docker, Agent source, image, and security policies on Linux.',
       hostRepairRequired: 'Repair required',
+      hostControllerRequired: 'Linux ready · Controller WSS required',
       hostReady: 'Ready',
       noHostConfigured: 'No Linux machine has been saved.',
       hostCheckSummary: 'Docker {docker} · Image {image} · App {app} · Policy {policy} · CA {ca}',

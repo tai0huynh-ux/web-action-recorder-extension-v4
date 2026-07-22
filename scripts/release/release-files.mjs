@@ -22,6 +22,7 @@ export const controllerFiles = [
   'platform/controller-electron/renderer/app.js',
   'platform/controller-electron/renderer/assets/war-controller-icon.svg',
   'platform/controller-electron/renderer/dom.js',
+  'platform/controller-electron/renderer/errors.js',
   'platform/controller-electron/renderer/i18n.js',
   'platform/controller-electron/renderer/index.html',
   'platform/controller-electron/renderer/locales/en.js',
