@@ -11,6 +11,7 @@ const IPC_CHANNELS = Object.freeze({
     confirm: 'war-controller:v1:pairings:confirm',
     reject: 'war-controller:v1:pairings:reject',
     revoke: 'war-controller:v1:pairings:revoke',
+    reconnect: 'war-controller:v1:pairings:reconnect',
   }),
   devices: Object.freeze({
     list: 'war-controller:v1:devices:list',
@@ -30,6 +31,7 @@ const IPC_CHANNELS = Object.freeze({
     hostAdd: 'war-controller:v1:containers:host-add',
     hostUpdate: 'war-controller:v1:containers:host-update',
     hostCheck: 'war-controller:v1:containers:host-check',
+    hostReconnect: 'war-controller:v1:containers:host-reconnect',
     hostRepair: 'war-controller:v1:containers:host-repair',
     hostTrash: 'war-controller:v1:containers:host-trash',
     hostRestore: 'war-controller:v1:containers:host-restore',
@@ -38,6 +40,7 @@ const IPC_CHANNELS = Object.freeze({
     start: 'war-controller:v1:containers:start',
     stop: 'war-controller:v1:containers:stop',
     restart: 'war-controller:v1:containers:restart',
+    reconnect: 'war-controller:v1:containers:reconnect',
     refresh: 'war-controller:v1:containers:refresh',
     updateNetwork: 'war-controller:v1:containers:update-network',
     duplicate: 'war-controller:v1:containers:duplicate',
@@ -71,6 +74,10 @@ const IPC_CHANNELS = Object.freeze({
     groupedPreview: 'war-controller:v1:jobs:grouped-preview',
     groupedDispatch: 'war-controller:v1:jobs:grouped-dispatch',
     cancel: 'war-controller:v1:jobs:cancel',
+  }),
+  diagnostics: Object.freeze({
+    run: 'war-controller:v1:diagnostics:run',
+    repair: 'war-controller:v1:diagnostics:repair',
   }),
   dialog: Object.freeze({
     importDevice: 'war-controller:v1:dialog:import-device',
@@ -121,6 +128,7 @@ const api = deepFreeze({
     confirm: call(IPC_CHANNELS.pairings.confirm),
     reject: call(IPC_CHANNELS.pairings.reject),
     revoke: call(IPC_CHANNELS.pairings.revoke),
+    reconnect: call(IPC_CHANNELS.pairings.reconnect),
   },
   devices: {
     list: call(IPC_CHANNELS.devices.list),
@@ -140,6 +148,7 @@ const api = deepFreeze({
     addHost: call(IPC_CHANNELS.containers.hostAdd),
     updateHost: call(IPC_CHANNELS.containers.hostUpdate),
     checkHost: call(IPC_CHANNELS.containers.hostCheck),
+    reconnectHost: call(IPC_CHANNELS.containers.hostReconnect),
     repairHost: call(IPC_CHANNELS.containers.hostRepair),
     trashHost: call(IPC_CHANNELS.containers.hostTrash),
     restoreHost: call(IPC_CHANNELS.containers.hostRestore),
@@ -148,6 +157,7 @@ const api = deepFreeze({
     start: call(IPC_CHANNELS.containers.start),
     stop: call(IPC_CHANNELS.containers.stop),
     restart: call(IPC_CHANNELS.containers.restart),
+    reconnect: call(IPC_CHANNELS.containers.reconnect),
     refresh: call(IPC_CHANNELS.containers.refresh),
     updateNetwork: call(IPC_CHANNELS.containers.updateNetwork),
     duplicate: call(IPC_CHANNELS.containers.duplicate),
@@ -181,6 +191,10 @@ const api = deepFreeze({
     groupedPreview: call(IPC_CHANNELS.jobs.groupedPreview),
     groupedDispatch: call(IPC_CHANNELS.jobs.groupedDispatch),
     cancel: call(IPC_CHANNELS.jobs.cancel),
+  },
+  diagnostics: {
+    run: call(IPC_CHANNELS.diagnostics.run),
+    repair: call(IPC_CHANNELS.diagnostics.repair),
   },
   dialogs: {
     importDeviceDescriptor: call(IPC_CHANNELS.dialog.importDevice),

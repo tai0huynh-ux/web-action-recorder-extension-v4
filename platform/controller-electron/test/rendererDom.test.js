@@ -1482,6 +1482,55 @@ test('pairing request and confirm notices survive renderer refresh', async () =>
   assert.ok(current.textContent.includes('test-credential'));
 });
 
+test('pairing controls reconnect an Agent and delete its pairing', async () => {
+  resetStore();
+  state.store.view = 'pairing';
+  state.store.pairings = { pending: [], paired: [{ deviceId: 'dev-a', pairedAt: '2026-07-16T00:00:00.000Z', revokedAt: null }] };
+  state.store.sessions = [{ deviceId: 'dev-a', status: 'offline' }];
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Reconnect');
+  assert.deepEqual(apiState.pairingReconnects, ['dev-a']);
+
+  resetStore();
+  state.store.view = 'pairing';
+  state.store.pairings = { pending: [], paired: [{ deviceId: 'dev-a', pairedAt: '2026-07-16T00:00:00.000Z', revokedAt: null }] };
+  const previousConfirm = window.confirm;
+  window.confirm = () => true;
+  try {
+    current = views.renderView(() => { current = views.renderView(() => {}); });
+    await clickButton(current, 'Delete');
+  } finally {
+    window.confirm = previousConfirm;
+  }
+  assert.deepEqual(apiState.pairingDeletes, ['dev-a']);
+});
+
+test('diagnostics runs and applies a targeted repair through the renderer', async () => {
+  resetStore();
+  state.store.view = 'diagnostics';
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  await clickButton(current, 'Run diagnostics');
+  assert.equal(apiState.diagnosticsRuns, 1);
+  assert.ok(current.textContent.includes('WSS_READY'));
+  await clickButton(current, 'Reload WSS/TLS');
+  assert.deepEqual(apiState.diagnosticsRepairs, [{ targetId: 'wss' }]);
+});
+
+test('workspace exposes reconnect controls for Linux hosts and managed containers', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  state.store.workspace.containerHosts = [{ id: 'ssh-host-1', label: 'Reviewed Linux', name: 'Reviewed Linux', target: 'root@192.168.1.201', connected: true, diagnostics: { ready: true } }];
+  state.store.containers = [containerFixture({ id: 'container-1', host: 'ssh-host-1', status: 'running' })];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'offline' }];
+  let current = views.renderView(() => { current = views.renderView(() => {}); });
+  const reconnectButtons = all(current, (node) => node.localName === 'button' && node.textContent === i18n.t('workspace.containers.reconnect'));
+  assert.ok(reconnectButtons.length >= 2);
+  await reconnectButtons[0].click();
+  await reconnectButtons.at(-1).click();
+  assert.equal(apiState.hostCalls.reconnect, 1);
+  assert.equal(apiState.containerCalls.reconnect, 1);
+});
+
 test('jobs dispatch transport warning remains visible after refresh', async () => {
   resetStore();
   state.store.view = 'jobs';
@@ -1534,6 +1583,12 @@ function resetStore() {
   apiState.jobDispatchGate = null;
   apiState.groupCreateResult = null;
   apiState.settingsUpdates = [];
+  apiState.pairingReconnects = [];
+  apiState.pairingDeletes = [];
+  apiState.diagnosticsRuns = 0;
+  apiState.diagnosticsRepairs = [];
+  apiState.diagnosticsResult = null;
+  apiState.diagnosticsRepairResult = null;
   Object.assign(state.store, {
     view: 'overview',
     settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
@@ -1606,6 +1661,10 @@ function resetStore() {
     selectedJob: null,
     jobEvents: [],
     jobTransports: {},
+    diagnostics: null,
+    diagnosticsPending: false,
+    diagnosticsNotice: '',
+    diagnosticsError: '',
     groupedInput: {
       mode: 'text',
       text: '',
@@ -1734,6 +1793,12 @@ const apiState = {
   jobDispatchGate: null,
   groupCreateResult: null,
   settingsUpdates: [],
+  pairingReconnects: [],
+  pairingDeletes: [],
+  diagnosticsRuns: 0,
+  diagnosticsRepairs: [],
+  diagnosticsResult: null,
+  diagnosticsRepairResult: null,
 };
 
 function installControllerApi() {
@@ -1749,7 +1814,14 @@ function installControllerApi() {
         request: async () => ({ ok: true, data: { code: '123456' } }),
         confirm: async () => ({ ok: true, data: { credential: 'test-credential' } }),
         reject: async () => ({ ok: true, data: {} }),
-        revoke: async () => ({ ok: true, data: {} }),
+        revoke: async ({ deviceId }) => {
+          apiState.pairingDeletes = [...(apiState.pairingDeletes || []), deviceId];
+          return { ok: true, data: {} };
+        },
+        reconnect: async ({ deviceId }) => {
+          apiState.pairingReconnects = [...(apiState.pairingReconnects || []), deviceId];
+          return { ok: true, data: { deviceId, status: 'reconnecting' } };
+        },
       },
       devices: { list: async () => ({ ok: true, data: { devices: apiState.devices } }) },
       settings: {
@@ -1785,6 +1857,10 @@ function installControllerApi() {
           return { ok: true, data: updated };
         },
         checkHost: async ({ hostId }) => ({ ok: true, data: { id: hostId, label: 'Reviewed Linux', target: 'root@192.168.1.201', connected: false } }),
+        reconnectHost: async ({ hostId }) => {
+          apiState.hostCalls.reconnect = (apiState.hostCalls.reconnect || 0) + 1;
+          return { ok: true, data: { id: hostId, label: 'Reviewed Linux', connected: true } };
+        },
         repairHost: async ({ hostId }) => {
           apiState.hostCalls.repair = (apiState.hostCalls.repair || 0) + 1;
           if (apiState.hostRepairResult) return apiState.hostRepairResult;
@@ -1833,6 +1909,7 @@ function installControllerApi() {
         start: async ({ containerId }) => containerOperation('start', containerId, 'running'),
         stop: async ({ containerId }) => containerOperation('stop', containerId, 'stopped'),
         restart: async ({ containerId }) => containerOperation('restart', containerId, 'running'),
+        reconnect: async ({ containerId }) => containerOperation('reconnect', containerId, 'running'),
         refresh: async ({ containerId }) => containerOperation('refresh', containerId, 'running'),
         updateNetwork: async ({ containerId, ...network }) => {
           apiState.containerCalls.updateNetwork = (apiState.containerCalls.updateNetwork || 0) + 1;
@@ -1943,6 +2020,16 @@ function installControllerApi() {
         get: async () => ({ ok: true, data: {} }),
         events: async () => ({ ok: true, data: { events: [] } }),
         cancel: async () => ({ ok: true, data: {} }),
+      },
+      diagnostics: {
+        run: async () => {
+          apiState.diagnosticsRuns = (apiState.diagnosticsRuns || 0) + 1;
+          return apiState.diagnosticsResult || { ok: true, data: { summary: { total: 1, ok: 1, warning: 0, error: 0, fixable: 1 }, checks: [{ id: 'wss', area: 'wss', severity: 'ok', code: 'WSS_READY', message: 'WSS ready', fixable: true, action: 'refresh-wss' }] } };
+        },
+        repair: async (payload) => {
+          apiState.diagnosticsRepairs = [...(apiState.diagnosticsRepairs || []), payload];
+          return apiState.diagnosticsRepairResult || { ok: true, data: { repairs: [{ targetId: payload.targetId || 'wss' }], failures: [], diagnostics: { summary: { total: 1, ok: 1, warning: 0, error: 0, fixable: 1 }, checks: [] } } };
+        },
       },
       dialogs: {
         importDeviceDescriptor: async () => ({ ok: true, data: { canceled: true } }),

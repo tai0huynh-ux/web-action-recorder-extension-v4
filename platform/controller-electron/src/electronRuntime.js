@@ -103,7 +103,8 @@ export function createElectronControllerRuntime(dependencies = {}) {
         containerHostManager: state.containerHostManager,
         config: state.config,
         version: state.version,
-        settingsStore: state.settingsStore
+        settingsStore: state.settingsStore,
+        fs: state.fs,
       });
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });

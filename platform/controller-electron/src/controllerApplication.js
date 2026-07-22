@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
+import nodeFs from 'node:fs';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
 import { ipv6Eui64SuffixFromMacAddress } from '../../controller-core/src/networkConfig.js';
 import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
@@ -18,7 +19,7 @@ const MAX_GROUPED_INPUT_ROWS = 200;
 const GROUPED_INPUT_MODES = new Set(['text', 'table', 'cell']);
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -36,6 +37,92 @@ export class ControllerApplicationService extends EventEmitter {
       protocolVersion: 'v1'
     });
   }
+  async getDiagnostics() {
+    const runtime = this.getRuntimeStatus().data;
+    const publicConfig = this.config ? toPublicRuntimeConfig(this.config) : null;
+    const checks = [];
+    const addCheck = (check) => checks.push({ fixable: false, ...check });
+    const wssConfigured = Boolean(publicConfig?.wss?.requested || runtime?.enabled);
+    if (runtime?.enabled && runtime.status === 'running') {
+      addCheck({ id: 'wss', area: 'wss', severity: 'ok', code: 'WSS_READY', message: 'Controller WSS is running' });
+    } else if (wssConfigured) {
+      for (const message of publicConfig?.errors || []) addCheck({ id: `wss-config-${checks.length}`, area: 'wss', severity: 'error', code: 'WSS_CONFIGURATION_ERROR', message, fixable: true, action: 'refresh-wss' });
+      if (!publicConfig?.errors?.length) addCheck({ id: 'wss', area: 'wss', severity: 'error', code: 'WSS_NOT_RUNNING', message: 'Controller WSS is not running', fixable: true, action: 'refresh-wss' });
+    } else {
+      addCheck({ id: 'wss', area: 'wss', severity: 'warning', code: 'WSS_DISABLED', message: 'Controller WSS is disabled', fixable: false });
+    }
+    if (publicConfig?.containers?.enabled && !runtime?.enabled) {
+      addCheck({ id: 'containers-wss', area: 'containers', severity: 'error', code: 'CONTAINERS_REQUIRE_WSS', message: 'Managed containers require a running Controller WSS endpoint', fixable: true, action: 'refresh-wss' });
+    }
+
+    let hostData = { status: 'disabled', hosts: [] };
+    try { hostData = unwrapApplicationResult(await this.listContainerHosts()) || hostData; } catch (error) {
+      addCheck({ id: 'linux-host-manager', area: 'linux', severity: 'error', code: error.code || 'LINUX_HOST_CHECK_FAILED', message: sanitizeDiagnosticMessage(error), fixable: false });
+    }
+    for (const host of hostData.hosts || []) {
+      if (host.connected) addCheck({ id: `host:${host.id}`, area: 'linux', severity: 'ok', code: 'LINUX_HOST_READY', message: `${host.label || host.id} is ready`, targetId: `host:${host.id}` });
+      else addCheck({ id: `host:${host.id}`, area: 'linux', severity: 'error', code: host.diagnostics?.error ? 'LINUX_HOST_NOT_READY' : 'LINUX_HOST_UNAVAILABLE', message: host.diagnostics?.error || `${host.label || host.id} is not ready`, targetId: `host:${host.id}`, fixable: true, action: 'repair-host' });
+    }
+    const paired = this.core.pairing.listPairedAgents();
+    for (const agent of paired.filter((item) => !item.revokedAt)) {
+      const session = this.core.sessions.getPublicSession(agent.deviceId);
+      if (session?.status === 'online') addCheck({ id: `device:${agent.deviceId}`, area: 'agent', severity: 'ok', code: 'AGENT_ONLINE', message: `${agent.deviceId} is online`, targetId: `device:${agent.deviceId}` });
+      else addCheck({ id: `device:${agent.deviceId}`, area: 'agent', severity: 'warning', code: 'AGENT_SESSION_OFFLINE', message: `${agent.deviceId} is not connected`, targetId: `device:${agent.deviceId}`, fixable: true, action: 'reconnect-agent' });
+    }
+    const containers = this.core.containers.listContainers().containers || [];
+    for (const container of containers.filter((item) => item.status !== 'deleted')) {
+      if (container.status === 'failed' || container.status === 'unavailable') addCheck({ id: `container:${container.id}`, area: 'container', severity: 'error', code: 'CONTAINER_FAILED', message: container.lastError || `${container.name || container.id} is not running`, targetId: `container:${container.id}`, fixable: true, action: 'reconnect-container' });
+    }
+    const summary = {
+      total: checks.length,
+      ok: checks.filter((item) => item.severity === 'ok').length,
+      warning: checks.filter((item) => item.severity === 'warning').length,
+      error: checks.filter((item) => item.severity === 'error').length,
+      fixable: checks.filter((item) => item.fixable).length,
+    };
+    return this.result({ generatedAt: this.now(), summary, checks, runtime, hosts: hostData.hosts || [], containers: containers.map(sanitizeDiagnosticContainer), sessions: this.core.sessions.listSessions().map(sanitizeDiagnosticSession) });
+  }
+  async repairDiagnostics({ targetId } = {}) {
+    const repairs = [];
+    const failures = [];
+    const attempt = async (id, action) => {
+      try {
+        const result = await action();
+        if (id === 'wss' && result?.refreshed === false) throw codedError('WSS_TLS_RELOAD_UNAVAILABLE', result.reason || 'WSS TLS reload is unavailable');
+        repairs.push({ targetId: id, ...(result || {}) });
+      } catch (error) { failures.push({ targetId: id, code: error.code || 'DIAGNOSTIC_REPAIR_FAILED', message: sanitizeDiagnosticMessage(error) }); }
+    };
+    const target = String(targetId || '').trim();
+    if (!target || target === 'wss') await attempt('wss', () => this.refreshWssTls());
+    if (!target || target.startsWith('host:')) {
+      const hosts = target.startsWith('host:')
+        ? [{ id: target.slice(5) }]
+        : (unwrapApplicationResult(await this.listContainerHosts())?.hosts || []).filter((host) => !host.connected);
+      for (const host of hosts) await attempt(`host:${host.id}`, () => this.repairContainerHost({ hostId: host.id }));
+    }
+    if (target.startsWith('device:')) await attempt(target, () => this.reconnectAgent({ deviceId: target.slice(7) }));
+    if (target.startsWith('container:')) await attempt(target, () => this.reconnectContainer({ containerId: target.slice(10) }));
+    if (!target) {
+      for (const agent of this.core.pairing.listPairedAgents().filter((item) => !item.revokedAt && this.core.sessions.getPublicSession(item.deviceId)?.status !== 'online')) {
+        await attempt(`device:${agent.deviceId}`, () => this.reconnectAgent({ deviceId: agent.deviceId }));
+      }
+      for (const container of this.core.containers.listContainers().containers.filter((item) => ['failed', 'unavailable'].includes(item.status))) {
+        await attempt(`container:${container.id}`, () => this.reconnectContainer({ containerId: container.id }));
+      }
+    }
+    const diagnostics = await this.getDiagnostics();
+    return this.result({ repairs, failures, diagnostics: diagnostics.data });
+  }
+  async refreshWssTls() {
+    const server = this.wssRuntime?.server;
+    const tls = this.config?.wss?.tls;
+    if (!server || typeof server.setSecureContext !== 'function' || !tls?.certPath || !tls?.keyPath) {
+      return { refreshed: false, reason: 'WSS TLS reload is unavailable in this runtime' };
+    }
+    const [cert, key] = await Promise.all([this.fs.promises.readFile(tls.certPath), this.fs.promises.readFile(tls.keyPath)]);
+    server.setSecureContext({ cert, key });
+    return { refreshed: true, reason: 'WSS TLS certificate and key reloaded' };
+  }
   listPairings() { return this.result({ pending: this.core.pairing.listPendingPairings(), paired: this.core.pairing.listPairedAgents() }); }
   async requestPairing({ device, displayName, requestId }) { const data = await this.core.pairing.requestPairing({ device, displayName, requestId }); this.invalidate('pairings', { deviceId: device?.deviceId }); return this.result(data); }
   async confirmPairing({ requestId, code }) { const data = await this.core.pairing.confirmPairing(requestId, code); this.invalidate('pairings', { deviceId: data.deviceId }); this.invalidate('devices', { deviceId: data.deviceId }); return this.result(data); }
@@ -47,6 +134,16 @@ export class ControllerApplicationService extends EventEmitter {
     this.invalidate('devices', { deviceId });
     this.invalidate('sessions', { deviceId });
     return this.result(data);
+  }
+  async reconnectAgent({ deviceId }) {
+    const device = this.core.devices.getDevice(deviceId);
+    if (device.revoked) throw codedError('DEVICE_REVOKED', 'Revoked Agent cannot be reconnected');
+    const session = this.core.sessions.getPublicSession(deviceId);
+    if (session) await this.core.sessions.closeDeviceSession(deviceId, 'reconnect');
+    this.invalidate('pairings', { deviceId });
+    this.invalidate('devices', { deviceId });
+    this.invalidate('sessions', { deviceId });
+    return this.result({ deviceId, status: session ? 'reconnecting' : 'offline', requested: Boolean(session) });
   }
   listDevices() { return this.result(this.core.devices.listDevices()); }
   getDevice({ deviceId }) { return this.result(this.core.devices.getDevice(deviceId)); }
@@ -94,6 +191,11 @@ export class ControllerApplicationService extends EventEmitter {
   async checkContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
     return this.result(await this.containerHostManager.checkHost(hostId));
+  }
+  async reconnectContainerHost({ hostId }) {
+    const data = await this.checkContainerHost({ hostId });
+    this.invalidate('containers', { hostId });
+    return data;
   }
   async repairContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
@@ -152,6 +254,12 @@ export class ControllerApplicationService extends EventEmitter {
   async startContainer({ containerId }) { return this.containerLifecycle(containerId, 'start', 'running', 'running'); }
   async stopContainer({ containerId }) { return this.containerLifecycle(containerId, 'stop', 'stopped', 'stopped'); }
   async restartContainer({ containerId }) { return this.containerLifecycle(containerId, 'restart', 'running', 'running'); }
+  async reconnectContainer({ containerId }) {
+    const container = this.core.containers.getContainer(containerId);
+    if (container.status === 'deleted' || container.status === 'deleting') throw codedError('CONTAINER_NOT_RECONNECTABLE', 'Deleted container cannot be reconnected');
+    const start = ['created', 'stopped', 'failed', 'unavailable'].includes(container.status);
+    return start ? this.startContainer({ containerId }) : this.restartContainer({ containerId });
+  }
   async refreshContainer({ containerId }) {
     const container = this.core.containers.getContainer(containerId);
     const operation = await this.safeContainerOperation('status', container);
@@ -859,4 +967,37 @@ function sanitizeContainerError(error) {
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
     .replace(/(credential|token|password)=\S+/gi, '$1=[REDACTED]')
     .slice(0, 500);
+}
+
+function unwrapApplicationResult(result) {
+  if (result?.ok === true) return result.data?.data ?? result.data;
+  return result;
+}
+
+function sanitizeDiagnosticMessage(error) {
+  return String(error?.message || error || 'Diagnostic check failed')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/(password|token|secret|credential|authorization|identity)=\S+/gi, '$1=[REDACTED]')
+    .slice(0, 300);
+}
+
+function sanitizeDiagnosticContainer(container) {
+  return {
+    id: container.id,
+    name: container.name,
+    status: container.status,
+    host: container.host || null,
+    deviceId: container.deviceId || null,
+    lastError: container.lastError ? sanitizeDiagnosticMessage(container.lastError) : null,
+  };
+}
+
+function sanitizeDiagnosticSession(session) {
+  return {
+    deviceId: session.deviceId,
+    status: session.status,
+    generation: session.generation,
+    connectedAt: session.connectedAt,
+    lastSeenAt: session.lastSeenAt,
+  };
 }

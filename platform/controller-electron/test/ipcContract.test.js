@@ -128,6 +128,18 @@ test('pairing request and confirmation payloads are narrow and sanitized', () =>
   );
 });
 
+test('reconnect and diagnostics payloads accept only explicit target identifiers', () => {
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.pairings.reconnect, { deviceId: 'device-1' }), { deviceId: 'device-1' });
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.reconnect, { containerId: 'container-1' }), { containerId: 'container-1' });
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.hostReconnect, { hostId: 'host-1' }), { hostId: 'host-1' });
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.diagnostics.run), {});
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.diagnostics.repair, { targetId: 'wss' }), { targetId: 'wss' });
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.diagnostics.repair, { targetId: 'wss', command: 'unsafe' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('dispatch payload rejects main-owned fields', () => {
   for (const key of ['generation', 'sessionId', 'jobId', 'leaseId', 'workflowContentHash', 'controlPath', 'idempotencyKey', 'deadline']) {
     assertErrorCode(

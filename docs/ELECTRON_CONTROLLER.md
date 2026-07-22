@@ -35,7 +35,7 @@ The user chooses the display-name prefix, sequence number, and IPv4/IPv6 setting
 
 Use Pairing to paste or import a `DeviceDescriptor` JSON file, request pairing, enter the one-time pairing code, and confirm or reject the pending pairing. The one-time credential is displayed only from confirm response and can be cleared manually. It is cleared when leaving Pairing.
 
-Paired agents can be listed and revoked from the Pairing view.
+Paired agents can be reconnected from the Pairing view. **Delete** revokes the pairing credential, closes the active session, and removes the agent from the active pairing list while retaining a redacted revocation history for audit.
 
 ## Workflows
 
@@ -51,7 +51,7 @@ Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS. When WSS
 
 ## Diagnostics
 
-Diagnostics shows application version, protocol version, WSS status, safe bind host, port, store loaded/degraded indicator, and last refresh time. It does not show environment, full state path, certificate path, private key path, credentials, tokens, hashes, raw store, raw errors, or stacks.
+Diagnostics can run a bounded connectivity/security check across Controller WSS, configured Linux hosts, managed containers, paired Agents, and active sessions. Each result has a stable code, severity, target, and safe repair action. **Fix detected issues** repairs failed Linux hosts, requests Agent reconnect, retries failed containers, and reloads the existing WSS TLS certificate/key into the running HTTPS server when supported. It never prints or regenerates private keys, credentials, certificate contents, or raw remote output; if a certificate must be renewed, replace it through the reviewed TLS process first, then use **Reload WSS/TLS**.
 
 ## Tests
 

@@ -77,6 +77,10 @@ export const store = {
   selectedJob: null,
   jobEvents: [],
   jobTransports: {},
+  diagnostics: null,
+  diagnosticsPending: false,
+  diagnosticsNotice: '',
+  diagnosticsError: '',
   groupedInput: {
     mode: 'text',
     text: '',

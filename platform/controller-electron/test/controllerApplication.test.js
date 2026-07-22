@@ -277,6 +277,52 @@ test('application revoke closes the active session and rejects the revoked crede
   await assert.rejects(() => core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' }), code('AUTH_DENIED'));
 });
 
+test('application reconnect closes the current Agent session without rotating its credential', async () => {
+  const closed = [];
+  const core = await connectedCore();
+  const session = core.sessions.getPublicSession('dev-a');
+  core.sessions.attachClose('dev-a', session.generation, (reason) => closed.push(reason));
+  const app = application(core, fakeTransport());
+
+  const reconnect = await app.reconnectAgent({ deviceId: 'dev-a' });
+
+  assert.equal(reconnect.data.status, 'reconnecting');
+  assert.equal(closed[0].code, 'reconnect');
+  assert.notEqual(core.devices.getDevice('dev-a').revoked, true);
+  const next = await core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' });
+  assert.equal(next.generation, session.generation + 1);
+});
+
+test('application diagnostics report WSS and Agent state and reload existing TLS material', async () => {
+  const core = await connectedCore();
+  const reads = [];
+  const secureContexts = [];
+  const config = managedRuntimeConfig();
+  config.wss.tls = { certPath: 'C:/tls/controller.crt', keyPath: 'C:/tls/controller.key' };
+  const app = new ControllerApplicationService({
+    core,
+    config,
+    wssRuntime: {
+      server: {
+        address: () => ({ port: 47651 }),
+        setSecureContext: (value) => secureContexts.push(value),
+      },
+    },
+    fs: { promises: { readFile: async (file) => { reads.push(file); return Buffer.from('existing-tls-material'); } } },
+    now: () => '2026-07-16T00:00:00.000Z',
+  });
+
+  const diagnostics = await app.getDiagnostics();
+  const repaired = await app.repairDiagnostics({ targetId: 'wss' });
+
+  assert.ok(diagnostics.data.checks.some((item) => item.code === 'WSS_READY'));
+  assert.ok(diagnostics.data.checks.some((item) => item.code === 'AGENT_ONLINE'));
+  assert.deepEqual(reads, ['C:/tls/controller.crt', 'C:/tls/controller.key']);
+  assert.equal(secureContexts.length, 1);
+  assert.equal(repaired.data.failures.length, 0);
+  assert.equal(repaired.data.repairs[0].refreshed, true);
+});
+
 test('application previews origin inventory with conflict and duplicate decisions', async () => {
   const core = await connectedCore();
   const localRevision = revision();

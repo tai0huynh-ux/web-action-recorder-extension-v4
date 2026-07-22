@@ -222,6 +222,30 @@ textarea {
   margin: 8px 0;
 }
 
+.diagnostics-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.diagnostic-card {
+  border: 1px solid var(--border, #d8dee8);
+  border-left: 4px solid var(--accent, #2563eb);
+  border-radius: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface, #fff);
+}
+
+.diagnostic-card.warning { border-left-color: #d97706; }
+.diagnostic-card.error { border-left-color: #dc2626; }
+
+.diagnostic-card-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: space-between;
+}
+
 .vertical {
   align-items: stretch;
   flex-direction: column;

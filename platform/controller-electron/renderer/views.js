@@ -376,6 +376,15 @@ function hostDiagnosticsList(refresh) {
     select.addEventListener('click', () => selectHostForEdit(host, refresh));
     return el('article', { className: `host-card${selected ? ' selected' : ''}` }, [
       select,
+      button(t('workspace.containers.reconnect'), (event) => {
+        event.stopPropagation?.();
+        reconnectHost(host, refresh);
+      }, {
+        className: 'button compact',
+        disabled: Boolean(pending) || Boolean(store.workspace.hostPending),
+        ariaLabel: t('workspace.containers.reconnectHost', { name: host.label || host.id }),
+        title: t('workspace.containers.reconnectHost', { name: host.label || host.id }),
+      }),
       button('×', (event) => {
         event.stopPropagation?.();
         trashHost(host, refresh);
@@ -497,6 +506,25 @@ async function trashHost(host, refresh) {
   } finally {
     const { [`host:${hostId}`]: _removed, ...remaining } = store.workspace.trashPending || {};
     store.workspace.trashPending = remaining;
+    refresh();
+  }
+}
+
+async function reconnectHost(host, refresh) {
+  if (store.workspace.hostPending) return;
+  store.workspace.hostPending = 'reconnect';
+  store.workspace.containerNotice = t('workspace.containers.reconnecting', { name: host.label || host.id });
+  refresh();
+  try {
+    const result = await window.warController.containers.reconnectHost({ hostId: host.id });
+    if (result?.ok === false) throw controllerError(result, 'HOST_RECONNECT_FAILED');
+    store.workspace.containerNotice = t('workspace.containers.reconnected', { name: host.label || host.id });
+    await loadContainerHosts(refresh);
+    await refreshAll();
+  } catch (error) {
+    store.workspace.containerNotice = safeError(error, 'HOST_RECONNECT_FAILED');
+  } finally {
+    store.workspace.hostPending = '';
     refresh();
   }
 }
@@ -733,6 +761,7 @@ function managedContainerActions(refresh) {
           button(t('workspace.containers.start'), () => containerAction('start', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'running' }),
           button(t('workspace.containers.stop'), () => containerAction('stop', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'stopped' }),
           button(t('workspace.containers.restart'), () => containerAction('restart', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
+          button(t('workspace.containers.reconnect'), () => containerAction('reconnect', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container, refresh), { className: 'button chip', disabled: terminalDisabled || Boolean(pendingAction) }),
           button(t('workspace.containers.networkSettings'), () => {
             store.workspace.containerNetworkOpenId = store.workspace.containerNetworkOpenId === container.id ? '' : container.id;
@@ -1201,6 +1230,7 @@ function pendingStatus(action) {
   if (action === 'start') return 'starting';
   if (action === 'stop') return 'stopping';
   if (action === 'restart') return 'restarting';
+  if (action === 'reconnect') return 'restarting';
   if (action === 'delete') return 'deleting';
   if (action === 'duplicate') return 'creating';
   if (action === 'network') return 'restarting';
@@ -2051,6 +2081,8 @@ function pairingView(refresh) {
   status.textContent = pairingNotice;
   const secretBox = el('pre', { className: 'secret-box' });
   secretBox.textContent = oneTimeSecret || 'No one-time credential displayed';
+  const activeAgents = store.pairings.paired.filter((agent) => !agent.revokedAt);
+  const revokedAgents = store.pairings.paired.filter((agent) => agent.revokedAt);
   return section('Pairing', [
     field('DeviceDescriptor JSON', descriptor),
     field('Display name override', display),
@@ -2088,13 +2120,44 @@ function pairingView(refresh) {
       { key: 'deviceId', label: 'Device' },
       { key: 'pairedAt', label: 'Paired at' },
       { key: 'revokedAt', label: 'Revoked at' },
-    ], store.pairings.paired),
-    ...store.pairings.paired.map((agent) => el('div', { className: 'row-actions' }, [
-      el('span', { text: agent.deviceId }),
-      button('Revoke', async () => { await window.warController.pairings.revoke({ deviceId: agent.deviceId }); await refreshAll(); refresh(); }),
-    ])),
+      { key: 'sessionStatus', label: 'Session' },
+    ], activeAgents.map((agent) => ({ ...agent, sessionStatus: sessionForDevice(agent.deviceId)?.status || 'offline' }))),
+    ...activeAgents.map((agent) => pairingAgentActions(agent, refresh, status)),
+    revokedAgents.length ? el('h3', { text: 'Revoked pairing history' }) : null,
+    revokedAgents.length ? table([
+      { key: 'deviceId', label: 'Device' },
+      { key: 'revokedAt', label: 'Revoked at' },
+    ], revokedAgents) : null,
     el('h3', { text: 'One-time credential' }),
     secretBox,
+  ]);
+}
+
+function sessionForDevice(deviceId) {
+  return store.sessions.find((session) => session.deviceId === deviceId) || null;
+}
+
+function pairingAgentActions(agent, refresh, status) {
+  const busy = store.diagnosticsPending;
+  return el('div', { className: 'row-actions' }, [
+    el('span', { text: agent.deviceId }),
+    button('Reconnect', async () => {
+      try {
+        const result = await window.warController.pairings.reconnect({ deviceId: agent.deviceId });
+        setStatus(status, result, 'Reconnect requested');
+        await refreshAll();
+        refresh();
+      } catch (error) { status.textContent = safeError(error, 'PAIRING_RECONNECT_FAILED'); }
+    }, { disabled: busy || Boolean(agent.revokedAt) }),
+    button('Delete', async () => {
+      if (!window.confirm(`Delete pairing ${agent.deviceId}?`)) return;
+      try {
+        const result = await window.warController.pairings.revoke({ deviceId: agent.deviceId });
+        setStatus(status, result, 'Pairing deleted');
+        await refreshAll();
+        refresh();
+      } catch (error) { status.textContent = safeError(error, 'PAIRING_DELETE_FAILED'); }
+    }, { className: 'button danger', disabled: busy || Boolean(agent.revokedAt) }),
   ]);
 }
 
@@ -3044,6 +3107,8 @@ function jobDetails() {
 
 function diagnosticsView(refresh) {
   const runtime = store.runtime || {};
+  const diagnostics = store.diagnostics;
+  const status = el('p', { className: store.diagnosticsError ? 'status error' : 'status', text: store.diagnosticsError || store.diagnosticsNotice || '', ariaLive: 'polite' });
   return section('Diagnostics', [
     metricGrid([
       ['Application version', runtime.applicationVersion || store.bootstrap?.applicationVersion || 'unknown'],
@@ -3053,9 +3118,73 @@ function diagnosticsView(refresh) {
       ['Port', runtime.port ?? 0],
       ['Store', runtime.storeStatus || 'loaded'],
       ['Last refresh', store.lastRefresh || 'never'],
+      ['Checks', diagnostics?.summary?.total ?? 'not run'],
+      ['Errors', diagnostics?.summary?.error ?? 'not run'],
+      ['Warnings', diagnostics?.summary?.warning ?? 'not run'],
     ]),
-    button('Refresh diagnostics', refresh),
+    el('div', { className: 'toolbar' }, [
+      button(store.diagnosticsPending ? 'Checking...' : 'Run diagnostics', () => runDiagnostics(refresh, status), { className: 'button primary', disabled: store.diagnosticsPending }),
+      button('Fix detected issues', () => repairDiagnostics('', refresh, status), { className: 'button', disabled: store.diagnosticsPending || !diagnostics?.summary?.fixable }),
+      button('Refresh controller state', refresh),
+    ]),
+    status,
+    diagnostics?.checks?.length ? el('div', { className: 'diagnostics-list' }, diagnostics.checks.map((check) => diagnosticCheck(check, refresh, status))) : el('p', { className: 'empty-state', text: 'Run diagnostics to inspect WSS, Linux, container, and Agent connectivity.' }),
   ]);
+}
+
+function diagnosticCheck(check, refresh, status) {
+  return el('article', { className: `diagnostic-card ${check.severity || 'warning'}` }, [
+    el('div', { className: 'diagnostic-card-heading' }, [
+      el('strong', { text: `${check.area || 'system'} · ${check.code || 'CHECK'}` }),
+      el('span', { className: `status-pill ${check.severity === 'ok' ? 'online' : check.severity === 'error' ? 'failed' : 'connecting'}`, text: check.severity || 'warning' }),
+    ]),
+    el('p', { className: 'device-meta', text: check.message || '' }),
+    check.targetId ? el('span', { className: 'device-meta', text: check.targetId }) : null,
+    check.fixable ? button(check.action === 'refresh-wss' ? 'Reload WSS/TLS' : 'Fix', () => repairDiagnostics(check.targetId || (check.action === 'refresh-wss' ? 'wss' : ''), refresh, status), { className: check.severity === 'error' ? 'button primary' : 'button compact' }) : null,
+  ]);
+}
+
+async function runDiagnostics(refresh, status) {
+  if (store.diagnosticsPending) return;
+  store.diagnosticsPending = true;
+  store.diagnosticsError = '';
+  store.diagnosticsNotice = 'Running connectivity and security checks...';
+  refresh();
+  try {
+    const result = await window.warController.diagnostics.run();
+    if (result?.ok === false) throw controllerError(result, 'DIAGNOSTICS_FAILED');
+    store.diagnostics = unwrap(result);
+    store.diagnosticsNotice = `Diagnostics complete: ${store.diagnostics.summary?.error || 0} errors, ${store.diagnostics.summary?.warning || 0} warnings.`;
+    status.textContent = store.diagnosticsNotice;
+  } catch (error) {
+    store.diagnosticsError = safeError(error, 'DIAGNOSTICS_FAILED');
+    status.textContent = store.diagnosticsError;
+  } finally {
+    store.diagnosticsPending = false;
+    refresh();
+  }
+}
+
+async function repairDiagnostics(targetId, refresh, status) {
+  if (store.diagnosticsPending) return;
+  store.diagnosticsPending = true;
+  store.diagnosticsError = '';
+  store.diagnosticsNotice = 'Applying safe repairs...';
+  refresh();
+  try {
+    const result = await window.warController.diagnostics.repair({ targetId: targetId || undefined });
+    if (result?.ok === false) throw controllerError(result, 'DIAGNOSTICS_REPAIR_FAILED');
+    const data = unwrap(result) || {};
+    store.diagnostics = data.diagnostics || store.diagnostics;
+    store.diagnosticsNotice = data.failures?.length ? `Repair completed with ${data.failures.length} failure(s).` : 'Repairs completed.';
+    status.textContent = store.diagnosticsNotice;
+  } catch (error) {
+    store.diagnosticsError = safeError(error, 'DIAGNOSTICS_REPAIR_FAILED');
+    status.textContent = store.diagnosticsError;
+  } finally {
+    store.diagnosticsPending = false;
+    refresh();
+  }
 }
 
 function metricGrid(items) {
