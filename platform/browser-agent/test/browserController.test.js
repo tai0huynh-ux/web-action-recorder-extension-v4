@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { BrowserController, browserEnvironment } from '../src/browserController.js';
+import { BrowserController, browserEnvironment, recoverStaleChromiumProfileLocks } from '../src/browserController.js';
 
 test('Chromium child environment excludes credential-like values', () => {
   assert.deepEqual(browserEnvironment({
@@ -18,6 +18,42 @@ test('Chromium child environment excludes credential-like values', () => {
     DISPLAY: ':99',
     NODE_EXTRA_CA_CERTS: '/run/war/controller-ca.pem',
   });
+});
+
+test('stale Chromium profile locks from a replaced container are removed before launch', () => {
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-profile-locks-'));
+  fs.symlinkSync('old-container-36', path.join(profileDir, 'SingletonLock'));
+  fs.symlinkSync('cookie-value', path.join(profileDir, 'SingletonCookie'));
+  fs.symlinkSync('/tmp/old-chromium/SingletonSocket', path.join(profileDir, 'SingletonSocket'));
+
+  const recovered = recoverStaleChromiumProfileLocks(profileDir, { hostname: 'new-container' });
+
+  assert.deepEqual(recovered, ['SingletonCookie', 'SingletonLock', 'SingletonSocket']);
+  for (const name of recovered) assert.equal(fs.existsSync(path.join(profileDir, name)), false);
+});
+
+test('stale Chromium profile lock from a dead process is removed', () => {
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-profile-locks-'));
+  fs.symlinkSync('current-container-36', path.join(profileDir, 'SingletonLock'));
+
+  const recovered = recoverStaleChromiumProfileLocks(profileDir, {
+    hostname: 'current-container',
+    processExists: () => false,
+  });
+
+  assert.deepEqual(recovered, ['SingletonLock']);
+});
+
+test('active Chromium profile owner is preserved and reported', () => {
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-profile-locks-'));
+  fs.symlinkSync('current-container-36', path.join(profileDir, 'SingletonLock'));
+
+  assert.throws(() => recoverStaleChromiumProfileLocks(profileDir, {
+    hostname: 'current-container',
+    processExists: () => true,
+    readProcessCommand: () => `/usr/lib/chromium/chromium --user-data-dir=${profileDir}`,
+  }), (error) => error.code === 'browser_profile_in_use');
+  assert.equal(fs.lstatSync(path.join(profileDir, 'SingletonLock')).isSymbolicLink(), true);
 });
 
 test('two tabs with the same URL get different target IDs', async () => {

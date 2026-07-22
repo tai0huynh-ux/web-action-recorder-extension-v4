@@ -12,6 +12,12 @@ const SANDBOX_YES_NO_ROWS = Object.freeze({
   seccompTsync: 'Seccomp-BPF sandbox supports TSYNC',
 });
 
+const CHROMIUM_PROFILE_LOCK_NAMES = Object.freeze([
+  'SingletonCookie',
+  'SingletonLock',
+  'SingletonSocket',
+]);
+
 export function parseSandboxStatusSnapshot(snapshot) {
   const rows = new Map((snapshot?.rows || []).filter((row) => Array.isArray(row) && row.length === 2));
   const layerOne = rows.get('Layer 1 Sandbox');
@@ -60,6 +66,13 @@ export class BrowserController {
 
   async start() {
     if (this.context) return this.getState();
+    const recoveredLocks = recoverStaleChromiumProfileLocks(this.config.paths.profileDir);
+    if (recoveredLocks.length) {
+      this.log('warn', 'browserController', 'stale_profile_lock_recovered', {
+        lockNames: recoveredLocks,
+        recoveredCount: recoveredLocks.length,
+      });
+    }
     const args = [
       `--disable-extensions-except=${this.config.extensionDir}`,
       `--load-extension=${this.config.extensionDir}`,
@@ -440,6 +453,41 @@ export class BrowserController {
   }
 }
 
+export function recoverStaleChromiumProfileLocks(profileDir, {
+  fsImpl = fs,
+  hostname = os.hostname(),
+  processExists = defaultProcessExists,
+  readProcessCommand = defaultReadProcessCommand,
+} = {}) {
+  const lockPath = path.join(profileDir, 'SingletonLock');
+  const lockTarget = readLinkIfPresent(fsImpl, lockPath);
+  const lockOwner = parseChromiumLockOwner(lockTarget);
+  if (lockOwner?.hostname === hostname && processExists(lockOwner.pid)) {
+    const command = readProcessCommand(lockOwner.pid);
+    if (!command || processCommandUsesProfile(command, profileDir)) {
+      throw new AgentError('browser_profile_in_use', 'Chromium profile is already in use by an active browser process', 409);
+    }
+  }
+
+  const recovered = [];
+  for (const name of CHROMIUM_PROFILE_LOCK_NAMES) {
+    const filePath = path.join(profileDir, name);
+    try {
+      const stat = fsImpl.lstatSync(filePath);
+      if (stat.isDirectory()) {
+        throw new AgentError('browser_profile_lock_invalid', `Chromium profile lock ${name} is unexpectedly a directory`, 500);
+      }
+      fsImpl.unlinkSync(filePath);
+      recovered.push(name);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      if (error instanceof AgentError) throw error;
+      throw new AgentError('browser_profile_lock_cleanup_failed', `Could not remove stale Chromium profile lock ${name}`, 500);
+    }
+  }
+  return recovered;
+}
+
 export function browserEnvironment(env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !/(credential|password|secret|token)/i.test(key)));
 }
@@ -499,4 +547,43 @@ function readManifest(extensionDir) {
   } catch {
     return undefined;
   }
+}
+
+function readLinkIfPresent(fsImpl, filePath) {
+  try {
+    return fsImpl.readlinkSync(filePath);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'EINVAL') return undefined;
+    throw new AgentError('browser_profile_lock_read_failed', 'Could not inspect the Chromium profile lock', 500);
+  }
+}
+
+function parseChromiumLockOwner(target) {
+  const match = typeof target === 'string' ? target.match(/^(.*)-(\d+)$/) : null;
+  if (!match) return undefined;
+  const pid = Number.parseInt(match[2], 10);
+  return Number.isSafeInteger(pid) && pid > 0 ? { hostname: match[1], pid } : undefined;
+}
+
+function defaultProcessExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function defaultReadProcessCommand(pid) {
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' ');
+  } catch {
+    return '';
+  }
+}
+
+function processCommandUsesProfile(command, profileDir) {
+  const normalizedProfile = path.resolve(profileDir);
+  return /(?:^|[\\/\s])(?:chromium|chrome)(?:\s|$)/i.test(command)
+    && (command.includes(`--user-data-dir=${profileDir}`) || command.includes(`--user-data-dir=${normalizedProfile}`));
 }
