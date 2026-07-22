@@ -55,6 +55,36 @@ test('pair revoke and re-pair rotates credential', async () => {
   assert.equal(core.pairing.verifyCredential('dev-a', repaired.credential), true);
 });
 
+test('managed provisioning generates only missing credentials and preserves an existing one', async () => {
+  const core = await fixtureCore();
+  const first = await core.pairing.provisionManagedAgent({ device: device(), displayName: 'Managed Agent' });
+  const before = core.store.snapshot();
+  assert.equal(first.reused, undefined);
+  assert.equal(before.pairedAgents[0].credentialHash, hashSecret(first.credential));
+
+  await assert.rejects(
+    () => core.pairing.provisionManagedAgent({ device: device(), displayName: 'Managed Agent' }),
+    (error) => error.code === 'MANAGED_AGENT_CREDENTIAL_REQUIRED',
+  );
+  assert.deepEqual(core.store.snapshot().pairedAgents, before.pairedAgents);
+
+  const reused = await core.pairing.provisionManagedAgent({ device: device(), displayName: 'Managed Agent', credential: first.credential });
+  assert.equal(reused.reused, true);
+  assert.equal(reused.credential, first.credential);
+  assert.deepEqual(core.store.snapshot().pairedAgents, before.pairedAgents);
+
+  await assert.rejects(
+    () => core.pairing.provisionManagedAgent({ device: device(), displayName: 'Managed Agent', credential: `${first.credential}x` }),
+    (error) => error.code === 'AUTH_DENIED',
+  );
+  assert.deepEqual(core.store.snapshot().pairedAgents, before.pairedAgents);
+
+  await assert.rejects(
+    () => core.pairing.provisionManagedAgent({ device: device({ deviceId: 'dev-new' }), credential: 'too-short' }),
+    (error) => error.code === 'AUTH_DENIED',
+  );
+});
+
 test('pending pairing collection is bounded and audit redacts token-shaped fields', async () => {
   const core = await fixtureCore();
   core.pairing.maxPending = 1;

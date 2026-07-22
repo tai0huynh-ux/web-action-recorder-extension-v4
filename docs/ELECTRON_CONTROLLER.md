@@ -23,7 +23,7 @@ Optional environment variables:
 - `WAR_CONTAINER_HOST_LABEL`: safe display name for the configured Docker host.
 - `WAR_CONTAINER_SSH_TARGET` and `WAR_CONTAINER_SSH_IDENTITY_FILE`: backend-only SSH Docker connection settings.
 
-The renderer only receives safe metadata such as WSS status, safe bind host, port, store loaded/degraded state, and the configured Docker host ID/display label. It never receives the SSH target, identity path, private key, or credentials.
+The renderer only receives safe metadata such as WSS status, safe bind host, port, store loaded/degraded state, and the configured Docker host ID/display label. It never receives the SSH target, identity path, private key, or credentials. Managed Agent credentials are generated with cryptographically secure random bytes only when missing; repair and repeated provisioning preserve an existing credential hash and never rotate it implicitly. TLS certificate and key files are preserved and are not silently regenerated.
 
 ## Managed Containers
 

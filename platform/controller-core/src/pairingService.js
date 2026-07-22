@@ -79,13 +79,37 @@ export class PairingService {
     });
   }
 
-  provisionManagedAgent({ device, displayName }) {
+  provisionManagedAgent({ device, displayName, credential: suppliedCredential } = {}) {
     const decidedAt = this.now();
-    const credential = base64url(this.randomBytes(CREDENTIAL_BYTES));
-    const credentialHash = hashSecret(credential);
     const safeDevice = sanitizeDevice({ ...device, displayName: displayName || device?.displayName });
     return this.store.update((state) => {
       state.pairedAgents ||= [];
+      if (suppliedCredential !== undefined && !isCredential(suppliedCredential)) {
+        throw domainError(ERROR_CODES.AUTH_DENIED, 'Managed Agent credential is invalid', 401);
+      }
+      const existing = state.pairedAgents.find((item) => item.deviceId === safeDevice.deviceId && !item.revokedAt);
+      if (existing) {
+        if (!isCredential(suppliedCredential)) {
+          throw domainError(
+            ERROR_CODES.MANAGED_AGENT_CREDENTIAL_REQUIRED,
+            'Managed Agent already has a credential; refusing to rotate it implicitly',
+            409,
+          );
+        }
+        if (!timingSafeDigestEqual(existing.credentialHash, hashSecret(suppliedCredential))) {
+          throw domainError(ERROR_CODES.AUTH_DENIED, 'Managed Agent credential rejected', 401);
+        }
+        upsertDeviceFromPairing(state, safeDevice, decidedAt);
+        const item = state.devices.find((entry) => entry.id === safeDevice.deviceId);
+        if (item) item.status = 'offline';
+        this.audit.append(state, 'pairing.managed_reused', { deviceId: safeDevice.deviceId });
+        return { deviceId: safeDevice.deviceId, credential: suppliedCredential, pairedAt: existing.pairedAt, reused: true };
+      }
+
+      const credential = isCredential(suppliedCredential)
+        ? suppliedCredential
+        : base64url(this.randomBytes(CREDENTIAL_BYTES));
+      const credentialHash = hashSecret(credential);
       state.pairedAgents = state.pairedAgents.filter((item) => item.deviceId !== safeDevice.deviceId);
       state.pairedAgents.push({
         deviceId: safeDevice.deviceId,
@@ -213,4 +237,8 @@ function sanitizeDevice(device = {}) {
 
 function base64url(buffer) {
   return Buffer.from(buffer).toString('base64url');
+}
+
+function isCredential(value) {
+  return typeof value === 'string' && value.length >= 24 && value.length <= 512 && !/[\r\n]/.test(value);
 }

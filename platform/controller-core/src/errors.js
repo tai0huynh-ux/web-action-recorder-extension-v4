@@ -20,6 +20,7 @@ export const ERROR_CODES = Object.freeze({
   JOB_EXPIRED: 'JOB_EXPIRED',
   INVALID_TRANSITION: 'INVALID_TRANSITION',
   AUTH_DENIED: 'AUTH_DENIED',
+  MANAGED_AGENT_CREDENTIAL_REQUIRED: 'MANAGED_AGENT_CREDENTIAL_REQUIRED',
   STORE_CORRUPT: 'STORE_CORRUPT',
   CAPACITY_EXCEEDED: 'CAPACITY_EXCEEDED'
 });
@@ -31,7 +32,7 @@ export function domainError(code, message, status = statusForCode(code), details
 function statusForCode(code) {
   if (code === ERROR_CODES.AUTH_DENIED) return 401;
   if (code.endsWith('_NOT_FOUND')) return 404;
-  if (code === ERROR_CODES.DEVICE_REVOKED || code === ERROR_CODES.JOB_TERMINAL) return 409;
+  if (code === ERROR_CODES.DEVICE_REVOKED || code === ERROR_CODES.JOB_TERMINAL || code === ERROR_CODES.MANAGED_AGENT_CREDENTIAL_REQUIRED) return 409;
   if (code === ERROR_CODES.CAPACITY_EXCEEDED) return 413;
   return 400;
 }
