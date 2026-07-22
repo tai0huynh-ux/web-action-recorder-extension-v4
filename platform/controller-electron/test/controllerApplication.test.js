@@ -229,6 +229,23 @@ test('application blocks trashing a Linux host until its active containers are t
   assert.deepEqual(hostCalls, ['ssh-host-1']);
 });
 
+test('application updates a selected Linux host through the bounded manager', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const containerHostManager = {
+    updateHost: async (hostId, payload) => {
+      calls.push({ hostId, payload });
+      return { id: hostId, name: payload.name, target: payload.target, connected: true };
+    },
+  };
+  const app = new ControllerApplicationService({ core, containerHostManager });
+
+  const result = await app.updateContainerHost({ hostId: 'ssh-host-1', name: 'Linux mới', target: 'root@192.168.1.202' });
+
+  assert.equal(result.data.id, 'ssh-host-1');
+  assert.deepEqual(calls, [{ hostId: 'ssh-host-1', payload: { name: 'Linux mới', target: 'root@192.168.1.202' } }]);
+});
+
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());

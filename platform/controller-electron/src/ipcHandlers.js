@@ -70,6 +70,7 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.containers.trash, () => application.listContainerTrash()],
     [IPC_CHANNELS.containers.hosts, () => application.listContainerHosts()],
     [IPC_CHANNELS.containers.hostAdd, (payload) => application.addContainerHost(payload)],
+    [IPC_CHANNELS.containers.hostUpdate, (payload) => application.updateContainerHost(payload)],
     [IPC_CHANNELS.containers.hostCheck, (payload) => application.checkContainerHost(payload)],
     [IPC_CHANNELS.containers.hostRepair, (payload) => application.repairContainerHost(payload)],
     [IPC_CHANNELS.containers.hostTrash, (payload) => application.trashContainerHost(payload)],

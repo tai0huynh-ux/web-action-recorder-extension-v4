@@ -154,6 +154,7 @@ test('all navigation controls receive non-empty Vietnamese names by default', ()
     'Quy trình',
     'Tác vụ',
     'Chẩn đoán',
+    'Thùng rác',
   ]);
 });
 
@@ -530,6 +531,43 @@ test('workspace adds, checks, and repairs an SSH Linux host', async () => {
   assert.equal(state.store.workspace.containerHosts[0].connected, true);
 });
 
+test('selecting a Linux host restores saved fields and updates it in place', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const host = { id: 'ssh-host-1', label: 'Linux da duyet', name: 'Linux da duyet', target: 'root@192.168.1.201', image: 'war-browser-agent:phase1', connected: false, diagnostics: {} };
+  state.store.settings.containerHosts = [{
+    id: host.id,
+    name: host.name,
+    target: host.target,
+    identityFile: 'C:/Users/test/.ssh/id_ed25519',
+    controllerHost: '192.168.1.206',
+    controllerCaPath: '/opt/war/war-controller-pilot-ca.crt',
+    image: host.image,
+  }];
+  state.store.workspace.containerHosts = [host];
+  apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [host] } };
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await all(current, (node) => node.className === 'host-card-select')[0].click();
+  const form = all(current, (node) => node.className === 'host-setup-card')[0];
+  const inputs = all(form, (node) => node.localName === 'input');
+  assert.equal(inputs[0].value, 'Linux da duyet');
+  assert.equal(inputs[1].value, 'root@192.168.1.201');
+  assert.equal(inputs[2].value, 'C:/Users/test/.ssh/id_ed25519');
+  assert.equal(inputs[3].value, '192.168.1.206');
+  assert.equal(inputs[4].value, '/opt/war/war-controller-pilot-ca.crt');
+  assert.equal(inputs[5].value, 'war-browser-agent:phase1');
+
+  inputs[0].value = 'Linux phòng làm việc';
+  await fireWithEvent(inputs[0], 'input');
+  await clickButton(current, i18n.t('workspace.containers.updateAndCheckHost'));
+  assert.equal(apiState.hostCalls.update, 1);
+  assert.equal(apiState.hostRequests.at(-1).hostId, 'ssh-host-1');
+  assert.equal(apiState.hostRequests.at(-1).identityFile, 'C:/Users/test/.ssh/id_ed25519');
+});
+
 test('workspace add container requires a successfully probed Docker host', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -688,15 +726,24 @@ test('container trash remains available when empty and supports restore and perm
   const refresh = () => { current = views.renderView(refresh); };
   current = views.renderView(refresh);
 
-  assert.ok(current.textContent.includes(`${i18n.t('workspace.containers.trash')} (0)`));
+  state.store.view = 'trash';
+  current = views.renderView(refresh);
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.trashEmpty')));
+  state.store.view = 'workspace';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
   assert.equal(apiState.containers[0].status, 'deleted');
-  await clickButton(current, `+ ${i18n.t('workspace.containers.trash')} (1)`);
+  state.store.view = 'trash';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.restore'));
   assert.equal(apiState.containerCalls.restore, 1);
   assert.equal(apiState.containers[0].status, 'stopped');
 
+  state.store.view = 'workspace';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
+  state.store.view = 'trash';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.purge'));
   assert.equal(apiState.containerCalls.purge, 1);
   assert.equal(apiState.containers.length, 0);
@@ -714,16 +761,23 @@ test('Linux host X moves the host to trash where it can be restored or purged', 
   const refresh = () => { current = views.renderView(refresh); };
   current = views.renderView(refresh);
 
-  const hostRow = all(current, (node) => node.className === 'host-diagnostics-row')[0];
-  await all(hostRow, (node) => node.className === 'device-card-delete')[0].click();
+  const hostCard = all(current, (node) => node.className === 'host-card')[0];
+  await all(hostCard, (node) => node.className === 'device-card-delete')[0].click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(apiState.hostCalls.trash, 1);
   assert.equal(state.store.workspace.containerHosts.length, 0);
-  await clickButton(current, `+ ${i18n.t('workspace.containers.trash')} (1)`);
+  state.store.view = 'trash';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.restore'));
   assert.equal(apiState.hostCalls.restore, 1);
 
-  const restoredRow = all(current, (node) => node.className === 'host-diagnostics-row')[0];
-  await all(restoredRow, (node) => node.className === 'device-card-delete')[0].click();
+  state.store.view = 'workspace';
+  current = views.renderView(refresh);
+  const restoredCard = all(current, (node) => node.className === 'host-card')[0];
+  await all(restoredCard, (node) => node.className === 'device-card-delete')[0].click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  state.store.view = 'trash';
+  current = views.renderView(refresh);
   await clickButton(current, i18n.t('workspace.containers.purge'));
   assert.equal(apiState.hostCalls.purge, 1);
   assert.equal(apiState.trashHosts.length, 0);
@@ -1432,6 +1486,7 @@ function resetStore() {
       containerHostStatus: 'idle',
       containerNotice: '',
       hostSetupOpen: false,
+      hostEditorId: '',
       hostDraft: { name: '', target: '', identityFile: '', controllerHost: '', controllerCaPath: '/etc/war/controller-ca.pem', image: 'war-browser-agent:phase1' },
       hostPending: '',
       hostError: '',
@@ -1641,6 +1696,15 @@ function installControllerApi() {
           apiState.hostRequests.push(structuredClone(payload));
           apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [{ id: 'ssh-host-1', label: payload.name, name: payload.name, target: payload.target, runtime: 'ssh-docker', connected: false }] } };
           return { ok: true, data: { id: 'ssh-host-1', label: payload.name, name: payload.name, target: payload.target, connected: false } };
+        },
+        updateHost: async ({ hostId, ...payload }) => {
+          apiState.hostCalls.update = (apiState.hostCalls.update || 0) + 1;
+          apiState.hostRequests.push(structuredClone({ hostId, ...payload }));
+          const hosts = apiState.containerHostsResult?.data?.hosts || [];
+          const current = hosts.find((item) => item.id === hostId) || { id: hostId };
+          const updated = { ...current, ...payload, id: hostId, label: payload.name, connected: false };
+          apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: hosts.map((item) => item.id === hostId ? updated : item) } };
+          return { ok: true, data: updated };
         },
         checkHost: async ({ hostId }) => ({ ok: true, data: { id: hostId, label: 'Reviewed Linux', target: 'root@192.168.1.201', connected: false } }),
         repairHost: async ({ hostId }) => {

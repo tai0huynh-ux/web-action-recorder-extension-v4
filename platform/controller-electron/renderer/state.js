@@ -3,7 +3,7 @@ import { clampWorkspaceLayout, createWorkspaceSelection, WORKSPACE_SAMPLE_NODES 
 
 const api = window.warController;
 
-export const views = Object.freeze(['workspace', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics']);
+export const views = Object.freeze(['workspace', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics', 'trash']);
 
 export const store = {
   view: 'workspace',
@@ -30,6 +30,7 @@ export const store = {
     containerHostStatus: 'idle',
     containerNotice: '',
     hostSetupOpen: false,
+    hostEditorId: '',
     hostDraft: { name: '', target: '', identityFile: '', controllerHost: '', controllerCaPath: '/etc/war/controller-ca.pem', image: 'war-browser-agent:phase1' },
     hostPending: '',
     hostError: '',
@@ -139,16 +140,7 @@ export async function refreshAll() {
   store.runtime = unwrap(runtime);
   store.settings = unwrap(settings) || store.settings;
   store.settings.workspace = clampWorkspaceLayout(store.settings.workspace);
-  if (!store.workspace.containerHosts.length && Array.isArray(store.settings.containerHosts)) {
-    store.workspace.containerHosts = store.settings.containerHosts.map((host) => ({
-      id: host.id,
-      label: host.name,
-      name: host.name,
-      target: host.target,
-      runtime: 'ssh-docker',
-      connected: false,
-    }));
-  }
+  store.workspace.containerHosts = mergeConfiguredContainerHosts(store.workspace.containerHosts, store.settings.containerHosts);
   store.pairings = unwrap(pairings) || { pending: [], paired: [] };
   store.devices = unwrap(devices)?.devices || [];
   store.sessions = unwrap(sessions)?.sessions || [];
@@ -158,6 +150,21 @@ export async function refreshAll() {
   store.workflows = unwrap(workflows)?.workflows || [];
   store.jobs = unwrap(jobs)?.jobs || [];
   store.lastRefresh = new Date().toISOString();
+}
+
+export function mergeConfiguredContainerHosts(runtimeHosts = [], configuredHosts = []) {
+  const runtime = Array.isArray(runtimeHosts) ? runtimeHosts : [];
+  const configured = Array.isArray(configuredHosts) ? configuredHosts : [];
+  const runtimeById = new Map(runtime.filter((host) => host?.id).map((host) => [host.id, host]));
+  const merged = configured.filter((host) => host?.id).map((host) => ({
+    ...host,
+    label: host.name,
+    runtime: 'ssh-docker',
+    connected: false,
+    ...(runtimeById.get(host.id) || {}),
+  }));
+  const configuredIds = new Set(merged.map((host) => host.id));
+  return [...merged, ...runtime.filter((host) => host?.id && !configuredIds.has(host.id))];
 }
 
 export async function refreshWorkflow(workflowId, revision) {

@@ -1,5 +1,5 @@
 import { button, codeBlock, el, field, parseJsonInput, section, setStatus, stableJson, svgEl, table } from './dom.js';
-import { refreshAll, refreshJob, refreshWorkflow, store, unwrap } from './state.js';
+import { mergeConfiguredContainerHosts, refreshAll, refreshJob, refreshWorkflow, store, unwrap } from './state.js';
 import { t } from './i18n.js';
 import {
   WORKSPACE_SAMPLE_NODES,
@@ -26,6 +26,7 @@ export function renderView(refresh) {
   if (store.view === 'groups') return groupsView(refresh);
   if (store.view === 'workflows') return workflowsView(refresh);
   if (store.view === 'jobs') return jobsView(refresh);
+  if (store.view === 'trash') return trashView(refresh);
   return diagnosticsView(refresh);
 }
 
@@ -51,12 +52,14 @@ function workspaceView(refresh) {
     className: 'input-graph-resize',
     refresh,
   });
-  root.replaceChildren(
+  root.replaceChildren(...[
     workspaceMobileToolbar(refresh),
-    containersPane(refresh, workspacePaneActive('containers'), machinesResizeHandle),
+    containersPane(refresh, workspacePaneActive('containers')),
     inputPane(selected, refresh, workspacePaneActive('input')),
-    graphPane(refresh, workspacePaneActive('graph'), inputResizeHandle),
-  );
+    graphPane(refresh, workspacePaneActive('graph')),
+    machinesResizeHandle,
+    inputResizeHandle,
+  ].filter(Boolean));
   if (root.style?.setProperty) {
     root.style.setProperty('--workspace-left', `${layout.leftWidth}px`);
     root.style.setProperty('--workspace-center', `${layout.centerWidth}px`);
@@ -90,7 +93,7 @@ function workspacePaneClass(baseClass, active) {
   return `workspace-pane ${baseClass}${active ? ' active-mobile-pane' : ''}`;
 }
 
-function containersPane(refresh, active = false, resizeHandle = null) {
+function containersPane(refresh, active = false) {
   const devices = visibleWorkspaceDevices();
   const search = el('input', { type: 'search', placeholder: t('workspace.containers.search'), value: store.workspace.search, ariaLabel: t('workspace.containers.search') });
   search.addEventListener('input', () => {
@@ -109,6 +112,10 @@ function containersPane(refresh, active = false, resizeHandle = null) {
         button(store.workspace.hostSetupOpen ? t('workspace.containers.collapseHostSetup') : `+ ${t('workspace.containers.addHost')}`, () => {
           store.workspace.hostSetupOpen = !store.workspace.hostSetupOpen;
           store.workspace.hostError = '';
+          if (store.workspace.hostSetupOpen) {
+            store.workspace.hostEditorId = '';
+            store.workspace.hostDraft = emptyHostDraft();
+          }
           refresh();
         }, { className: 'button compact' }),
         button(store.workspace.addContainerOpen ? t('workspace.containers.collapseAdd') : `+ ${t('workspace.containers.add')}`, async () => {
@@ -150,8 +157,6 @@ function containersPane(refresh, active = false, resizeHandle = null) {
     store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
     activeManagedContainers().length ? managedContainerActions(refresh) : null,
-    trashPanel(refresh),
-    resizeHandle,
   ]);
   pane.setAttribute('data-scroll-key', 'workspace-machines');
   return pane;
@@ -180,7 +185,7 @@ async function loadContainerHosts(refresh) {
   try {
     const result = await window.warController.containers.hosts();
     const data = unwrap(result) || {};
-    store.workspace.containerHosts = Array.isArray(data.hosts) ? data.hosts.filter((host) => host?.id) : [];
+    store.workspace.containerHosts = mergeConfiguredContainerHosts(data.hosts, store.settings?.containerHosts);
     store.workspace.containerHostStatus = data.status || (store.workspace.containerHosts.length ? 'connected' : 'unavailable');
     const connectedHosts = store.workspace.containerHosts.filter((host) => host.connected);
     if (!connectedHosts.some((host) => host.id === store.workspace.containerHostId)) {
@@ -199,8 +204,38 @@ async function loadContainerHosts(refresh) {
   }
 }
 
+function emptyHostDraft() {
+  return { name: '', target: '', identityFile: '', controllerHost: '', controllerCaPath: '/etc/war/controller-ca.pem', image: 'war-browser-agent:phase1' };
+}
+
+function configuredHost(hostId) {
+  return (store.settings?.containerHosts || []).find((host) => host?.id === hostId) || {};
+}
+
+function hostDraftFromHost(host) {
+  const config = configuredHost(host.id);
+  return {
+    name: config.name || host.name || host.label || '',
+    target: config.target || host.target || '',
+    identityFile: config.identityFile || '',
+    controllerHost: config.controllerHost || '',
+    controllerCaPath: config.controllerCaPath || '/etc/war/controller-ca.pem',
+    image: config.image || host.image || 'war-browser-agent:phase1',
+  };
+}
+
+function selectHostForEdit(host, refresh) {
+  store.workspace.hostEditorId = host.id;
+  store.workspace.hostDraft = hostDraftFromHost(host);
+  store.workspace.hostSetupOpen = true;
+  store.workspace.hostError = '';
+  store.workspace.containerNotice = '';
+  refresh();
+}
+
 function hostSetupForm(refresh) {
   const draft = store.workspace.hostDraft || {};
+  const editing = Boolean(store.workspace.hostEditorId);
   const name = el('input', { type: 'text', value: draft.name || '', placeholder: t('workspace.containers.hostNamePlaceholder') });
   const target = el('input', { type: 'text', value: draft.target || '', placeholder: 'root@192.168.1.201' });
   const identityFile = el('input', { type: 'text', value: draft.identityFile || '', placeholder: 'C:\\Users\\you\\.ssh\\id_ed25519' });
@@ -223,7 +258,7 @@ function hostSetupForm(refresh) {
   return el('article', { className: 'host-setup-card', role: 'form', ariaLabel: t('workspace.containers.addHost') }, [
       el('div', { className: 'host-setup-heading' }, [
       el('div', {}, [
-        el('strong', { text: t('workspace.containers.addHost') }),
+        el('strong', { text: editing ? t('workspace.containers.editHost') : t('workspace.containers.addHost') }),
         el('p', { className: 'muted', text: t('workspace.containers.hostSetupHelp') }),
       ]),
       el('div', { className: 'toolbar tight' }, [
@@ -243,8 +278,8 @@ function hostSetupForm(refresh) {
       field(t('workspace.containers.image'), image),
     ]),
     el('div', { className: 'toolbar tight' }, [
-      button(t('workspace.containers.saveAndCheckHost'), () => submitHostSetup('check', status, refresh), { className: 'button', disabled: pending }),
-      button(t('workspace.containers.repairAndConnectHost'), () => submitHostSetup('repair', status, refresh), { className: 'button primary', disabled: pending }),
+      button(editing ? t('workspace.containers.updateAndCheckHost') : t('workspace.containers.saveAndCheckHost'), () => submitHostSetup('check', status, refresh), { className: 'button', disabled: pending }),
+      button(editing ? t('workspace.containers.updateRepairAndConnectHost') : t('workspace.containers.repairAndConnectHost'), () => submitHostSetup('repair', status, refresh), { className: 'button primary', disabled: pending }),
     ]),
     status,
   ]);
@@ -253,6 +288,7 @@ function hostSetupForm(refresh) {
 async function submitHostSetup(mode, status, refresh) {
   if (store.workspace.hostPending) return;
   const draft = store.workspace.hostDraft || {};
+  const editing = Boolean(store.workspace.hostEditorId);
   const payload = {
     name: String(draft.name || '').trim(),
     target: String(draft.target || '').trim(),
@@ -262,7 +298,7 @@ async function submitHostSetup(mode, status, refresh) {
     image: String(draft.image || 'war-browser-agent:phase1').trim(),
     ipv6Driver: 'macvlan',
   };
-  if (!payload.name || !payload.target || !payload.identityFile || !payload.controllerHost || !payload.controllerCaPath) {
+  if (!payload.name || !payload.target || (!payload.identityFile && !editing) || !payload.controllerHost || !payload.controllerCaPath) {
     store.workspace.hostError = t('workspace.containers.hostFieldsRequired');
     status.textContent = store.workspace.hostError;
     status.className = 'status error';
@@ -275,7 +311,9 @@ async function submitHostSetup(mode, status, refresh) {
     : t('workspace.containers.hostChecking');
   refresh();
   try {
-    const savedResult = await window.warController.containers.addHost(payload);
+    const savedResult = editing
+      ? await window.warController.containers.updateHost({ hostId: store.workspace.hostEditorId, ...payload })
+      : await window.warController.containers.addHost(payload);
     if (savedResult?.ok === false) throw new Error(safeError(savedResult));
     let host = unwrap(savedResult) || {};
     if (mode === 'repair') {
@@ -283,8 +321,11 @@ async function submitHostSetup(mode, status, refresh) {
       if (repairResult?.ok === false) throw new Error(safeError(repairResult));
       host = unwrap(repairResult) || host;
     }
+    await refreshAll();
     await loadContainerHosts(refresh);
     store.workspace.containerHostId = host.connected ? host.id : store.workspace.containerHostId;
+    store.workspace.hostEditorId = host.id;
+    store.workspace.hostDraft = hostDraftFromHost(host);
     store.workspace.containerNotice = host.connected
       ? t('workspace.containers.hostConnected')
       : t('workspace.containers.hostRepairRequired');
@@ -304,9 +345,17 @@ function hostDiagnosticsList(refresh) {
   return el('div', { className: 'host-diagnostics-list' }, hosts.map((host) => {
     const checks = host.diagnostics || {};
     const pending = store.workspace.trashPending?.[`host:${host.id}`];
-    return el('div', { className: 'host-diagnostics-row' }, [
-      el('strong', { text: host.label || host.id }),
-      el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: host.connected ? t('workspace.containers.hostReady') : t('workspace.containers.hostRepairRequired') }),
+    const config = configuredHost(host.id);
+    const selected = store.workspace.hostEditorId === host.id;
+    const select = el('button', {
+      type: 'button',
+      className: `host-card-select${selected ? ' selected' : ''}`,
+      ariaLabel: `${host.label || host.id} - ${t('workspace.containers.selectHostToEdit')}`,
+    }, [
+      el('div', { className: 'host-card-title' }, [
+        el('strong', { text: host.label || host.id }),
+        el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: host.connected ? t('workspace.containers.hostReady') : t('workspace.containers.hostRepairRequired') }),
+      ]),
       el('span', { className: 'device-meta', text: host.target || '' }),
       el('span', { className: 'device-meta', text: t('workspace.containers.hostCheckSummary', {
         docker: checkMark(checks.docker),
@@ -315,7 +364,18 @@ function hostDiagnosticsList(refresh) {
         policy: checkMark(checks.apparmor && checks.seccomp),
         ca: checkMark(checks.ca),
       }) }),
-      button('×', () => trashHost(host, refresh), {
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerHost')}: ${config.controllerHost || t('workspace.containers.unknown')}` }),
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerCaPath')}: ${config.controllerCaPath || t('workspace.containers.unknown')}` }),
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.image')}: ${config.image || host.image || t('workspace.containers.unknown')} · ${config.identityFile ? t('workspace.containers.hostIdentityStored') : t('workspace.containers.sshKeyRequired')}` }),
+      el('span', { className: 'host-card-hint', text: selected ? t('workspace.containers.editingHost') : t('workspace.containers.selectHostToEdit') }),
+    ]);
+    select.addEventListener('click', () => selectHostForEdit(host, refresh));
+    return el('article', { className: `host-card${selected ? ' selected' : ''}` }, [
+      select,
+      button('×', (event) => {
+        event.stopPropagation?.();
+        trashHost(host, refresh);
+      }, {
         className: 'device-card-delete',
         disabled: Boolean(pending),
         ariaLabel: t('workspace.containers.moveHostToTrash', { name: host.label || host.id }),
@@ -327,6 +387,22 @@ function hostDiagnosticsList(refresh) {
 
 function checkMark(value) {
   return value ? 'OK' : '--';
+}
+
+function trashView(refresh) {
+  const containers = store.containers.filter((container) => container.status === 'deleted');
+  const hosts = store.workspace.trashHosts || [];
+  const count = containers.length + hosts.length;
+  return el('section', { className: 'view-panel trash-view', ariaLabel: t('navigation.trash') }, [
+    el('div', { className: 'trash-view-heading' }, [
+      el('div', {}, [
+        el('h2', { text: t('workspace.containers.trash') }),
+        el('p', { className: 'muted', text: t('workspace.containers.trashHelp') }),
+      ]),
+      el('span', { className: 'status-pill connecting', text: `${count} ${t('workspace.containers.trashItems')}` }),
+    ]),
+    trashContents(containers, hosts, refresh),
+  ]);
 }
 
 function trashPanel(refresh) {
@@ -396,6 +472,11 @@ async function trashHost(host, refresh) {
     const result = await window.warController.containers.trashHost({ hostId });
     if (result?.ok === false) throw new Error(safeError(result));
     store.workspace.containerNotice = t('workspace.containers.movedToTrash');
+    if (store.workspace.hostEditorId === hostId) {
+      store.workspace.hostEditorId = '';
+      store.workspace.hostDraft = emptyHostDraft();
+      store.workspace.hostSetupOpen = false;
+    }
     await loadContainerHosts(refresh);
     await refreshAll();
   } catch (error) {

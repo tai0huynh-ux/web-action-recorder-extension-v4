@@ -85,6 +85,12 @@ export class ControllerApplicationService extends EventEmitter {
     this.invalidate('containers');
     return this.result(data);
   }
+  async updateContainerHost({ hostId, ...payload }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = await this.containerHostManager.updateHost(hostId, payload);
+    this.invalidate('containers', { hostId });
+    return this.result(data);
+  }
   async checkContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
     return this.result(await this.containerHostManager.checkHost(hostId));

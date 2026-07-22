@@ -118,3 +118,36 @@ test('SSH host manager moves hosts to persistent trash and restores or purges th
   assert.equal(manager.listTrashedHosts().hosts.length, 0);
   assert.equal(store.snapshot().purgedContainerHostIds[0], 'ssh-existing');
 });
+
+test('SSH host manager updates a selected host in place and keeps its identity', async () => {
+  const store = settingsStore({ containerHosts: [{
+    id: 'ssh-existing',
+    name: 'Linux cũ',
+    target: 'root@192.168.1.201',
+    identityFile: 'C:/key',
+    controllerHost: '192.168.1.20',
+    controllerCaPath: '/opt/war/controller-ca.pem',
+    image: 'war-browser-agent:phase1',
+  }] });
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: store,
+    fsImpl: fakeFs(),
+    execFileImpl: async () => ({ stdout: 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' }),
+  });
+  await manager.load();
+
+  const updated = await manager.updateHost('ssh-existing', {
+    name: 'Linux phòng làm việc',
+    target: 'root@192.168.1.202',
+    identityFile: '',
+    controllerHost: '192.168.1.21',
+    controllerCaPath: '/opt/war/controller-ca-new.pem',
+    image: 'war-browser-agent:phase1',
+  });
+
+  assert.equal(updated.id, 'ssh-existing');
+  assert.equal(updated.target, 'root@192.168.1.202');
+  assert.equal(store.snapshot().containerHosts[0].identityFile, 'C:/key');
+  assert.equal(store.snapshot().containerHosts[0].name, 'Linux phòng làm việc');
+});

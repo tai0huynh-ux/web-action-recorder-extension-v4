@@ -355,6 +355,7 @@ th {
 }
 
 .workspace-view {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(220px, var(--workspace-left)) minmax(320px, var(--workspace-center)) minmax(480px, 1fr);
   gap: 0;
@@ -441,6 +442,71 @@ th {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.host-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.host-card.selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent), white 78%);
+}
+
+.host-card-select {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 36px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.host-card-select:hover .host-card-title strong,
+.host-card-select:focus-visible .host-card-title strong {
+  color: var(--accent-dark);
+}
+
+.host-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.host-card-hint {
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.host-card > .device-card-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.trash-view {
+  max-width: 980px;
+}
+
+.trash-view-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
 .form-section-heading,
@@ -707,38 +773,69 @@ th {
 
 .resize-handle {
   position: absolute;
-  left: -5px;
+  left: var(--resize-position, 0px);
   top: 0;
   bottom: 0;
-  width: 10px;
-  z-index: 4;
+  width: 16px;
+  z-index: 20;
   cursor: col-resize;
   touch-action: none;
   user-select: none;
+  transform: translateX(-50%);
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .resize-handle::after {
-  content: '';
+  content: '||';
   position: absolute;
-  left: 4px;
-  top: 18px;
-  bottom: 18px;
-  width: 2px;
+  left: 2px;
+  top: 50%;
+  width: 12px;
+  height: 34px;
+  margin-top: -17px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
-  transition: background 120ms ease, box-shadow 120ms ease;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 29px;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(21, 31, 48, .12);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.resize-handle:hover::before,
+.resize-handle:focus-visible::before,
+.resize-handle.is-resizing::before {
+  background: var(--accent);
 }
 
 .resize-handle:hover::after,
 .resize-handle:focus-visible::after,
 .resize-handle.is-resizing::after {
-  background: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent), white 88%);
+  color: var(--accent-dark);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 80%);
 }
 
 .machines-input-resize {
-  right: -5px;
-  left: auto;
+  --resize-position: var(--workspace-left);
+}
+
+.input-graph-resize {
+  --resize-position: calc(var(--workspace-left) + var(--workspace-center));
 }
 
 .workspace-view.is-panel-resizing,

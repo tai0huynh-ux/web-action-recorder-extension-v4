@@ -87,6 +87,36 @@ export class SshContainerHostManager {
     return this.checkHost(host.id);
   }
 
+  async updateHost(hostId, payload = {}) {
+    const current = this.requireHost(hostId);
+    const host = normalizeHostPayload({
+      name: payload.name ?? current.name,
+      target: payload.target ?? current.target,
+      identityFile: payload.identityFile || current.identityFile,
+      controllerHost: payload.controllerHost ?? current.controllerHost,
+      controllerCaPath: payload.controllerCaPath ?? current.controllerCaPath,
+      seccompProfilePath: payload.seccompProfilePath ?? current.seccompProfilePath,
+      image: payload.image ?? current.image,
+      ipv6Interface: payload.ipv6Interface ?? current.ipv6Interface,
+      ipv6Prefix: payload.ipv6Prefix ?? current.ipv6Prefix,
+      ipv6Driver: payload.ipv6Driver ?? current.ipv6Driver,
+    }, hostId);
+    this.assertIdentity(host.identityFile);
+    const duplicate = [...this.hosts.values()].find((item) => item.id !== hostId && item.target === host.target);
+    if (duplicate) throw Object.assign(new Error('SSH target is already configured'), { code: 'CONTAINER_HOST_TARGET_EXISTS' });
+    const settings = await this.settingsStore.get();
+    let replaced = false;
+    const active = (settings.containerHosts || []).map((item) => {
+      if (item.id !== hostId) return item;
+      replaced = true;
+      return host;
+    });
+    if (!replaced) active.push(host);
+    await this.settingsStore.update({ containerHosts: active });
+    this.hosts.set(hostId, host);
+    return this.checkHost(hostId);
+  }
+
   async trashHost(hostId) {
     const host = this.requireHost(hostId);
     const settings = await this.settingsStore.get();
@@ -222,12 +252,12 @@ export class SshContainerHostManager {
   }
 }
 
-function normalizeHostPayload(payload) {
+function normalizeHostPayload(payload, fixedId = null) {
   const name = requiredText(payload.name, 1, 80);
   const target = requiredText(payload.target, 3, 255);
   const identityFile = requiredText(payload.identityFile, 1, 1024);
   if (!/^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(target)) throw new Error('SSH target is invalid');
-  const id = `ssh-${crypto.createHash('sha256').update(target).digest('hex').slice(0, 16)}`;
+  const id = fixedId || `ssh-${crypto.createHash('sha256').update(target).digest('hex').slice(0, 16)}`;
   const image = requiredText(payload.image || DEFAULT_IMAGE, 1, 256);
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(image)) throw new Error('Docker image is invalid');
   return {

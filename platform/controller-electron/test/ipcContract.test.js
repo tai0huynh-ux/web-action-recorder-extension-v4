@@ -176,6 +176,24 @@ test('trash operations accept only exact container and host identifiers', () => 
   );
 });
 
+test('Linux host update accepts only selected host fields', () => {
+  const payload = {
+    hostId: 'ssh-host-1',
+    name: 'Linux phòng làm việc',
+    target: 'root@192.168.1.201',
+    identityFile: 'C:/Users/test/.ssh/id_ed25519',
+    controllerHost: '192.168.1.20',
+    controllerCaPath: '/opt/war/controller-ca.pem',
+    image: 'war-browser-agent:phase1',
+    ipv6Driver: 'macvlan',
+  };
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.hostUpdate, payload), payload);
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.containers.hostUpdate, { ...payload, command: 'rm -rf /' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('validator does not mutate input', () => {
   const payload = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { count: 1 } };
   const before = JSON.stringify(payload);
