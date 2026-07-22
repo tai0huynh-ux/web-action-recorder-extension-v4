@@ -26,3 +26,21 @@ test('settings persist locale and panel layout', async () => {
   assert.deepEqual(await store.get(), saved);
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('settings retain validated SSH host metadata without accepting unsafe fields', () => {
+  const value = normalizeSettings({
+    containerHosts: [{
+      id: 'ssh-host-1',
+      name: 'Reviewed Linux',
+      target: 'root@192.168.1.201',
+      identityFile: 'C:/Users/test/.ssh/id_ed25519',
+      controllerCaPath: '/etc/war/controller-ca.pem',
+      seccompProfilePath: '/etc/war/security/chromium-userns-seccomp.json',
+      extra: 'discarded',
+    }],
+  });
+
+  assert.equal(value.containerHosts.length, 1);
+  assert.equal(value.containerHosts[0].target, 'root@192.168.1.201');
+  assert.equal(Object.hasOwn(value.containerHosts[0], 'extra'), false);
+});

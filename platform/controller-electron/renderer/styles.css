@@ -422,6 +422,47 @@ th {
   background: var(--surface-soft);
 }
 
+.host-setup-card {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent), var(--line) 55%);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent), white 94%), var(--surface-soft));
+}
+
+.host-setup-heading,
+.host-diagnostics-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.host-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.host-diagnostics-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.host-diagnostics-row {
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 35%);
+}
+
+.status-pill.failed {
+  border-color: var(--danger);
+  background: #fff1f1;
+  color: var(--danger);
+}
+
 .device-list {
   display: grid;
   gap: 10px;

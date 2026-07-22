@@ -14,6 +14,7 @@ export const controllerFiles = [
   'platform/controller-electron/src/runtimeConfig.js',
   'platform/controller-electron/src/secureWindow.js',
   'platform/controller-electron/src/settingsStore.js',
+  'platform/controller-electron/src/sshHostManager.js',
   'platform/diagnostics/src/redaction.js',
   'platform/container/security/chromium-userns-seccomp.json',
   'platform/container/security/war-browser-agent.apparmor',

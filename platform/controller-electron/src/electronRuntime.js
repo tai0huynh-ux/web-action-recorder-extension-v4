@@ -12,6 +12,7 @@ import { resolveElectronRuntimeConfig } from './runtimeConfig.js';
 import { createControllerSettingsStore } from './settingsStore.js';
 import { secureWindowOptions } from './secureWindow.js';
 import { createDockerContainerAdapter } from './containerAdapter.js';
+import { SshContainerHostManager } from './sshHostManager.js';
 
 export function createElectronControllerRuntime(dependencies = {}) {
   const state = {
@@ -31,6 +32,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     ControllerWssServerAdapter: dependencies.ControllerWssServerAdapter || ControllerWssServerAdapter,
     ControllerWssRuntimeServer: dependencies.ControllerWssRuntimeServer || ControllerWssRuntimeServer,
     createDockerContainerAdapter: dependencies.createDockerContainerAdapter || createDockerContainerAdapter,
+    SshContainerHostManager: dependencies.SshContainerHostManager || SshContainerHostManager,
     rendererRoot: dependencies.rendererRoot || path.join(import.meta.dirname, '..', 'renderer'),
     preloadPath: dependencies.preloadPath || path.join(import.meta.dirname, 'preload.cjs'),
     version: dependencies.version || dependencies.app?.getVersion?.() || '0.1.0',
@@ -38,6 +40,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     config: null,
     store: null,
     settingsStore: null,
+    containerHostManager: null,
     core: null,
     application: null,
     mainWindow: null,
@@ -85,11 +88,19 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.settingsStore = state.createControllerSettingsStore({ fs: state.fs, path: state.path, filePath: state.config.settingsPath });
       state.core = new state.ControllerCore({ store: state.store });
       await state.core.load();
+      state.containerHostManager = new state.SshContainerHostManager({
+        config: state.config,
+        settingsStore: state.settingsStore,
+        createAdapter: state.createDockerContainerAdapter,
+        fsImpl: state.fs,
+      });
+      await state.containerHostManager.load();
       await maybeStartWss(state);
       state.application = new state.ControllerApplicationService({
         core: state.core,
         wssRuntime: state.wssRuntime,
         containerAdapter: state.createDockerContainerAdapter({ config: state.config }),
+        containerHostManager: state.containerHostManager,
         config: state.config,
         version: state.version,
         settingsStore: state.settingsStore
@@ -129,6 +140,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.core = null;
       state.store = null;
       state.settingsStore = null;
+      state.containerHostManager = null;
       state.started = false;
     },
   };

@@ -38,6 +38,9 @@ export function normalizeSettings(value = {}) {
       .map(([key, alias]) => [key, alias.trim().slice(0, 120)])
       .filter(([, alias]) => alias))
     : {};
+  const containerHosts = Array.isArray(value.containerHosts)
+    ? value.containerHosts.map(normalizeContainerHost).filter(Boolean)
+    : [];
   return {
     locale: value.locale === 'en' ? 'en' : 'vi',
     workspace: {
@@ -46,7 +49,54 @@ export function normalizeSettings(value = {}) {
       graphCollapsed: Boolean(workspace.graphCollapsed),
     },
     ...(Object.keys(aliases).length ? { hostAliases: aliases } : {}),
+    ...(containerHosts.length ? { containerHosts } : {}),
   };
+}
+
+function normalizeContainerHost(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const id = normalizeHostText(value.id, 1, 120);
+  const name = normalizeHostText(value.name, 1, 80);
+  const target = normalizeHostText(value.target, 3, 255);
+  const identityFile = normalizeHostText(value.identityFile, 1, 1024);
+  if (!id || !name || !target || !identityFile || !isSshTarget(target)) return null;
+  const image = normalizeHostText(value.image, 1, 256) || 'war-browser-agent:phase1';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(image)) return null;
+  const controllerHost = normalizeHostText(value.controllerHost, 1, 255);
+  const controllerCaPath = normalizeRemotePath(value.controllerCaPath, '/etc/war/controller-ca.pem');
+  const seccompProfilePath = normalizeRemotePath(value.seccompProfilePath, '/etc/war/security/chromium-userns-seccomp.json');
+  const ipv6Interface = normalizeHostText(value.ipv6Interface, 1, 32);
+  const ipv6Prefix = normalizeHostText(value.ipv6Prefix, 1, 80);
+  const ipv6Driver = value.ipv6Driver === 'bridge' ? 'bridge' : 'macvlan';
+  return {
+    id,
+    name,
+    target,
+    identityFile,
+    image,
+    controllerHost: controllerHost || null,
+    controllerCaPath,
+    seccompProfilePath,
+    ipv6Interface: ipv6Interface || null,
+    ipv6Prefix: ipv6Prefix || null,
+    ipv6Driver,
+  };
+}
+
+function normalizeHostText(value, min, max) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (text.length < min || text.length > max || /[\u0000-\u001f\u007f]/.test(text)) return null;
+  return text;
+}
+
+function normalizeRemotePath(value, fallback) {
+  const text = normalizeHostText(value, 1, 512);
+  return text && /^\/[A-Za-z0-9._/-]+$/.test(text) ? text : fallback;
+}
+
+function isSshTarget(value) {
+  return /^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(value);
 }
 
 async function readSettings({ fs, filePath }) {

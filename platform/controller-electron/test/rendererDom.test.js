@@ -421,6 +421,32 @@ test('workspace add container uses the Controller containers API and refreshes m
   assert.equal(state.store.containers[0].status, 'running');
 });
 
+test('workspace adds, checks, and repairs an SSH Linux host', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [] } };
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, `+ ${i18n.t('workspace.containers.addHost')}`);
+  const form = all(current, (node) => node.className === 'host-setup-card')[0];
+  const inputs = all(form, (node) => node.localName === 'input');
+  inputs[0].value = 'Reviewed Linux';
+  inputs[1].value = 'root@192.168.1.201';
+  inputs[2].value = 'C:/Users/test/.ssh/id_ed25519';
+  inputs[3].value = '192.168.1.20';
+  inputs[4].value = '/opt/war/controller-ca.crt';
+  inputs[5].value = 'war-browser-agent:phase1';
+  for (const input of inputs) await fireWithEvent(input, 'input');
+  await clickButton(current, i18n.t('workspace.containers.repairAndConnectHost'));
+
+  assert.equal(apiState.hostCalls.add, 1);
+  assert.equal(apiState.hostCalls.repair, 1);
+  assert.equal(apiState.hostRequests[0].target, 'root@192.168.1.201');
+  assert.equal(apiState.hostRequests[0].controllerCaPath, '/opt/war/controller-ca.crt');
+  assert.equal(state.store.workspace.containerHosts[0].connected, true);
+});
+
 test('workspace add container requires a successfully probed Docker host', async () => {
   resetStore();
   state.store.view = 'workspace';
@@ -634,6 +660,30 @@ test('managed container failed action preserves safe error and success clears it
   current = views.renderView(() => { current = views.renderView(() => {}); });
   await clickButton(current, 'Start');
   assert.equal(state.store.workspace.containerErrors['container-1'], undefined);
+});
+
+test('managed container delete reports backend cleanup failure instead of claiming success', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One' })];
+  state.store.containers = apiState.containers;
+  apiState.containerResults.delete = {
+    ok: true,
+    data: {
+      container: containerFixture({ id: 'container-1', name: 'Agent One', status: 'failed' }),
+      operation: { ok: false, code: 'CONTAINER_ADAPTER_UNAVAILABLE', error: 'Adapter unavailable' },
+    },
+  };
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  await clickButton(current, i18n.t('workspace.containers.delete'));
+
+  assert.equal(apiState.containerCalls.delete, 1);
+  assert.equal(state.store.workspace.containerErrors['container-1'], 'CONTAINER_ADAPTER_UNAVAILABLE: Adapter unavailable');
+  assert.equal(current.textContent.includes(i18n.t('workspace.containers.actionDone')), false);
 });
 
 test('managed container resource unavailable and authenticated online states render safely', () => {
@@ -1198,6 +1248,8 @@ function resetStore() {
   apiState.containerCalls = {};
   apiState.containerResults = {};
   apiState.containerHostsResult = null;
+  apiState.hostCalls = {};
+  apiState.hostRequests = [];
   apiState.lastContainerAddPayload = null;
   apiState.containerAddDelay = false;
   apiState.originCalls = {};
@@ -1240,6 +1292,10 @@ function resetStore() {
       containerHosts: [],
       containerHostStatus: 'idle',
       containerNotice: '',
+      hostSetupOpen: false,
+      hostDraft: { name: '', target: '', identityFile: '', controllerHost: '', controllerCaPath: '/etc/war/controller-ca.pem', image: 'war-browser-agent:phase1' },
+      hostPending: '',
+      hostError: '',
       addContainerPending: false,
       containerPending: {},
       containerErrors: {},
@@ -1383,6 +1439,8 @@ const apiState = {
   containerCalls: {},
   containerResults: {},
   containerHostsResult: null,
+  hostCalls: {},
+  hostRequests: [],
   lastContainerAddPayload: null,
   containerAddDelay: false,
   originCalls: {},
@@ -1437,6 +1495,18 @@ function installControllerApi() {
           ok: true,
           data: { status: 'connected', hosts: [{ id: 'configured-docker-host', label: 'Linux Docker', runtime: 'ssh-docker', connected: true }] },
         }),
+        addHost: async (payload) => {
+          apiState.hostCalls.add = (apiState.hostCalls.add || 0) + 1;
+          apiState.hostRequests.push(structuredClone(payload));
+          apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [{ id: 'ssh-host-1', label: payload.name, name: payload.name, target: payload.target, runtime: 'ssh-docker', connected: false }] } };
+          return { ok: true, data: { id: 'ssh-host-1', label: payload.name, name: payload.name, target: payload.target, connected: false } };
+        },
+        checkHost: async ({ hostId }) => ({ ok: true, data: { id: hostId, label: 'Reviewed Linux', target: 'root@192.168.1.201', connected: false } }),
+        repairHost: async ({ hostId }) => {
+          apiState.hostCalls.repair = (apiState.hostCalls.repair || 0) + 1;
+          apiState.containerHostsResult = { ok: true, data: { status: 'connected', hosts: [{ id: hostId, label: 'Reviewed Linux', name: 'Reviewed Linux', target: 'root@192.168.1.201', runtime: 'ssh-docker', connected: true, diagnostics: { ready: true } }] } };
+          return { ok: true, data: { id: hostId, label: 'Reviewed Linux', connected: true } };
+        },
         add: async (payload) => {
           const { name, image, host, runtime } = payload;
           apiState.lastContainerAddPayload = structuredClone(payload);

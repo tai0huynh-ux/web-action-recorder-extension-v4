@@ -87,6 +87,11 @@ function containersPane(refresh, active = false) {
       ]),
       el('div', { className: 'toolbar tight' }, [
         button(t('workspace.containers.checkAll'), () => refreshAllContainers(refresh), { className: 'button compact', disabled: store.workspace.containerAllPending || !store.containers.length }),
+        button(`+ ${t('workspace.containers.addHost')}`, () => {
+          store.workspace.hostSetupOpen = !store.workspace.hostSetupOpen;
+          store.workspace.hostError = '';
+          refresh();
+        }, { className: 'button compact' }),
         button(`+ ${t('workspace.containers.add')}`, async () => {
           const opening = !store.workspace.addContainerOpen;
           store.workspace.addContainerOpen = opening;
@@ -100,6 +105,7 @@ function containersPane(refresh, active = false) {
       text: store.workspace.containerNotice || '',
       ariaLive: 'polite',
     }),
+    store.workspace.hostSetupOpen ? hostSetupForm(refresh) : null,
     search,
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.all'), () => {
@@ -150,12 +156,13 @@ async function loadContainerHosts(refresh) {
   try {
     const result = await window.warController.containers.hosts();
     const data = unwrap(result) || {};
-    store.workspace.containerHosts = Array.isArray(data.hosts) ? data.hosts.filter((host) => host?.connected && host.id) : [];
+    store.workspace.containerHosts = Array.isArray(data.hosts) ? data.hosts.filter((host) => host?.id) : [];
     store.workspace.containerHostStatus = data.status || (store.workspace.containerHosts.length ? 'connected' : 'unavailable');
-    if (!store.workspace.containerHosts.some((host) => host.id === store.workspace.containerHostId)) {
-      store.workspace.containerHostId = store.workspace.containerHosts[0]?.id || '';
+    const connectedHosts = store.workspace.containerHosts.filter((host) => host.connected);
+    if (!connectedHosts.some((host) => host.id === store.workspace.containerHostId)) {
+      store.workspace.containerHostId = connectedHosts[0]?.id || '';
     }
-    store.workspace.containerNotice = store.workspace.containerHosts.length
+    store.workspace.containerNotice = connectedHosts.length
       ? t('workspace.containers.hostConnected')
       : t('workspace.containers.hostUnavailable');
   } catch (error) {
@@ -166,6 +173,124 @@ async function loadContainerHosts(refresh) {
   } finally {
     refresh();
   }
+}
+
+function hostSetupForm(refresh) {
+  const draft = store.workspace.hostDraft || {};
+  const name = el('input', { type: 'text', value: draft.name || '', placeholder: t('workspace.containers.hostNamePlaceholder') });
+  const target = el('input', { type: 'text', value: draft.target || '', placeholder: 'root@192.168.1.201' });
+  const identityFile = el('input', { type: 'text', value: draft.identityFile || '', placeholder: 'C:\\Users\\you\\.ssh\\id_ed25519' });
+  const controllerHost = el('input', { type: 'text', value: draft.controllerHost || '', placeholder: t('workspace.containers.controllerHostPlaceholder') });
+  const controllerCaPath = el('input', { type: 'text', value: draft.controllerCaPath || '/etc/war/controller-ca.pem', placeholder: t('workspace.containers.controllerCaPathPlaceholder') });
+  const image = el('input', { type: 'text', value: draft.image || 'war-browser-agent:phase1', placeholder: 'war-browser-agent:phase1' });
+  const rememberDraft = () => {
+    store.workspace.hostDraft = {
+      name: name.value,
+      target: target.value,
+      identityFile: identityFile.value,
+      controllerHost: controllerHost.value,
+      controllerCaPath: controllerCaPath.value,
+      image: image.value,
+    };
+  };
+  for (const input of [name, target, identityFile, controllerHost, controllerCaPath, image]) input.addEventListener('input', rememberDraft);
+  const pending = Boolean(store.workspace.hostPending);
+  const status = el('p', { className: store.workspace.hostError ? 'status error' : 'status', text: store.workspace.hostError || store.workspace.containerNotice || '', ariaLive: 'polite' });
+  return el('article', { className: 'host-setup-card', role: 'form', ariaLabel: t('workspace.containers.addHost') }, [
+    el('div', { className: 'host-setup-heading' }, [
+      el('div', {}, [
+        el('strong', { text: t('workspace.containers.addHost') }),
+        el('p', { className: 'muted', text: t('workspace.containers.hostSetupHelp') }),
+      ]),
+      el('span', { className: 'status-pill connecting', text: pending ? t('workspace.containers.hostWorking') : t('workspace.containers.sshKeyRequired') }),
+    ]),
+    el('div', { className: 'form-grid host-form-grid' }, [
+      field(t('workspace.containers.hostName'), name),
+      field(t('workspace.containers.sshTarget'), target),
+      field(t('workspace.containers.sshIdentity'), identityFile),
+      field(t('workspace.containers.controllerHost'), controllerHost),
+      field(t('workspace.containers.controllerCaPath'), controllerCaPath),
+      field(t('workspace.containers.image'), image),
+    ]),
+    el('div', { className: 'toolbar tight' }, [
+      button(t('workspace.containers.saveAndCheckHost'), () => submitHostSetup('check', status, refresh), { className: 'button', disabled: pending }),
+      button(t('workspace.containers.repairAndConnectHost'), () => submitHostSetup('repair', status, refresh), { className: 'button primary', disabled: pending }),
+    ]),
+    status,
+    hostDiagnosticsList(),
+  ]);
+}
+
+async function submitHostSetup(mode, status, refresh) {
+  if (store.workspace.hostPending) return;
+  const draft = store.workspace.hostDraft || {};
+  const payload = {
+    name: String(draft.name || '').trim(),
+    target: String(draft.target || '').trim(),
+    identityFile: String(draft.identityFile || '').trim(),
+    controllerHost: String(draft.controllerHost || '').trim(),
+    controllerCaPath: String(draft.controllerCaPath || '/etc/war/controller-ca.pem').trim(),
+    image: String(draft.image || 'war-browser-agent:phase1').trim(),
+    ipv6Driver: 'macvlan',
+  };
+  if (!payload.name || !payload.target || !payload.identityFile || !payload.controllerHost || !payload.controllerCaPath) {
+    store.workspace.hostError = t('workspace.containers.hostFieldsRequired');
+    status.textContent = store.workspace.hostError;
+    status.className = 'status error';
+    return;
+  }
+  store.workspace.hostPending = mode;
+  store.workspace.hostError = '';
+  store.workspace.containerNotice = mode === 'repair'
+    ? t('workspace.containers.hostRepairing')
+    : t('workspace.containers.hostChecking');
+  refresh();
+  try {
+    const savedResult = await window.warController.containers.addHost(payload);
+    if (savedResult?.ok === false) throw new Error(safeError(savedResult));
+    let host = unwrap(savedResult) || {};
+    if (mode === 'repair') {
+      const repairResult = await window.warController.containers.repairHost({ hostId: host.id });
+      if (repairResult?.ok === false) throw new Error(safeError(repairResult));
+      host = unwrap(repairResult) || host;
+    }
+    await loadContainerHosts(refresh);
+    store.workspace.containerHostId = host.connected ? host.id : store.workspace.containerHostId;
+    store.workspace.containerNotice = host.connected
+      ? t('workspace.containers.hostConnected')
+      : t('workspace.containers.hostRepairRequired');
+    store.workspace.hostError = '';
+  } catch (error) {
+    store.workspace.hostError = safeError({ code: error?.code || 'SSH_HOST_ERROR', message: error?.message || String(error) });
+    store.workspace.containerNotice = store.workspace.hostError;
+  } finally {
+    store.workspace.hostPending = '';
+    refresh();
+  }
+}
+
+function hostDiagnosticsList() {
+  const hosts = store.workspace.containerHosts || [];
+  if (!hosts.length) return el('p', { className: 'muted', text: t('workspace.containers.noHostConfigured') });
+  return el('div', { className: 'host-diagnostics-list' }, hosts.map((host) => {
+    const checks = host.diagnostics || {};
+    return el('div', { className: 'host-diagnostics-row' }, [
+      el('strong', { text: host.label || host.id }),
+      el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: host.connected ? t('workspace.containers.hostReady') : t('workspace.containers.hostRepairRequired') }),
+      el('span', { className: 'device-meta', text: host.target || '' }),
+      el('span', { className: 'device-meta', text: t('workspace.containers.hostCheckSummary', {
+        docker: checkMark(checks.docker),
+        image: checkMark(checks.image),
+        app: checkMark(checks.source),
+        policy: checkMark(checks.apparmor && checks.seccomp),
+        ca: checkMark(checks.ca),
+      }) }),
+    ]);
+  }));
+}
+
+function checkMark(value) {
+  return value ? 'OK' : '--';
 }
 
 function addContainerForm(refresh) {
@@ -198,8 +323,8 @@ function addContainerForm(refresh) {
   updateNamePreview();
   const hosts = store.workspace.containerHosts || [];
   const host = el('select', { ariaLabel: t('workspace.containers.host') }, [
-    el('option', { value: '', text: hosts.length ? t('workspace.containers.selectHost') : t('workspace.containers.noHost') }),
-    ...hosts.map((item) => el('option', { value: item.id, text: containerHostLabel(item) })),
+    el('option', { value: '', text: hosts.some((item) => item.connected) ? t('workspace.containers.selectHost') : t('workspace.containers.noHost') }),
+    ...hosts.map((item) => el('option', { value: item.id, text: containerHostLabel(item), disabled: !item.connected })),
   ]);
   host.value = store.workspace.containerHostId || '';
   host.addEventListener('change', () => {
@@ -433,8 +558,11 @@ async function containerAction(action, container, refresh) {
   refresh();
   try {
     const result = await window.warController.containers[action]({ containerId });
-    if (result?.ok === false) {
-      store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(result) };
+    const data = unwrap(result) || {};
+    const operationFailed = data.operation?.ok === false;
+    if (result?.ok === false || operationFailed) {
+      const failure = operationFailed ? data.operation : result;
+      store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(failure) };
       store.workspace.containerNotice = store.workspace.containerErrors[containerId];
     } else {
       const { [containerId]: _clearedError, ...remainingErrors } = store.workspace.containerErrors || {};
@@ -716,11 +844,12 @@ function containerDisplayName(prefix, sequence) {
 }
 
 function containerHostLabel(host) {
-  if (host.label) return `${host.label} - ${t('workspace.containers.hostConnectedShort')}`;
+  const status = host.connected ? t('workspace.containers.hostConnectedShort') : t('workspace.containers.hostRepairRequired');
+  if (host.label) return `${host.label} - ${status}`;
   const runtime = host.runtime === 'local-docker'
     ? t('workspace.containers.localDockerHost')
     : t('workspace.containers.sshDockerHost');
-  return `${runtime} - ${t('workspace.containers.hostConnectedShort')}`;
+  return `${runtime} - ${status}`;
 }
 
 function hostLabelFromId(hostId, container = null) {
@@ -745,6 +874,7 @@ function randomIpv6Eui64Suffix() {
   const bytes = new Uint8Array(6);
   globalThis.crypto.getRandomValues(bytes);
   bytes[0] = (bytes[0] & 0xfc) | 0x02;
+  if (bytes[2] === 0) bytes[2] = 1;
   const groups = [
     ((bytes[0] ^ 0x02) << 8) | bytes[1],
     (bytes[2] << 8) | 0xff,
@@ -803,7 +933,9 @@ function pendingStatus(action) {
 }
 
 function safeError(result) {
-  return `${result?.code || 'ERROR'}: ${result?.message || 'Request failed'}`.slice(0, 300);
+  const detail = result?.message || result?.error || 'Request failed';
+  const code = result?.code || (/^[A-Z][A-Z0-9_]{2,80}$/.test(detail) ? detail : 'ERROR');
+  return (code === detail ? code : `${code}: ${detail}`).slice(0, 300);
 }
 
 function inputModeContent(selected, refresh) {

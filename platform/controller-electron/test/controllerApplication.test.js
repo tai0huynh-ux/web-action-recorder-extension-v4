@@ -186,6 +186,19 @@ test('managed container deletion failure revokes access but does not report regi
   assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
 });
 
+test('failed container without a proven runtime can be removed locally when no adapter exists', async () => {
+  const core = await connectedCore();
+  const app = new ControllerApplicationService({ core, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const added = await app.addContainer({ name: 'Never Provisioned', image: 'war-browser-agent:test', runtime: { dockerName: 'never-provisioned' } });
+
+  assert.equal(added.data.container.status, 'failed');
+  const deleted = await app.deleteContainer({ containerId: added.data.container.id });
+
+  assert.equal(deleted.data.operation.ok, true);
+  assert.equal(deleted.data.operation.localOnly, true);
+  assert.equal(deleted.data.container.status, 'deleted');
+});
+
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision());

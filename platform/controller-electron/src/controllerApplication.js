@@ -18,7 +18,7 @@ const MAX_GROUPED_INPUT_ROWS = 200;
 const GROUPED_INPUT_MODES = new Set(['text', 'table', 'cell']);
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.now = now; this.id = id; this.sequence = 0; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -55,6 +55,7 @@ export class ControllerApplicationService extends EventEmitter {
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   listContainers() { return this.result(this.core.containers.listContainers()); }
   async listContainerHosts() {
+    if (this.containerHostManager) return this.result(await this.containerHostManager.listHosts());
     const publicConfig = this.config ? toPublicRuntimeConfig(this.config).containers : null;
     if (!publicConfig?.enabled || !this.containerAdapter?.probe) {
       return this.result({ status: 'disabled', hosts: [] });
@@ -73,11 +74,28 @@ export class ControllerApplicationService extends EventEmitter {
       }],
     });
   }
+  async addContainerHost(payload) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = await this.containerHostManager.addHost(payload);
+    this.invalidate('containers');
+    return this.result(data);
+  }
+  async checkContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    return this.result(await this.containerHostManager.checkHost(hostId));
+  }
+  async repairContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = await this.containerHostManager.repairHost(hostId);
+    this.invalidate('containers', { hostId });
+    return this.result(data);
+  }
   async addContainer(payload) {
     const deviceId = payload.deviceId || `managed-${crypto.randomUUID()}`;
-    const host = resolveManagedContainerHost(payload.host, this.config?.containers);
-    if (this.config?.containers?.enabled) {
-      const probe = await this.safeContainerOperation('probe', {});
+    const host = resolveManagedContainerHost(payload.host, this.config?.containers, this.containerHostManager);
+    const hostAdapter = this.containerAdapterForHost(host);
+    if (hostAdapter && (this.containerHostManager || this.config?.containers?.enabled)) {
+      const probe = await this.safeContainerOperation('probe', {}, host);
       if (!probe.ok || probe.connected !== true) {
         throw codedError('CONTAINER_HOST_UNAVAILABLE', 'Selected managed Docker host is unavailable');
       }
@@ -86,13 +104,13 @@ export class ControllerApplicationService extends EventEmitter {
       ...(payload.runtime || {}),
       dockerName: payload.runtime?.dockerName || managedDockerName(payload.name),
     };
-    const image = this.config?.containers?.enabled ? this.config.containers.image : payload.image;
+    const image = this.containerHostManager?.getHost(host)?.image || (this.config?.containers?.enabled ? this.config.containers.image : payload.image);
     const provisioning = await this.core.pairing.provisionManagedAgent({
       device: managedDeviceDescriptor({ deviceId, displayName: payload.name }),
       displayName: payload.name,
     });
     const container = await this.core.containers.createContainer({ ...payload, host, image, runtime, deviceId });
-    const operation = await this.safeContainerOperation('create', { ...container, provisioning });
+    const operation = await this.safeContainerOperation('create', { ...container, provisioning }, host);
     const next = operation.ok ? await this.core.containers.updateStatus(container.id, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime }) : await this.core.containers.updateStatus(container.id, 'failed', { lastError: operation.error });
     if (!operation.ok) await this.core.pairing.revoke(deviceId).catch(() => {});
     this.invalidate('containers', { containerId: container.id });
@@ -168,7 +186,9 @@ export class ControllerApplicationService extends EventEmitter {
         if (error?.code !== 'DEVICE_NOT_FOUND') throw error;
       });
     }
-    const operation = await this.safeContainerOperation('delete', container);
+    const operation = isUnprovisionedContainer(container) && !this.containerAdapterForHost(container.host)?.delete
+      ? { ok: true, status: 'deleted', localOnly: true }
+      : await this.safeContainerOperation('delete', container);
     const next = operation.ok
       ? await this.core.containers.deleteContainer(containerId)
       : await this.core.containers.updateStatus(containerId, 'failed', { desiredState: 'deleted', lastError: operation.error });
@@ -420,10 +440,15 @@ export class ControllerApplicationService extends EventEmitter {
     return this.result({ container: next, operation });
   }
 
-  async safeContainerOperation(action, container) {
-    if (!this.containerAdapter?.[action]) return { ok: false, error: 'CONTAINER_ADAPTER_UNAVAILABLE' };
+  containerAdapterForHost(hostId) {
+    return this.containerHostManager?.getAdapter(hostId) || this.containerAdapter;
+  }
+
+  async safeContainerOperation(action, container, hostId = container?.host) {
+    const adapter = this.containerAdapterForHost(hostId);
+    if (!adapter?.[action]) return { ok: false, error: 'CONTAINER_ADAPTER_UNAVAILABLE' };
     try {
-      const result = await this.containerAdapter[action](structuredClone(container));
+      const result = await adapter[action](structuredClone(container));
       return { ok: true, ...(result || {}) };
     } catch (error) {
       return { ok: false, error: sanitizeContainerError(error) };
@@ -702,7 +727,12 @@ function stripSecretLikeFields(value) {
   }
 }
 
-function resolveManagedContainerHost(requestedHost, config) {
+function resolveManagedContainerHost(requestedHost, config, manager = null) {
+  if (manager) {
+    if (requestedHost && manager.getHost(requestedHost)) return requestedHost;
+    if (requestedHost) throw codedError('INVALID_CONTAINER_HOST', 'Selected managed Docker host is unavailable');
+    return manager.firstHostId();
+  }
   if (!config?.enabled) return requestedHost || null;
   const expectedHost = config.hostId || MANAGED_CONTAINER_HOST_ID;
   if (requestedHost && requestedHost !== expectedHost) {
@@ -750,6 +780,11 @@ function randomIpv6Suffix() {
   const bytes = crypto.randomBytes(6);
   bytes[0] = (bytes[0] & 0xfc) | 0x02;
   return ipv6Eui64SuffixFromMacAddress([...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join(':'));
+}
+
+function isUnprovisionedContainer(container = {}) {
+  return container.status === 'failed'
+    && container.desiredState === 'stopped';
 }
 
 function codedError(code, message, details) {

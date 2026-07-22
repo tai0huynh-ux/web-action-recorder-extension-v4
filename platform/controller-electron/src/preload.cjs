@@ -26,6 +26,9 @@ const IPC_CHANNELS = Object.freeze({
   containers: Object.freeze({
     list: 'war-controller:v1:containers:list',
     hosts: 'war-controller:v1:containers:hosts',
+    hostAdd: 'war-controller:v1:containers:host-add',
+    hostCheck: 'war-controller:v1:containers:host-check',
+    hostRepair: 'war-controller:v1:containers:host-repair',
     add: 'war-controller:v1:containers:add',
     start: 'war-controller:v1:containers:start',
     stop: 'war-controller:v1:containers:stop',
@@ -126,6 +129,9 @@ const api = deepFreeze({
   containers: {
     list: call(IPC_CHANNELS.containers.list),
     hosts: call(IPC_CHANNELS.containers.hosts),
+    addHost: call(IPC_CHANNELS.containers.hostAdd),
+    checkHost: call(IPC_CHANNELS.containers.hostCheck),
+    repairHost: call(IPC_CHANNELS.containers.hostRepair),
     add: call(IPC_CHANNELS.containers.add),
     start: call(IPC_CHANNELS.containers.start),
     stop: call(IPC_CHANNELS.containers.stop),
