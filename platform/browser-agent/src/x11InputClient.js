@@ -153,7 +153,7 @@ export class X11InputClient {
   }
 
   async shortcut(shortcut) {
-    return this.command('shortcut', { shortcut });
+    return this.command('shortcut', { shortcut: normalizeX11Shortcut(shortcut) });
   }
 
   getReconnectCount() {
@@ -178,6 +178,29 @@ export function parseX11Response(line) {
     throw new AgentError('invalid_response', 'X11 input response is invalid', 502);
   }
   return response;
+}
+
+export function normalizeX11Shortcut(shortcut) {
+  const aliases = {
+    CTRL: 'Control_L',
+    CONTROL: 'Control_L',
+    SHIFT: 'Shift_L',
+    ALT: 'Alt_L',
+    META: 'Meta_L',
+    LEFT: 'ArrowLeft',
+    RIGHT: 'ArrowRight',
+    UP: 'ArrowUp',
+    DOWN: 'ArrowDown',
+    ESCAPE: 'Escape'
+  };
+  return String(shortcut || '').split('+').map((part) => {
+    const key = part.trim();
+    if (!key) return key;
+    const alias = aliases[key.toUpperCase()];
+    if (alias) return alias;
+    if (key.length === 1 && /[A-Z]/.test(key)) return key.toLowerCase();
+    return key;
+  }).join('+');
 }
 
 function pointPayload(point) {

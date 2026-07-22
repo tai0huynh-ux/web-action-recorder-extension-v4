@@ -9,7 +9,7 @@ import { CoordinateMapper } from '../src/coordinateMapper.js';
 import { ArtifactRegistry } from '../src/artifactRegistry.js';
 import { SemanticController } from '../src/semanticController.js';
 import { RawInputController, InputQueue, createX11Backend } from '../src/rawInputController.js';
-import { X11InputClient, encodeX11Command, parseX11Response } from '../src/x11InputClient.js';
+import { X11InputClient, encodeX11Command, normalizeX11Shortcut, parseX11Response } from '../src/x11InputClient.js';
 import { BrowserController, parseSandboxStatusSnapshot } from '../src/browserController.js';
 import { ControlDispatcher } from '../src/controlDispatcher.js';
 import { validateShortcut } from '../src/inputSafety.js';
@@ -229,6 +229,17 @@ test('phase2 internal pages allow extensions', async () => {
   const controller = fakeBrowserController();
   const tab = await controller.openInternalPage('extensions');
   assert.equal(tab.url, 'chrome://extensions/');
+});
+
+test('phase2 X11 shortcut protocol maps Controller names to X11 keysyms', async () => {
+  assert.equal(normalizeX11Shortcut('CTRL+L'), 'Control_L+l');
+  assert.equal(normalizeX11Shortcut('CTRL+SHIFT+T'), 'Control_L+Shift_L+t');
+  assert.equal(normalizeX11Shortcut('ALT+LEFT'), 'Alt_L+ArrowLeft');
+  const client = new X11InputClient();
+  const calls = [];
+  client.command = async (...args) => { calls.push(args); return { ok: true }; };
+  await client.shortcut('CTRL+L');
+  assert.deepEqual(calls, [['shortcut', { shortcut: 'Control_L+l' }]]);
 });
 
 test('phase2 raw input supports viewport drag through coordinate-aware mouse down/up', async () => {

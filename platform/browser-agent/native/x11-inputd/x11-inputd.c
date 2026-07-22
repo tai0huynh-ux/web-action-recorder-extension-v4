@@ -114,22 +114,26 @@ static int button_number(const char *button) {
 }
 
 static KeySym key_symbol(const char *key) {
-  if (strcmp(key, "Control") == 0 || strcmp(key, "Control_L") == 0) return XK_Control_L;
-  if (strcmp(key, "Shift") == 0 || strcmp(key, "Shift_L") == 0) return XK_Shift_L;
-  if (strcmp(key, "Alt") == 0 || strcmp(key, "Alt_L") == 0) return XK_Alt_L;
-  if (strcmp(key, "Meta") == 0 || strcmp(key, "Meta_L") == 0) return XK_Super_L;
+  if (strcmp(key, "CTRL") == 0 || strcmp(key, "CONTROL") == 0 || strcmp(key, "Control") == 0 || strcmp(key, "Control_L") == 0) return XK_Control_L;
+  if (strcmp(key, "SHIFT") == 0 || strcmp(key, "Shift") == 0 || strcmp(key, "Shift_L") == 0) return XK_Shift_L;
+  if (strcmp(key, "ALT") == 0 || strcmp(key, "Alt") == 0 || strcmp(key, "Alt_L") == 0) return XK_Alt_L;
+  if (strcmp(key, "META") == 0 || strcmp(key, "Meta") == 0 || strcmp(key, "Meta_L") == 0) return XK_Super_L;
   if (strcmp(key, "Enter") == 0 || strcmp(key, "Return") == 0) return XK_Return;
   if (strcmp(key, "Escape") == 0) return XK_Escape;
   if (strcmp(key, "Tab") == 0) return XK_Tab;
   if (strcmp(key, "Backspace") == 0) return XK_BackSpace;
   if (strcmp(key, "Delete") == 0) return XK_Delete;
   if (strcmp(key, "Space") == 0) return XK_space;
-  if (strcmp(key, "ArrowLeft") == 0 || strcmp(key, "Left") == 0) return XK_Left;
-  if (strcmp(key, "ArrowRight") == 0 || strcmp(key, "Right") == 0) return XK_Right;
-  if (strcmp(key, "ArrowUp") == 0 || strcmp(key, "Up") == 0) return XK_Up;
-  if (strcmp(key, "ArrowDown") == 0 || strcmp(key, "Down") == 0) return XK_Down;
+  if (strcmp(key, "ArrowLeft") == 0 || strcmp(key, "LEFT") == 0 || strcmp(key, "Left") == 0) return XK_Left;
+  if (strcmp(key, "ArrowRight") == 0 || strcmp(key, "RIGHT") == 0 || strcmp(key, "Right") == 0) return XK_Right;
+  if (strcmp(key, "ArrowUp") == 0 || strcmp(key, "UP") == 0 || strcmp(key, "Up") == 0) return XK_Up;
+  if (strcmp(key, "ArrowDown") == 0 || strcmp(key, "DOWN") == 0 || strcmp(key, "Down") == 0) return XK_Down;
+  if (strcmp(key, "ESCAPE") == 0) return XK_Escape;
   if (strcmp(key, "F5") == 0) return XK_F5;
-  if (strlen(key) == 1) return XStringToKeysym(key);
+  if (strlen(key) == 1) {
+    char normalized[2] = { (char)tolower((unsigned char)key[0]), '\0' };
+    return XStringToKeysym(normalized);
+  }
   return NoSymbol;
 }
 
@@ -175,7 +179,34 @@ static bool fake_text_char(char c) {
   if (c == '\n') sym = XK_Return;
   if (c == ' ') sym = XK_space;
   if (c == ':') { sym = XK_semicolon; shift = true; }
+  if (c == '/') sym = XK_slash;
+  if (c == '.') sym = XK_period;
+  if (c == ',') sym = XK_comma;
+  if (c == ';') sym = XK_semicolon;
+  if (c == '?') { sym = XK_slash; shift = true; }
+  if (c == '!') { sym = XK_1; shift = true; }
+  if (c == '@') { sym = XK_2; shift = true; }
+  if (c == '#') { sym = XK_3; shift = true; }
+  if (c == '$') { sym = XK_4; shift = true; }
+  if (c == '%') { sym = XK_5; shift = true; }
+  if (c == '^') { sym = XK_6; shift = true; }
+  if (c == '&') { sym = XK_7; shift = true; }
+  if (c == '*') { sym = XK_8; shift = true; }
+  if (c == '(') { sym = XK_9; shift = true; }
+  if (c == ')') { sym = XK_0; shift = true; }
+  if (c == '-') sym = XK_minus;
+  if (c == '=') sym = XK_equal;
+  if (c == '+') { sym = XK_equal; shift = true; }
   if (c == '_') { sym = XK_minus; shift = true; }
+  if (c == '\\') sym = XK_backslash;
+  if (c == '\'') sym = XK_apostrophe;
+  if (c == '"') { sym = XK_apostrophe; shift = true; }
+  if (c == '[') sym = XK_bracketleft;
+  if (c == ']') sym = XK_bracketright;
+  if (c == '{') { sym = XK_bracketleft; shift = true; }
+  if (c == '}') { sym = XK_bracketright; shift = true; }
+  if (c == '<') { sym = XK_comma; shift = true; }
+  if (c == '>') { sym = XK_period; shift = true; }
   if (c >= 'A' && c <= 'Z') { key[0] = (char)tolower((unsigned char)c); sym = XStringToKeysym(key); shift = true; }
   if (sym == NoSymbol) return false;
   KeyCode code = XKeysymToKeycode(display, sym);
