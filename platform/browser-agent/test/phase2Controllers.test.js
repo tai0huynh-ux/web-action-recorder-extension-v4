@@ -158,7 +158,20 @@ test('phase2 browser-space keyDown/keyUp use native X11 backend', async () => {
   await raw.execute('input.keyUp', { space: 'browser', key: 'Enter' });
   assert.deepEqual(raw.x11.calls.keyDown, ['Enter']);
   assert.deepEqual(raw.x11.calls.keyUp, ['Enter']);
+  assert.deepEqual(raw.x11.calls.events, ['focusChromium', 'keyDown:Enter', 'focusChromium', 'keyUp:Enter']);
   assert.deepEqual(raw.getState().heldKeys, []);
+});
+
+test('phase2 browser-space shortcut and text focus Chromium before native input', async () => {
+  const raw = makeRaw();
+  await raw.execute('input.shortcut', { space: 'browser', keys: ['CTRL', 'L'] });
+  await raw.execute('input.insertText', { space: 'browser', text: 'https://example.com' });
+  assert.deepEqual(raw.x11.calls.events, [
+    'focusChromium',
+    'shortcut:CTRL+L',
+    'focusChromium',
+    'typeText:https://example.com'
+  ]);
 });
 
 test('phase2 raw input stopAll releases keys and buttons', async () => {
@@ -390,19 +403,19 @@ function fakePage(locator) {
 }
 
 function fakeX11() {
-  const calls = { keyDown: [], keyUp: [], releaseAll: 0 };
+  const calls = { keyDown: [], keyUp: [], releaseAll: 0, events: [] };
   return {
     calls,
-    focusChromium: async () => {},
+    focusChromium: async () => { calls.events.push('focusChromium'); },
     mouseMove: async () => {},
     click: async () => {},
     mouseDown: async () => {},
     mouseUp: async () => {},
     wheel: async () => {},
-    shortcut: async () => {},
-    keyDown: async (key) => calls.keyDown.push(key),
-    keyUp: async (key) => calls.keyUp.push(key),
-    typeText: async () => {},
+    shortcut: async (shortcut) => { calls.events.push(`shortcut:${shortcut}`); },
+    keyDown: async (key) => { calls.keyDown.push(key); calls.events.push(`keyDown:${key}`); },
+    keyUp: async (key) => { calls.keyUp.push(key); calls.events.push(`keyUp:${key}`); },
+    typeText: async (text) => { calls.events.push(`typeText:${text}`); },
     releaseAll: async () => { calls.releaseAll += 1; }
   };
 }

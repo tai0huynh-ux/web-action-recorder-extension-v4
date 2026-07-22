@@ -190,23 +190,29 @@ export class RawInputController {
         await this.x11.wheel(validateDelta(payload.deltaY ?? 0, this.limits));
         return { point };
       }
-      case 'input.shortcut':
-        await this.x11.shortcut(validateShortcut(payload.keys));
-        return { shortcut: validateShortcut(payload.keys) };
+      case 'input.shortcut': {
+        const shortcut = validateShortcut(payload.keys);
+        await this.x11.focusChromium();
+        await this.x11.shortcut(shortcut);
+        return { shortcut };
+      }
       case 'input.keyDown': {
         const key = validateKey(payload.key);
+        await this.x11.focusChromium();
         await this.x11.keyDown(key);
         this.heldKeys.add(key);
         return { key };
       }
       case 'input.keyUp': {
         const key = validateKey(payload.key);
+        await this.x11.focusChromium();
         await this.x11.keyUp(key);
         this.heldKeys.delete(key);
         return { key };
       }
       case 'input.insertText':
         requireString(payload.text, 'text', { max: this.limits.inputMaxTextLength });
+        await this.x11.focusChromium();
         await this.x11.typeText(payload.text);
         return { inserted: true };
       default:
