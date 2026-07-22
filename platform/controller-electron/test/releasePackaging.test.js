@@ -8,6 +8,7 @@ test('release file allowlists keep controller package scoped to runtime files', 
   assert(controllerFiles.includes('platform/controller-electron/src/main.js'));
   assert(controllerFiles.includes('platform/controller-electron/src/containerAdapter.js'));
   assert(controllerFiles.includes('platform/controller-electron/release/packagedSmoke.js'));
+  assert(controllerFiles.includes('platform/controller-electron/renderer/scrollState.js'));
   assert(controllerFiles.includes('platform/controller-wss/src/wssServer.js'));
   assert(controllerFiles.includes('platform/controller-core/src/controllerCore.js'));
   assert(controllerFiles.includes('platform/controller-core/src/containerRegistry.js'));

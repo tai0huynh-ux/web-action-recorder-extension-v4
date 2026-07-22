@@ -32,12 +32,31 @@ export function renderView(refresh) {
 function workspaceView(refresh) {
   const layout = clampWorkspaceLayout(store.settings?.workspace);
   const selected = selectedDevices(allWorkspaceDevices(), store.workspace.selection);
-  const root = el('section', { className: layout.graphCollapsed ? 'workspace-view graph-collapsed' : 'workspace-view', ariaLabel: t('navigation.workspace') }, [
+  const root = el('section', { className: layout.graphCollapsed ? 'workspace-view graph-collapsed' : 'workspace-view', ariaLabel: t('navigation.workspace') });
+  const machinesResizeHandle = panelResizeHandle(root, {
+    setting: 'leftWidth',
+    cssVariable: '--workspace-left',
+    min: 220,
+    max: 380,
+    label: t('workspace.resize.machinesInput'),
+    className: 'machines-input-resize',
+    refresh,
+  });
+  const inputResizeHandle = layout.graphCollapsed ? null : panelResizeHandle(root, {
+    setting: 'centerWidth',
+    cssVariable: '--workspace-center',
+    min: 320,
+    max: 600,
+    label: t('workspace.resize.inputGraph'),
+    className: 'input-graph-resize',
+    refresh,
+  });
+  root.replaceChildren(
     workspaceMobileToolbar(refresh),
-    containersPane(refresh, workspacePaneActive('containers')),
+    containersPane(refresh, workspacePaneActive('containers'), machinesResizeHandle),
     inputPane(selected, refresh, workspacePaneActive('input')),
-    graphPane(refresh, workspacePaneActive('graph')),
-  ]);
+    graphPane(refresh, workspacePaneActive('graph'), inputResizeHandle),
+  );
   if (root.style?.setProperty) {
     root.style.setProperty('--workspace-left', `${layout.leftWidth}px`);
     root.style.setProperty('--workspace-center', `${layout.centerWidth}px`);
@@ -71,7 +90,7 @@ function workspacePaneClass(baseClass, active) {
   return `workspace-pane ${baseClass}${active ? ' active-mobile-pane' : ''}`;
 }
 
-function containersPane(refresh, active = false) {
+function containersPane(refresh, active = false, resizeHandle = null) {
   const devices = visibleWorkspaceDevices();
   const search = el('input', { type: 'search', placeholder: t('workspace.containers.search'), value: store.workspace.search, ariaLabel: t('workspace.containers.search') });
   search.addEventListener('input', () => {
@@ -79,7 +98,7 @@ function containersPane(refresh, active = false) {
     refresh();
   });
   const status = selectionStatus();
-  return el('aside', { className: workspacePaneClass('containers-pane', active), ariaLabel: t('workspace.containers.title') }, [
+  const pane = el('aside', { className: workspacePaneClass('containers-pane', active), ariaLabel: t('workspace.containers.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.containers.title') }),
@@ -130,7 +149,10 @@ function containersPane(refresh, active = false) {
     store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
     activeManagedContainers().length ? managedContainerActions(refresh) : null,
+    resizeHandle,
   ]);
+  pane.setAttribute('data-scroll-key', 'workspace-machines');
+  return pane;
 }
 
 function containerFilterPanel(refresh) {
@@ -711,7 +733,7 @@ function deviceCard(device, devices, index, refresh) {
 }
 
 function inputPane(selected, refresh, active = false) {
-  return el('section', { className: workspacePaneClass('input-pane', active), ariaLabel: t('workspace.input.title') }, [
+  const pane = el('section', { className: workspacePaneClass('input-pane', active), ariaLabel: t('workspace.input.title') }, [
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.input.title') }),
@@ -722,6 +744,8 @@ function inputPane(selected, refresh, active = false) {
     inputModeContent(selected, refresh),
     inputSummary(selected),
   ]);
+  pane.setAttribute('data-scroll-key', 'workspace-input');
+  return pane;
 }
 
 function inputTabs(refresh) {
@@ -1070,7 +1094,7 @@ function workspaceInputStats(selected) {
   return { groups: selected.length ? 1 : 0, targets: selected.length ? 3 : 0, totalValues: values.filter(Boolean).length };
 }
 
-function graphPane(refresh, active = false) {
+function graphPane(refresh, active = false, resizeHandle = null) {
   const layout = clampWorkspaceLayout(store.settings?.workspace);
   const toggle = button(layout.graphCollapsed ? t('workspace.graph.expand') : t('workspace.graph.collapse'), async () => {
     store.settings.workspace = { ...layout, graphCollapsed: !layout.graphCollapsed };
@@ -1079,7 +1103,8 @@ function graphPane(refresh, active = false) {
   }, { className: 'button compact' });
   const nodes = workspaceGraphNodes();
   const canvas = graphCanvas(nodes, refresh);
-  return el('section', { className: workspacePaneClass('graph-pane', active), ariaLabel: t('workspace.graph.title') }, [
+  const pane = el('section', { className: workspacePaneClass('graph-pane', active), ariaLabel: t('workspace.graph.title') }, [
+    resizeHandle,
     el('div', { className: 'pane-header' }, [
       el('div', {}, [
         el('h2', { text: t('workspace.graph.title') }),
@@ -1087,11 +1112,12 @@ function graphPane(refresh, active = false) {
       ]),
       toggle,
     ]),
-    graphResizeHandle(refresh),
     graphGroupToolbar(refresh),
     graphToolbar(canvas, nodes, refresh),
     layout.graphCollapsed ? el('p', { className: 'empty-state', text: t('workspace.graph.title') }) : canvas,
   ]);
+  pane.setAttribute('data-scroll-key', 'workspace-graph');
+  return pane;
 }
 
 function graphGroupToolbar(refresh) {
@@ -1112,27 +1138,104 @@ function graphGroupToolbar(refresh) {
   ]);
 }
 
-function graphResizeHandle(refresh) {
-  const layout = clampWorkspaceLayout(store.settings?.workspace);
+function panelResizeHandle(root, options) {
+  const { setting, cssVariable, min, max, label, className, refresh } = options;
   const handle = el('div', {
-    className: 'resize-handle',
+    className: `resize-handle ${className}`,
     role: 'separator',
-    ariaLabel: t('workspace.graph.title'),
+    ariaLabel: label,
     ariaOrientation: 'vertical',
-    ariaValueMin: 480,
-    ariaValueMax: 1600,
-    ariaValueNow: 900,
+    ariaValueMin: min,
+    ariaValueMax: max,
+    ariaValueNow: clampWorkspaceLayout(store.settings?.workspace)[setting],
     tabIndex: 0,
   });
+
+  const applyWidth = (value) => {
+    root.style?.setProperty?.(cssVariable, `${value}px`);
+    handle.setAttribute('aria-valuenow', String(value));
+  };
+  const persistWidth = async (value) => {
+    const currentLayout = clampWorkspaceLayout(store.settings?.workspace);
+    if (currentLayout[setting] === value) return;
+    store.settings.workspace = { ...currentLayout, [setting]: value };
+    await window.warController.settings.update({ workspace: store.settings.workspace });
+    refresh();
+  };
+
   handle.addEventListener('keydown', async (event) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const delta = event.key === 'ArrowLeft' ? -20 : 20;
-    store.settings.workspace = { ...layout, centerWidth: Math.max(320, Math.min(600, layout.centerWidth - delta)) };
-    await window.warController.settings.update({ workspace: store.settings.workspace });
-    refresh();
+    const layout = clampWorkspaceLayout(store.settings?.workspace);
+    const nextValue = clampWorkspaceLayout({ ...layout, [setting]: layout[setting] + delta })[setting];
+    applyWidth(nextValue);
+    await persistWidth(nextValue);
+  });
+
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault?.();
+    const pointerId = event.pointerId;
+    const layout = clampWorkspaceLayout(store.settings?.workspace);
+    const initialValue = layout[setting];
+    const initialX = Number(event.clientX) || 0;
+    let nextValue = initialValue;
+    let finished = false;
+
+    try {
+      if (pointerId !== undefined) handle.setPointerCapture?.(pointerId);
+    } catch {
+      // Global listeners still keep the drag bounded when pointer capture is unavailable.
+    }
+    setClassToken(handle, 'is-resizing', true);
+    setClassToken(root, 'is-panel-resizing', true);
+
+    const cleanup = () => {
+      globalThis.removeEventListener?.('pointermove', move);
+      globalThis.removeEventListener?.('pointerup', finish);
+      globalThis.removeEventListener?.('pointercancel', cancel);
+      setClassToken(handle, 'is-resizing', false);
+      setClassToken(root, 'is-panel-resizing', false);
+      try {
+        if (pointerId !== undefined && (!handle.hasPointerCapture || handle.hasPointerCapture(pointerId))) {
+          handle.releasePointerCapture?.(pointerId);
+        }
+      } catch {
+        // Capture may already be released by the platform on cancellation.
+      }
+    };
+    const move = (moveEvent) => {
+      if (pointerId !== undefined && moveEvent.pointerId !== undefined && moveEvent.pointerId !== pointerId) return;
+      const candidate = initialValue + ((Number(moveEvent.clientX) || 0) - initialX);
+      nextValue = clampWorkspaceLayout({ ...layout, [setting]: Math.round(candidate) })[setting];
+      applyWidth(nextValue);
+    };
+    const finish = async (upEvent) => {
+      if (finished || (pointerId !== undefined && upEvent.pointerId !== undefined && upEvent.pointerId !== pointerId)) return;
+      finished = true;
+      cleanup();
+      await persistWidth(nextValue);
+    };
+    const cancel = (cancelEvent) => {
+      if (finished || (pointerId !== undefined && cancelEvent.pointerId !== undefined && cancelEvent.pointerId !== pointerId)) return;
+      finished = true;
+      cleanup();
+      applyWidth(initialValue);
+    };
+
+    globalThis.addEventListener?.('pointermove', move);
+    globalThis.addEventListener?.('pointerup', finish);
+    globalThis.addEventListener?.('pointercancel', cancel);
   });
   return handle;
+}
+
+function setClassToken(node, token, enabled) {
+  const tokens = new Set(String(node.className || '').split(/\s+/).filter(Boolean));
+  if (enabled) tokens.add(token);
+  else tokens.delete(token);
+  node.className = [...tokens].join(' ');
 }
 
 function graphToolbar(canvas, nodes, refresh) {

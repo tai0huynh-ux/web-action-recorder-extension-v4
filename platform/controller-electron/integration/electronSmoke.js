@@ -228,6 +228,11 @@ try {
     await switchLocale('en');
     assert(await bodyIncludes('Machines and containers'), 'English workspace labels missing');
     await screenshot('workspace-en.png');
+    const interactions = await verifyWorkspacePanelInteractions();
+    assert(interactions.left.after === interactions.left.expected, 'Machines divider did not persist its dragged width');
+    assert(interactions.center.after === interactions.center.expected, 'Input divider did not persist its dragged width');
+    assert(interactions.scroll.before > 0, 'Machines pane could not be scrolled for retention check');
+    assert(Math.abs(interactions.scroll.after - interactions.scroll.before) <= 1, 'Machines pane jumped after renderer refresh');
     await clickText('Collapse action graph');
     await screenshot('workspace-collapsed.png');
     await win.setSize?.(1024, 700);
@@ -239,11 +244,11 @@ try {
     await switchLocale('vi');
     const summary = {
       result: 'PASS',
-      checks: ['workspace opens', 'Vietnamese labels visible', 'English labels visible', 'language switch works', 'collapse works', '1024x700 captured', '1920x1080 at 125 percent captured'],
+      checks: ['workspace opens', 'Vietnamese labels visible', 'English labels visible', 'language switch works', 'both panel dividers drag and persist', 'panel scroll survives refresh', 'collapse works', '1024x700 captured', '1920x1080 at 125 percent captured'],
       screenshots: ['workspace-vi.png', 'workspace-en.png', 'workspace-collapsed.png', 'workspace-small-window.png', 'workspace-large-window.png'],
     };
     fs.writeFileSync(path.join(uiPhaseArtifactDir, 'ui-phase-1-results.json'), JSON.stringify(summary, null, 2));
-    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'UI_PHASE_1_REPORT.md'), `# UI Phase 1 Report\n\nResult: PASS\n\n- Workspace opens: PASS\n- Vietnamese labels visible: PASS\n- English labels visible: PASS\n- Language switch without restart: PASS\n- Panel collapse: PASS\n- 1024x700 screenshot: PASS\n- 1920x1080 at 125% screenshot: PASS\n`);
+    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'UI_PHASE_1_REPORT.md'), `# UI Phase 1 Report\n\nResult: PASS\n\n- Workspace opens: PASS\n- Vietnamese labels visible: PASS\n- English labels visible: PASS\n- Language switch without restart: PASS\n- Both panel dividers drag and persist: PASS\n- Panel scroll survives refresh: PASS\n- Panel collapse: PASS\n- 1024x700 screenshot: PASS\n- 1920x1080 at 125% screenshot: PASS\n`);
     return summary;
   });
 
@@ -316,6 +321,42 @@ async function clickText(label) {
 
 async function bodyIncludes(text) {
   return js(`document.body.innerText.includes(${JSON.stringify(text)})`);
+}
+
+async function verifyWorkspacePanelInteractions() {
+  return js(`(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const drag = async (label, delta, setting, min, max, pointerId) => {
+      const handle = [...document.querySelectorAll('[role="separator"]')]
+        .find((item) => item.getAttribute('aria-label') === label);
+      if (!handle) throw new Error('Missing separator: ' + label);
+      const before = Number(handle.getAttribute('aria-valuenow'));
+      const expected = Math.max(min, Math.min(max, before + delta));
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 400, pointerId }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 400 + delta, pointerId }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: 400 + delta, pointerId }));
+      await wait(220);
+      const settingsResult = await window.warController.settings.get();
+      return { before, expected, after: settingsResult.data.data.workspace[setting] };
+    };
+
+    const left = await drag('Resize Machines and Input configuration panels', 40, 'leftWidth', 220, 380, 41);
+    const center = await drag('Resize Input configuration and Action graph panels', 50, 'centerWidth', 320, 600, 42);
+    const addHost = [...document.querySelectorAll('button')].find((item) => item.textContent.trim().endsWith('Add Linux machine'));
+    if (!addHost) throw new Error('Missing Add Linux machine button');
+    addHost.click();
+    await wait(180);
+    const machines = document.querySelector('[data-scroll-key="workspace-machines"]');
+    const maximum = Math.max(0, machines.scrollHeight - machines.clientHeight);
+    machines.scrollTop = Math.min(180, maximum);
+    const before = machines.scrollTop;
+    const search = machines.querySelector('input[type="search"]');
+    search.value = 'scroll-retention-smoke';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(260);
+    const after = document.querySelector('[data-scroll-key="workspace-machines"]').scrollTop;
+    return { left, center, scroll: { before, after, maximum } };
+  })()`);
 }
 
 async function screenshot(name) {

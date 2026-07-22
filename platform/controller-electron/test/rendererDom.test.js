@@ -37,7 +37,11 @@ class FakeElement extends FakeNode {
     this.rows = 0;
     this.placeholder = '';
     this._text = '';
-    this.style = { setProperty() {} };
+    const styleProperties = new Map();
+    this.style = {
+      setProperty(name, value) { styleProperties.set(name, String(value)); },
+      getPropertyValue(name) { return styleProperties.get(name) || ''; },
+    };
   }
 
   get options() {
@@ -175,6 +179,68 @@ test('workspace renders three panels and accessible prototype controls', () => {
   assert.ok(rendered.textContent.includes('Cấu hình nhập liệu'));
   assert.ok(rendered.textContent.includes('Luồng hành động'));
   assert.ok(accessibleName(all(rendered, (node) => node.localName === 'button' && node.textContent.includes('Thêm container'))[0]).includes('Thêm container'));
+});
+
+test('workspace exposes two accessible draggable panel separators and stable scroll keys', () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const rendered = views.renderView(() => {});
+  const separators = all(rendered, (node) => node.getAttribute('role') === 'separator');
+  assert.deepEqual(separators.map(accessibleName), [
+    i18n.t('workspace.resize.machinesInput'),
+    i18n.t('workspace.resize.inputGraph'),
+  ]);
+  assert.deepEqual(all(rendered, (node) => node.getAttribute('data-scroll-key')).map((node) => node.getAttribute('data-scroll-key')), [
+    'workspace-machines',
+    'workspace-input',
+    'workspace-graph',
+  ]);
+});
+
+test('workspace panel separators drag, clamp, and persist exactly once on release', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const rendered = views.renderView(() => {});
+  const machinesHandle = all(rendered, (node) => node.className.includes('machines-input-resize'))[0];
+  await fireWithEvent(machinesHandle, 'pointerdown', { button: 0, pointerId: 7, clientX: 100, preventDefault() {} });
+  await dispatchGlobal('pointermove', { pointerId: 7, clientX: 350 });
+  assert.equal(rendered.style.getPropertyValue('--workspace-left'), '380px');
+  assert.equal(apiState.settingsUpdates.length, 0);
+  await dispatchGlobal('pointerup', { pointerId: 7 });
+  assert.deepEqual(apiState.settingsUpdates, [{ workspace: { leftWidth: 380, centerWidth: 420, graphCollapsed: false } }]);
+
+  apiState.settingsUpdates = [];
+  const rerendered = views.renderView(() => {});
+  const inputHandle = all(rerendered, (node) => node.className.includes('input-graph-resize'))[0];
+  await fireWithEvent(inputHandle, 'pointerdown', { button: 0, pointerId: 8, clientX: 500, preventDefault() {} });
+  await dispatchGlobal('pointermove', { pointerId: 8, clientX: 200 });
+  assert.equal(rerendered.style.getPropertyValue('--workspace-center'), '320px');
+  await dispatchGlobal('pointerup', { pointerId: 8 });
+  assert.deepEqual(apiState.settingsUpdates, [{ workspace: { leftWidth: 380, centerWidth: 320, graphCollapsed: false } }]);
+});
+
+test('workspace panel separator keyboard control persists and canceled drag cleans up', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const rendered = views.renderView(() => {});
+  const machinesHandle = all(rendered, (node) => node.className.includes('machines-input-resize'))[0];
+  await fireWithEvent(machinesHandle, 'keydown', { key: 'ArrowRight', preventDefault() {} });
+  assert.equal(machinesHandle.getAttribute('aria-valuenow'), '300');
+  assert.deepEqual(apiState.settingsUpdates.at(-1), { workspace: { leftWidth: 300, centerWidth: 420, graphCollapsed: false } });
+
+  apiState.settingsUpdates = [];
+  const rerendered = views.renderView(() => {});
+  const inputHandle = all(rerendered, (node) => node.className.includes('input-graph-resize'))[0];
+  await fireWithEvent(inputHandle, 'pointerdown', { button: 0, pointerId: 9, clientX: 400, preventDefault() {} });
+  await dispatchGlobal('pointermove', { pointerId: 9, clientX: 500 });
+  assert.equal(rerendered.style.getPropertyValue('--workspace-center'), '520px');
+  await dispatchGlobal('pointercancel', { pointerId: 9 });
+  assert.equal(rerendered.style.getPropertyValue('--workspace-center'), '420px');
+  assert.equal(apiState.settingsUpdates.length, 0);
+  assert.equal(inputHandle.className.includes('is-resizing'), false);
+  assert.equal(globalThis.__fakeGlobalListeners.get('pointermove')?.length || 0, 0);
+  assert.equal(globalThis.__fakeGlobalListeners.get('pointerup')?.length || 0, 0);
+  assert.equal(globalThis.__fakeGlobalListeners.get('pointercancel')?.length || 0, 0);
 });
 
 test('workspace selected machine count updates', async () => {

@@ -160,6 +160,10 @@ export default {
       input: 'Nhập liệu',
       graph: 'Luồng hành động',
     },
+    resize: {
+      machinesInput: 'Điều chỉnh kích thước phần Máy và Cấu hình nhập liệu',
+      inputGraph: 'Điều chỉnh kích thước phần Cấu hình nhập liệu và Luồng hành động',
+    },
     containers: {
       title: 'Máy và container',
       add: 'Thêm container',

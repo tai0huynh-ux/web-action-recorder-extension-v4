@@ -1,6 +1,7 @@
 import { button, el } from './dom.js';
 import { getLocale, initLocale, setLocale, t } from './i18n.js';
 import { navLabel, refreshAll, store, views } from './state.js';
+import { captureScrollState, restoreScrollState } from './scrollState.js';
 import { clearPairingSecret, renderView } from './views.js';
 
 const nav = document.querySelector('[data-nav]');
@@ -31,15 +32,11 @@ function render() {
     if (active) item.setAttribute('aria-current', 'page');
     return item;
   }));
-  const scrollRoot = document.scrollingElement || document.documentElement || document.body;
-  const scrollTop = Number(scrollRoot?.scrollTop) || 0;
-  const scrollLeft = Number(scrollRoot?.scrollLeft) || 0;
+  const scrollSnapshot = captureScrollState(document, main);
   main.replaceChildren(renderView(refresh));
-  if (scrollRoot && (scrollTop || scrollLeft)) {
-    const restoreScroll = () => scrollRoot.scrollTo?.({ top: scrollTop, left: scrollLeft, behavior: 'auto' });
-    if (typeof globalThis.requestAnimationFrame === 'function') globalThis.requestAnimationFrame(restoreScroll);
-    else globalThis.queueMicrotask?.(restoreScroll);
-  }
+  const restoreScroll = () => restoreScrollState(scrollSnapshot, document, main);
+  if (typeof globalThis.requestAnimationFrame === 'function') globalThis.requestAnimationFrame(restoreScroll);
+  else globalThis.queueMicrotask?.(restoreScroll);
   title.textContent = t('app.title');
   banner.textContent = `${t('app.banner')} - ${store.runtime?.status || 'loading'}`;
 }

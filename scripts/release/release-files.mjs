@@ -26,6 +26,7 @@ export const controllerFiles = [
   'platform/controller-electron/renderer/index.html',
   'platform/controller-electron/renderer/locales/en.js',
   'platform/controller-electron/renderer/locales/vi.js',
+  'platform/controller-electron/renderer/scrollState.js',
   'platform/controller-electron/renderer/state.js',
   'platform/controller-electron/renderer/styles.css',
   'platform/controller-electron/renderer/views.js',

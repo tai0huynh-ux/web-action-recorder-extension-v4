@@ -160,6 +160,10 @@ export default {
       input: 'Input',
       graph: 'Action graph',
     },
+    resize: {
+      machinesInput: 'Resize Machines and Input configuration panels',
+      inputGraph: 'Resize Input configuration and Action graph panels',
+    },
     containers: {
       title: 'Machines and containers',
       add: 'Add container',
