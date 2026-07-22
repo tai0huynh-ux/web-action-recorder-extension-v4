@@ -18,6 +18,74 @@ const CHROMIUM_PROFILE_LOCK_NAMES = Object.freeze([
   'SingletonSocket',
 ]);
 
+const BLANK_PAGE_LANDING_HTML = `<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WAR Chromium</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      color: #123047;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(41, 171, 135, .18), transparent 34%),
+        radial-gradient(circle at 82% 80%, rgba(22, 111, 148, .16), transparent 38%),
+        linear-gradient(145deg, #f7fbf7 0%, #e8f3f4 100%);
+    }
+    main {
+      width: min(620px, calc(100vw - 48px));
+      padding: 48px;
+      border: 1px solid rgba(18, 48, 71, .14);
+      border-radius: 28px;
+      background: rgba(255, 255, 255, .86);
+      box-shadow: 0 28px 80px rgba(18, 48, 71, .14);
+      text-align: center;
+    }
+    .mark {
+      width: 76px;
+      height: 76px;
+      margin: 0 auto 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 24px;
+      color: #fff;
+      background: linear-gradient(145deg, #15936f, #146789);
+      box-shadow: 0 14px 34px rgba(20, 103, 137, .28);
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -.08em;
+    }
+    h1 { margin: 0; font-size: clamp(30px, 5vw, 46px); letter-spacing: -.04em; }
+    p { margin: 16px 0 0; color: #496577; font-size: 20px; line-height: 1.55; }
+    kbd {
+      display: inline-block;
+      padding: 3px 9px;
+      border: 1px solid #b6c9d2;
+      border-bottom-width: 3px;
+      border-radius: 8px;
+      color: #123047;
+      background: #fff;
+      font: 700 16px/1.4 "Segoe UI", sans-serif;
+    }
+    .status { margin-top: 28px; color: #16805f; font-size: 14px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <main data-war-ready-page="true">
+    <div class="mark" aria-hidden="true">W</div>
+    <h1>Chromium &#273;&#227; s&#7861;n s&#224;ng</h1>
+    <p>Nh&#7845;n <kbd>Ctrl</kbd> + <kbd>L</kbd> &#273;&#7875; nh&#7853;p &#273;&#7883;a ch&#7881; v&#224; b&#7855;t &#273;&#7847;u &#273;i&#7873;u khi&#7875;n.</p>
+    <div class="status">WAR Browser Agent connected</div>
+  </main>
+</body>
+</html>`;
+
 export function parseSandboxStatusSnapshot(snapshot) {
   const rows = new Map((snapshot?.rows || []).filter((row) => Array.isArray(row) && row.length === 2));
   const layerOne = rows.get('Layer 1 Sandbox');
@@ -51,6 +119,7 @@ export class BrowserController {
     this.createdAtByPage = new WeakMap();
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId = new Map();
+    this.blankLandingPages = new WeakSet();
     this.activeTargetId = undefined;
     this.nativeBridgePollTriggeredFor = new Set();
     this.nativeBridgeRestartedFor = new Set();
@@ -104,6 +173,7 @@ export class BrowserController {
       return this.start();
     }
     if (!this.context.pages().length) this.registerPage(await this.context.newPage());
+    await Promise.all(this.context.pages().map((page) => this.ensureBlankPageLanding(page)));
     if (!this.activeTargetId) this.activeTargetId = this.firstOpenTargetId();
     return this.getState();
   }
@@ -114,6 +184,7 @@ export class BrowserController {
     this.context = null;
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId.clear();
+    this.blankLandingPages = new WeakSet();
     this.activeTargetId = undefined;
     await Promise.race([
       context.close(),
@@ -192,6 +263,7 @@ export class BrowserController {
   async captureRemoteFrame({ quality = 45, maxBytes = 500000 } = {}) {
     this.assertRunning();
     const page = await this.findPage(this.activeTargetId || this.firstOpenTargetId());
+    await this.ensureBlankPageLanding(page);
     const viewport = page.viewportSize?.() || { width: this.config.width, height: this.config.height };
     maxBytes = Number.isInteger(maxBytes) ? Math.min(500000, Math.max(16384, maxBytes)) : 500000;
     let currentQuality = Number.isInteger(quality) ? Math.min(70, Math.max(20, quality)) : 45;
@@ -261,6 +333,8 @@ export class BrowserController {
     const openPages = this.context.pages().filter((candidate) => !candidate.isClosed());
     if (openPages.length <= 1) {
       await page.goto('about:blank');
+      this.blankLandingPages.delete(page);
+      await this.ensureBlankPageLanding(page);
       this.activeTargetId = this.getTargetId(page);
       return { closed: false, reason: 'last_tab_kept_blank' };
     }
@@ -411,6 +485,14 @@ export class BrowserController {
     if (!this.context) throw new AgentError('browser_not_running', 'Browser is not running', 409);
   }
 
+  async ensureBlankPageLanding(page) {
+    if (!page || page.isClosed() || page.url() !== 'about:blank' || this.blankLandingPages.has(page)) return false;
+    await page.setContent(BLANK_PAGE_LANDING_HTML, { waitUntil: 'domcontentloaded' });
+    if (page.url() !== 'about:blank') return false;
+    this.blankLandingPages.add(page);
+    return true;
+  }
+
   registerPage(page) {
     if (this.targetIdByPage.has(page)) return this.targetIdByPage.get(page);
     const targetId = `tab-${crypto.randomUUID()}`;
@@ -419,7 +501,11 @@ export class BrowserController {
     this.createdAtByPage.set(page, new Date().toISOString());
     page.once?.('close', () => {
       this.pageByTargetId.delete(targetId);
+      this.blankLandingPages.delete(page);
       if (this.activeTargetId === targetId) this.activeTargetId = this.firstOpenTargetId();
+    });
+    page.on?.('framenavigated', (frame) => {
+      if (!page.mainFrame || frame === page.mainFrame()) this.blankLandingPages.delete(page);
     });
     return targetId;
   }

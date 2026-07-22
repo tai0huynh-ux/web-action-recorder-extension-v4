@@ -116,6 +116,45 @@ test('closing last tab keeps controlled blank page', async () => {
   assert.equal(result.closed, false);
   assert.equal(result.reason, 'last_tab_kept_blank');
   assert.equal(page.url(), 'about:blank');
+  assert.match(page._content, /data-war-ready-page="true"/);
+  assert.match(page._content, /Chromium &#273;&#227; s&#7861;n s&#224;ng/);
+});
+
+test('blank Chromium page gets a visible local landing page', async () => {
+  const controller = fakeController();
+  const page = fakePage('about:blank');
+
+  const applied = await controller.ensureBlankPageLanding(page);
+
+  assert.equal(applied, true);
+  assert.equal(page.url(), 'about:blank');
+  assert.match(page._content, /data-war-ready-page="true"/);
+  assert.match(page._content, /Ctrl<\/kbd> \+ <kbd>L/);
+});
+
+test('existing website is never replaced by the blank-page landing content', async () => {
+  const controller = fakeController();
+  const page = fakePage('https://fixture.local/restored');
+
+  const applied = await controller.ensureBlankPageLanding(page);
+
+  assert.equal(applied, false);
+  assert.equal(page._setContentCalls, 0);
+  assert.equal(page.url(), 'https://fixture.local/restored');
+});
+
+test('normal navigation still works after the blank-page landing content', async () => {
+  const controller = fakeController();
+  const page = fakePage('about:blank');
+  controller.context._pages.push(page);
+  const targetId = controller.registerPage(page);
+  await controller.ensureBlankPageLanding(page);
+
+  const result = await controller.navigateTab(targetId, 'https://fixture.local/next');
+
+  assert.equal(result.url, 'https://fixture.local/next');
+  assert.equal(page.url(), 'https://fixture.local/next');
+  assert.equal(page._setContentCalls, 1);
 });
 
 test('extension detection works when service worker is asleep but extension page loads', async () => {
@@ -229,12 +268,18 @@ function fakePage(url, methods = {}) {
   const page = new EventEmitter();
   page._url = url;
   page._closed = false;
+  page._content = '';
+  page._setContentCalls = 0;
   page.url = () => page._url;
   page.title = async () => 'Fixture';
   page.isClosed = () => page._closed;
   page.bringToFront = async () => {};
   page.goto = methods.goto || (async (nextUrl) => {
     page._url = nextUrl;
+  });
+  page.setContent = methods.setContent || (async (content) => {
+    page._content = content;
+    page._setContentCalls += 1;
   });
   page.evaluate = methods.evaluate || (async () => {});
   page.screenshot = methods.screenshot || (async () => Buffer.from('jpeg'));
