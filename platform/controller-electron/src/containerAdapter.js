@@ -341,17 +341,20 @@ export class DockerContainerAdapter {
   async reconcileNetworks(container) {
     const name = dockerName(container);
     const desired = await this.resolveDesiredNetwork(name, container.runtime);
+    const approvedImage = this.approvedImage(container);
+    const approvedImageId = await this.imageId(approvedImage);
     const inspection = await this.inspectContainer(name);
     const actual = inspection.NetworkSettings?.Networks || {};
-    if (networkMatches(actual, desired)) return desired;
+    const imageMatches = inspection.Config?.Image === approvedImage && inspection.Image === approvedImageId;
+    if (networkMatches(actual, desired) && imageMatches) return desired;
     const wasRunning = (await this.docker(['inspect', '-f', '{{.State.Running}}', name])).stdout.trim() === 'true';
     const backupName = networkBackupName(name);
     if (wasRunning) await this.docker(['stop', '--time', '10', name]);
     await this.docker(['rename', name, backupName]);
     try {
-      await this.launchContainer(container, desired, { mode: wasRunning ? 'run' : 'create' });
+      await this.launchContainer(container, desired, { approvedImage, mode: wasRunning ? 'run' : 'create' });
       await this.waitForIpv6Endpoint(name, desired);
-      await this.inspectRuntime(name, dataVolume(name), { approvedImage: this.approvedImage(container), network: desired });
+      await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network: desired });
       await this.docker(['rm', '-f', backupName]);
     } catch (error) {
       await this.docker(['rm', '-f', name]).catch(() => {});

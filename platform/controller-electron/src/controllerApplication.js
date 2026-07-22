@@ -39,9 +39,11 @@ const REMOTE_CONTROL_COMMANDS = new Set([
 ]);
 const MAX_REMOTE_TARGETS = 8;
 const MAX_REMOTE_PAYLOAD_BYTES = 32768;
+const REMOTE_AGENT_READY_TIMEOUT_MS = 60000;
+const REMOTE_AGENT_READY_POLL_MS = 250;
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -94,6 +96,14 @@ export class ControllerApplicationService extends EventEmitter {
     const containers = this.core.containers.listContainers().containers || [];
     for (const container of containers.filter((item) => item.status !== 'deleted')) {
       if (container.status === 'failed' || container.status === 'unavailable') addCheck({ id: `container:${container.id}`, area: 'container', severity: 'error', code: 'CONTAINER_FAILED', message: container.lastError || `${container.name || container.id} is not running`, targetId: `container:${container.id}`, fixable: true, action: 'reconnect-container' });
+      if (container.deviceId) {
+        try {
+          const device = this.core.devices.getDevice(container.deviceId);
+          if (device.capabilities?.remoteVideo !== true) addCheck({ id: `remote-agent:${container.id}`, area: 'agent', severity: 'warning', code: 'REMOTE_AGENT_UPDATE_REQUIRED', message: `${container.name || container.id} is using an Agent without remote video support`, targetId: `container:${container.id}`, fixable: true, action: 'reconnect-container' });
+        } catch (error) {
+          if (error?.code !== 'DEVICE_NOT_FOUND') throw error;
+        }
+      }
     }
     const summary = {
       total: checks.length,
@@ -173,9 +183,11 @@ export class ControllerApplicationService extends EventEmitter {
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   async remoteCapture({ deviceId, quality = 45 } = {}) {
-    const session = this.requireRemoteSession(deviceId);
     if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
     if (!Number.isInteger(quality) || quality < 20 || quality > 70) throw codedError('REMOTE_INVALID_QUALITY', 'Remote frame quality must be between 20 and 70');
+    const readiness = await this.prepareRemoteTarget(deviceId);
+    if (readiness.status === 'updating') return this.result({ deviceId, status: 'updating', code: 'REMOTE_AGENT_UPDATING', frame: null });
+    const session = readiness.session;
     const response = await this.wssTransport.requestRemoteControl(deviceId, session.generation, {
       command: 'remote.capture',
       payload: { quality },
@@ -197,7 +209,9 @@ export class ControllerApplicationService extends EventEmitter {
     const syncAt = synchronized && ids.length > 1 ? new Date(Date.parse(this.now()) + 80).toISOString() : undefined;
     const results = await Promise.all(ids.map(async (deviceId) => {
       try {
-        const session = this.requireRemoteSession(deviceId);
+        const readiness = await this.prepareRemoteTarget(deviceId);
+        if (readiness.status === 'updating') return { deviceId, ok: false, error: { code: 'REMOTE_AGENT_UPDATING', message: 'Browser Agent is updating for remote control' } };
+        const session = readiness.session;
         const response = await this.wssTransport.requestRemoteControl(deviceId, session.generation, {
           command,
           payload: structuredClone(payload),
@@ -292,6 +306,7 @@ export class ControllerApplicationService extends EventEmitter {
     const host = resolveManagedContainerHost(payload.host, this.config?.containers, this.containerHostManager);
     const hostAdapter = this.containerAdapterForHost(host);
     if (hostAdapter && (this.containerHostManager || this.config?.containers?.enabled)) {
+      await this.ensureManagedHostReady(host);
       const probe = await this.safeContainerOperation('probe', {}, host);
       if (!probe.ok || probe.connected !== true) {
         throw codedError('CONTAINER_HOST_UNAVAILABLE', 'Selected managed Docker host is unavailable');
@@ -355,6 +370,7 @@ export class ControllerApplicationService extends EventEmitter {
   }
   async duplicateContainer({ containerId, name }) {
     const source = this.core.containers.getContainer(containerId);
+    await this.ensureManagedHostReady(source.host);
     const deviceId = `managed-${crypto.randomUUID()}`;
     const provisioning = await this.core.pairing.provisionManagedAgent({
       device: managedDeviceDescriptor({ deviceId, displayName: name || `${source.name} copy` }),
@@ -663,6 +679,9 @@ export class ControllerApplicationService extends EventEmitter {
   }
 
   async containerLifecycle(containerId, action, status, desiredState) {
+    const current = this.core.containers.getContainer(containerId);
+    if (['start', 'restart'].includes(action)) await this.ensureManagedHostReady(current.host);
+    if (current.deviceId) this.remoteReadiness.delete(current.deviceId);
     const progressStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
     const container = await this.core.containers.updateStatus(containerId, progressStatus, { desiredState });
     const operation = await this.safeContainerOperation(action, container);
@@ -673,6 +692,60 @@ export class ControllerApplicationService extends EventEmitter {
 
   containerAdapterForHost(hostId) {
     return this.containerHostManager?.getAdapter(hostId) || this.containerAdapter;
+  }
+
+  async ensureManagedHostReady(hostId) {
+    if (!this.containerHostManager || !hostId || typeof this.containerHostManager.ensureReady !== 'function') return null;
+    const checked = await this.containerHostManager.ensureReady(hostId);
+    if (checked?.connected !== true) throw codedError('CONTAINER_HOST_UNAVAILABLE', checked?.diagnostics?.error || 'Selected managed Docker host is unavailable');
+    return checked;
+  }
+
+  async prepareRemoteTarget(deviceId) {
+    const session = this.requireRemoteSession(deviceId);
+    const device = this.core.devices.getDevice(deviceId);
+    if (device.capabilities?.remoteVideo === true) return { status: 'ready', session };
+
+    const container = this.core.containers.listContainers().containers.find((item) => item.deviceId === deviceId && !['deleted', 'deleting'].includes(item.status));
+    if (!container || !container.host || !this.containerHostManager) throw codedError('REMOTE_AGENT_UPDATE_REQUIRED', 'This Agent does not support remote video; reconnect it from a managed container host');
+
+    const existing = this.remoteReadiness.get(deviceId);
+    if (existing?.state === 'updating') return { status: 'updating' };
+    if (existing?.state === 'failed') throw existing.error;
+
+    const job = { state: 'updating', error: null, promise: null };
+    this.remoteReadiness.set(deviceId, job);
+    job.promise = this.upgradeManagedRemoteAgent(container, session.generation)
+      .then(() => { this.remoteReadiness.delete(deviceId); })
+      .catch((error) => {
+        const failure = error?.code ? error : codedError('REMOTE_AGENT_UPDATE_FAILED', sanitizeContainerError(error));
+        job.state = 'failed';
+        job.error = failure;
+        throw failure;
+      });
+    job.promise.catch(() => {});
+    return { status: 'updating' };
+  }
+
+  async upgradeManagedRemoteAgent(container, previousGeneration) {
+    await this.ensureManagedHostReady(container.host);
+    const operation = await this.safeContainerOperation('restart', container, container.host);
+    if (!operation.ok) throw codedError('REMOTE_AGENT_UPDATE_FAILED', operation.error || 'Managed Browser Agent restart failed');
+    await this.core.containers.updateStatus(container.id, 'running', { desiredState: 'running', runtime: operation.runtime, lastError: null });
+    this.invalidate('containers', { containerId: container.id });
+    await this.waitForRemoteVideo(container.deviceId, previousGeneration);
+  }
+
+  async waitForRemoteVideo(deviceId, previousGeneration) {
+    const deadline = Date.now() + REMOTE_AGENT_READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const session = this.core.sessions.getPublicSession(deviceId);
+      let device;
+      try { device = this.core.devices.getDevice(deviceId); } catch { device = null; }
+      if (session?.status === 'online' && session.generation > previousGeneration && device?.capabilities?.remoteVideo === true) return session;
+      await new Promise((resolve) => setTimeout(resolve, REMOTE_AGENT_READY_POLL_MS));
+    }
+    throw codedError('REMOTE_AGENT_UPDATE_TIMEOUT', 'Browser Agent restarted but did not report remote video capability in time');
   }
 
   async safeContainerOperation(action, container, hostId = container?.host) {

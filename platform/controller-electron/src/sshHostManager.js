@@ -12,6 +12,7 @@ const DEFAULT_SOURCE_ROOT = '/opt/war/web-action-recorder-extension-v4';
 const SOURCE_REPOSITORY = 'https://github.com/tai0huynh-ux/web-action-recorder-extension-v4.git';
 const APPROVED_APPARMOR_SHA256 = '0d28cf5e412992d3cb1bc8759bb6cf9cf1602e9aee54ebef52046f3f9b9b710d';
 const APPROVED_SECCOMP_SHA256 = 'e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d';
+const REMOTE_CONTROL_IMAGE_LABEL = 'v1';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const PROBE_SCRIPT = [
   'set +e',
@@ -19,6 +20,10 @@ const PROBE_SCRIPT = [
   'if command -v docker >/dev/null 2>&1 && docker version --format "{{.Server.Version}}" >/dev/null 2>&1; then printf "docker=1\\n"; else printf "docker=0\\n"; fi',
   'if docker image inspect "$WAR_IMAGE" >/dev/null 2>&1; then printf "image=1\\n"; else printf "image=0\\n"; fi',
   'if test -f "$WAR_SOURCE/platform/browser-agent/Dockerfile"; then printf "source=1\\n"; else printf "source=0\\n"; fi',
+  'SOURCE_REVISION=$(git -C "$WAR_SOURCE" rev-parse --verify HEAD 2>/dev/null || true)',
+  'IMAGE_REVISION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}" 2>/dev/null || true)',
+  'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
+  `if test -n "$SOURCE_REVISION" && test "$IMAGE_REVISION" = "$SOURCE_REVISION" && test "$IMAGE_REMOTE_CONTROL" = "${REMOTE_CONTROL_IMAGE_LABEL}"; then printf "imageCurrent=1\\n"; else printf "imageCurrent=0\\n"; fi`,
   `if test -f ${DEFAULT_SECCOMP_PATH} && test ! -L ${DEFAULT_SECCOMP_PATH} && test "$(stat -c %U:%G ${DEFAULT_SECCOMP_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_SECCOMP_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_SECCOMP_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_SECCOMP_SHA256} && python3 -m json.tool ${DEFAULT_SECCOMP_PATH} >/dev/null 2>&1; then printf "seccomp=1\\n"; else printf "seccomp=0\\n"; fi`,
   `if aa-enabled >/dev/null 2>&1 && test -f /etc/apparmor.d/containers/war-browser-agent && test ! -L /etc/apparmor.d/containers/war-browser-agent && test "$(stat -c %U:%G /etc/apparmor.d/containers/war-browser-agent 2>/dev/null)" = root:root && test -z "$(find /etc/apparmor.d/containers/war-browser-agent -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum /etc/apparmor.d/containers/war-browser-agent 2>/dev/null | awk '{print $1}')" = ${APPROVED_APPARMOR_SHA256} && grep -Fxq "war-browser-agent (enforce)" /sys/kernel/security/apparmor/profiles 2>/dev/null; then printf "apparmor=1\\n"; else printf "apparmor=0\\n"; fi`,
   'if test -f "$WAR_CA_PATH" && test ! -L "$WAR_CA_PATH" && test "$(stat -c %U:%G "$WAR_CA_PATH" 2>/dev/null)" = root:root && test -z "$(find "$WAR_CA_PATH" -perm /022 -print -quit 2>/dev/null)"; then printf "ca=1\\n"; else printf "ca=0\\n"; fi',
@@ -31,12 +36,15 @@ const REPAIR_SCRIPT = [
   'if ! command -v git >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1 || ! command -v apparmor_parser >/dev/null 2>&1 || ! command -v aa-status >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then $SUDO apt-get update; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends git docker.io apparmor apparmor-utils python3; fi',
   '$SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true',
   '$SUDO mkdir -p /opt/war',
-  `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then if git -C ${DEFAULT_SOURCE_ROOT} fetch --depth 1 origin main >/dev/null 2>&1; then git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD >/dev/null 2>&1 || true; else printf "source_update=skipped\\n"; fi; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
+  `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then if test "$(git -C ${DEFAULT_SOURCE_ROOT} rev-parse --is-shallow-repository 2>/dev/null || true)" = true; then git -C ${DEFAULT_SOURCE_ROOT} fetch --unshallow origin main >/dev/null 2>&1; else git -C ${DEFAULT_SOURCE_ROOT} fetch origin main >/dev/null 2>&1; fi; git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD >/dev/null 2>&1; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
   `$SUDO mkdir -p /etc/apparmor.d/containers ${DEFAULT_SECCOMP_PATH.substring(0, DEFAULT_SECCOMP_PATH.lastIndexOf('/'))}`,
   `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor /etc/apparmor.d/containers/war-browser-agent`,
   `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json ${DEFAULT_SECCOMP_PATH}`,
   `$SUDO apparmor_parser -r -W /etc/apparmor.d/containers/war-browser-agent`,
-  `if ! docker image inspect "$WAR_IMAGE" >/dev/null 2>&1; then $SUDO docker build --pull=false -f ${DEFAULT_SOURCE_ROOT}/platform/browser-agent/Dockerfile -t "$WAR_IMAGE" ${DEFAULT_SOURCE_ROOT}; fi`,
+  'SOURCE_REVISION=$(git -C "$WAR_SOURCE" rev-parse --verify HEAD)',
+  'IMAGE_REVISION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}" 2>/dev/null || true)',
+  'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
+  `if test "$IMAGE_REVISION" != "$SOURCE_REVISION" || test "$IMAGE_REMOTE_CONTROL" != "${REMOTE_CONTROL_IMAGE_LABEL}"; then $SUDO docker build --pull=false --build-arg WAR_SOURCE_REVISION="$SOURCE_REVISION" -f ${DEFAULT_SOURCE_ROOT}/platform/browser-agent/Dockerfile -t "$WAR_IMAGE" ${DEFAULT_SOURCE_ROOT}; fi`,
   'printf "repair=1\\n"',
 ].join('; ');
 
@@ -51,6 +59,7 @@ export class SshContainerHostManager {
     this.hosts = new Map();
     this.trashedHosts = new Map();
     this.purgedHostIds = new Set();
+    this.readinessRepairs = new Map();
   }
 
   async load() {
@@ -164,6 +173,21 @@ export class SshContainerHostManager {
     return this.describeHost(host);
   }
 
+  async ensureReady(hostId) {
+    const existing = this.readinessRepairs.get(hostId);
+    if (existing) return existing;
+    const repair = (async () => {
+      const checked = await this.checkHost(hostId);
+      return checked.connected ? checked : this.repairHost(hostId);
+    })();
+    this.readinessRepairs.set(hostId, repair);
+    try {
+      return await repair;
+    } finally {
+      if (this.readinessRepairs.get(hostId) === repair) this.readinessRepairs.delete(hostId);
+    }
+  }
+
   async repairHost(hostId) {
     const host = this.requireHost(hostId);
     this.assertIdentity(host.identityFile);
@@ -176,7 +200,7 @@ export class SshContainerHostManager {
     if (!diagnostics.wss) {
       throw codedError('CONTROLLER_WSS_NOT_CONFIGURED', 'Controller WSS is not configured for this Linux host');
     }
-    const failedChecks = ['docker', 'image', 'source', 'apparmor', 'seccomp', 'ca'].filter((key) => diagnostics[key] !== true);
+    const failedChecks = ['docker', 'image', 'imageCurrent', 'source', 'apparmor', 'seccomp', 'ca'].filter((key) => diagnostics[key] !== true);
     if (failedChecks.length) {
       throw codedError('SSH_HOST_REPAIR_INCOMPLETE', `Linux repair completed but checks still fail: ${failedChecks.join(', ')}`, { failedChecks });
     }
@@ -331,12 +355,12 @@ function withEnvironment(command, image, caPath) {
 }
 
 function parseProbe(output = '') {
-  const result = { ssh: false, docker: false, image: false, source: false, apparmor: false, seccomp: false, ca: false, ready: false };
+  const result = { ssh: false, docker: false, image: false, imageCurrent: false, source: false, apparmor: false, seccomp: false, ca: false, ready: false };
   for (const line of String(output).split(/\r?\n/)) {
     const [key, value] = line.split('=', 2);
     if (Object.hasOwn(result, key)) result[key] = value === '1';
   }
-  result.ready = result.ssh && result.docker && result.image && result.source && result.apparmor && result.seccomp && result.ca;
+  result.ready = result.ssh && result.docker && result.image && result.imageCurrent && result.source && result.apparmor && result.seccomp && result.ca;
   return result;
 }
 

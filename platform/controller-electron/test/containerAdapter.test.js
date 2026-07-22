@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { createDockerContainerAdapter } from '../src/containerAdapter.js';
 
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
+const OLD_IMAGE_ID = `sha256:${'b'.repeat(64)}`;
 const APPROVED_SECCOMP_OPTION = `seccomp=${JSON.stringify(JSON.parse(fs.readFileSync(new URL('../../container/security/chromium-userns-seccomp.json', import.meta.url), 'utf8')))}`;
 
 test('managed Docker adapter probes the bounded Docker server version', async () => {
@@ -111,6 +112,39 @@ test('managed Docker adapter rejects altered measured seccomp policy', async () 
   });
 
   await assert.rejects(() => adapter.create(container()), /security policy failed/);
+});
+
+test('managed Docker restart recreates a stale image container while preserving its data volume and security policy', async () => {
+  const calls = [];
+  let recreated = false;
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') {
+        return { stdout: `${JSON.stringify({ Driver: 'bridge', EnableIPv4: true, EnableIPv6: false, Labels: { 'managed-by': 'war-controller' } })}\n`, stderr: '' };
+      }
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'true\n', stderr: '' };
+      if (args[0] === 'inspect') {
+        return { stdout: `${JSON.stringify(managedIpv4Inspection({ Image: recreated ? IMAGE_ID : OLD_IMAGE_ID }))}\n`, stderr: '' };
+      }
+      if (args[0] === 'run') recreated = true;
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  const result = await adapter.restart(container());
+
+  const run = calls.find((args) => args[0] === 'run');
+  assert.ok(run);
+  assert.ok(run.includes('war-agent-one-data:/data'));
+  assert.ok(run.includes('apparmor=war-browser-agent'));
+  assert.ok(run.includes('seccomp=C:/war/security/chromium-userns-seccomp.json'));
+  assert.equal(run.includes('--privileged'), false);
+  assert.equal(calls.some((args) => args[0] === 'rename'), true);
+  assert.equal(calls.some((args) => args[0] === 'rm' && args[1] === '-f' && args[2]?.includes('network-backup')), true);
+  assert.equal(result.status, 'running');
 });
 
 test('managed Docker adapter creates an IPv6 network with a stable suffix and keeps IPv4 toggle explicit', async () => {

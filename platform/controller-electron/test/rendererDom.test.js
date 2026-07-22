@@ -1573,6 +1573,42 @@ test('remote pointer remains safe when the first frame arrives during a drag', a
   assert.deepEqual(apiState.remoteCalls.map((call) => call.command), ['input.mouseMove', 'input.mouseUp']);
 });
 
+test('remote live view shows automatic Agent update and clears it when the first frame arrives', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 6, live: true, frames: {}, pending: {}, notice: '', error: '' };
+  const originalCapture = window.warController.remote.capture;
+  let captureCalls = 0;
+  window.warController.remote.capture = async ({ deviceId }) => {
+    captureCalls += 1;
+    if (captureCalls === 1) return { ok: true, data: { deviceId, status: 'updating', code: 'REMOTE_AGENT_UPDATING', frame: null } };
+    return { ok: true, data: { deviceId, frame: { mimeType: 'image/jpeg', data: 'YQ==', width: 800, height: 600 } } };
+  };
+
+  try {
+    const current = views.renderView(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const placeholder = all(current, (node) => node.className === 'remote-screen-placeholder')[0];
+    assert.equal(placeholder.textContent, i18n.t('remote.updating'));
+    assert.ok(current.textContent.includes(i18n.t('remote.updating')));
+
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    const image = first(current, 'img');
+    assert.equal(image.getAttribute('src'), 'data:image/jpeg;base64,YQ==');
+    assert.equal(placeholder.hidden, true);
+    assert.equal(state.store.remote.error, '');
+    assert.equal(state.store.remote.notice, '');
+  } finally {
+    window.warController.remote.capture = originalCapture;
+    state.store.remote.live = false;
+    state.store.view = 'overview';
+    views.renderView(() => {});
+  }
+});
+
 test('jobs dispatch transport warning remains visible after refresh', async () => {
   resetStore();
   state.store.view = 'jobs';

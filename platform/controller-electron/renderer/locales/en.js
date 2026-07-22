@@ -36,6 +36,7 @@ export default {
     keyHelp: 'Keyboard: Ctrl+T, Ctrl+C, Ctrl+V, Ctrl+L, Ctrl+W, Ctrl+R, Ctrl+Shift+T, Alt+Left/Right, F5, Escape and regular typing.',
     screen: 'Remote Chromium screen for {name}',
     waiting: 'Waiting for the first frame...',
+    updating: 'Updating the Browser Agent for remote video...',
     focus: 'Make active',
     stopInput: 'Release input',
     selectTarget: 'Select at least one online container.',

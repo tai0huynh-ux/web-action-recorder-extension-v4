@@ -2213,7 +2213,9 @@ function devicesView() {
 }
 
 function remoteView(refresh) {
-  store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, notice: '', error: '' };
+  store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, updating: {}, errors: {}, notice: '', error: '' };
+  store.remote.updating ||= {};
+  store.remote.errors ||= {};
   const targets = allWorkspaceDevices().filter((device) => device.managedContainer && isContainerAgentOnline(device.managedContainer ? store.containers.find((item) => item.id === device.containerId) : device));
   const ids = targets.map((device) => device.id || device.deviceId).filter(Boolean);
   store.remote.selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
@@ -2278,7 +2280,7 @@ function remoteTile(device, refresh) {
   const id = device.id || device.deviceId;
   const frame = store.remote.frames?.[id];
   const image = el('img', { className: 'remote-screen', tabIndex: 0, ariaLabel: t('remote.screen', { name: device.displayName || device.name || id }) });
-  const placeholder = frame ? null : el('span', { className: 'remote-screen-placeholder', text: t('remote.waiting') });
+  const placeholder = frame ? null : el('span', { className: 'remote-screen-placeholder', text: store.remote.updating?.[id] ? t('remote.updating') : (store.remote.errors?.[id] || t('remote.waiting')) });
   image.setAttribute('alt', t('remote.screen', { name: device.displayName || device.name || id }));
   image.setAttribute('draggable', 'false');
   if (frame?.data) image.setAttribute('src', `data:${frame.mimeType || 'image/jpeg'};base64,${frame.data}`);
@@ -2347,13 +2349,38 @@ function startRemotePolling() {
           try {
             const result = unwrap(await window.warController.remote.capture({ deviceId, quality: qualityForFps(store.remote.fps) }));
             const frame = result?.frame;
+            if (result?.status === 'updating') {
+              store.remote.updating[deviceId] = true;
+              delete store.remote.errors[deviceId];
+              store.remote.notice = t('remote.updating');
+              const screen = remoteScreens.get(deviceId);
+              if (screen?.placeholder && !store.remote.frames?.[deviceId]) {
+                screen.placeholder.textContent = t('remote.updating');
+                screen.placeholder.hidden = false;
+              }
+              updateRemoteStatus();
+              return;
+            }
             if (!frame?.data) return;
+            delete store.remote.updating[deviceId];
+            delete store.remote.errors[deviceId];
+            store.remote.error = Object.values(store.remote.errors).find(Boolean) || '';
+            store.remote.notice = Object.values(store.remote.updating).some(Boolean) ? t('remote.updating') : '';
             store.remote.frames = { ...store.remote.frames, [deviceId]: frame };
             const screen = remoteScreens.get(deviceId);
             if (screen?.image) screen.image.setAttribute('src', `data:${frame.mimeType || 'image/jpeg'};base64,${frame.data}`);
             if (screen?.placeholder) screen.placeholder.hidden = true;
+            updateRemoteStatus();
           } catch (error) {
-            store.remote.error = safeError(error, 'REMOTE_CAPTURE_FAILED');
+            const message = safeError(error, 'REMOTE_CAPTURE_FAILED');
+            store.remote.errors[deviceId] = message;
+            store.remote.error = Object.values(store.remote.errors).find(Boolean) || message;
+            delete store.remote.updating[deviceId];
+            const screen = remoteScreens.get(deviceId);
+            if (screen?.placeholder && !store.remote.frames?.[deviceId]) {
+              screen.placeholder.textContent = message;
+              screen.placeholder.hidden = false;
+            }
             updateRemoteStatus();
           }
         }));
@@ -2391,7 +2418,8 @@ async function sendRemoteCommand(command, payload) {
     if (result?.ok === false) throw controllerError(result, 'REMOTE_CONTROL_FAILED');
     const data = unwrap(result) || {};
     const failed = (data.targets || []).filter((item) => !item.ok);
-    store.remote.notice = failed.length ? `${t('remote.partialFailure')} ${failed.length}` : t('remote.commandSent');
+    const updating = failed.some((item) => item.error?.code === 'REMOTE_AGENT_UPDATING');
+    store.remote.notice = updating ? t('remote.updating') : (failed.length ? `${t('remote.partialFailure')} ${failed.length}` : t('remote.commandSent'));
     updateRemoteStatus();
   } catch (error) {
     store.remote.error = safeError(error, 'REMOTE_CONTROL_FAILED');

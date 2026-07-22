@@ -34,7 +34,7 @@ test('SSH host manager stores only host metadata and probes bounded prerequisite
     fsImpl: fakeFs(),
     execFileImpl: async (file, args, options) => {
       calls.push({ file, args, options });
-      return { stdout: 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
     },
     createAdapter: ({ config: adapterConfig }) => ({ config: adapterConfig }),
   });
@@ -70,7 +70,7 @@ test('SSH host manager repair uses a fixed bounded script and rechecks readiness
     execFileImpl: async (file, args) => {
       calls.push({ file, args });
       if (calls.length === 1) return { stdout: 'repair=1\n', stderr: '' };
-      return { stdout: 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
     },
     createAdapter: ({ config: adapterConfig }) => ({ config: adapterConfig }),
   });
@@ -82,6 +82,57 @@ test('SSH host manager repair uses a fixed bounded script and rechecks readiness
   assert.match(calls[0].args.at(-1), /apparmor_parser -r -W/);
   assert.match(calls[0].args.at(-1), /docker build/);
   assert.equal(calls[0].args.at(-1).includes('id_ed25519'), false);
+});
+
+test('SSH host manager automatically rebuilds an existing stale Browser Agent image', async () => {
+  const calls = [];
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key', image: 'war-browser-agent:phase1' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async (_file, args) => {
+      calls.push(args.at(-1));
+      if (calls.length === 1) return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=0\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+      if (calls.length === 2) return { stdout: 'repair=1\n', stderr: '' };
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+    },
+  });
+  await manager.load();
+
+  const result = await manager.ensureReady('ssh-existing');
+
+  assert.equal(result.connected, true);
+  assert.equal(calls.length, 3);
+  assert.match(calls[0], /org\.opencontainers\.image\.revision/);
+  assert.match(calls[0], /com\.web-action-recorder\.remote-control/);
+  assert.match(calls[1], /--build-arg WAR_SOURCE_REVISION=/);
+  assert.match(calls[1], /--unshallow/);
+});
+
+test('SSH host readiness repairs are deduplicated per host', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let probes = 0;
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async () => {
+      probes += 1;
+      await gate;
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+    },
+  });
+  await manager.load();
+
+  const first = manager.ensureReady('ssh-existing');
+  const second = manager.ensureReady('ssh-existing');
+  assert.equal(probes, 1);
+  release();
+  const results = await Promise.all([first, second]);
+  assert.equal(probes, 1);
+  assert.equal(results[0].connected, true);
+  assert.deepEqual(results[0], results[1]);
 });
 
 test('SSH host manager reports unreadable key without invoking SSH', async () => {
@@ -150,7 +201,7 @@ test('SSH host repair distinguishes a repaired Linux host from missing Controlle
     execFileImpl: async (_file, args) => ({
       stdout: args.at(-1).includes('repair=1')
         ? 'repair=1\n'
-        : 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n',
+        : 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n',
       stderr: '',
     }),
   });
@@ -194,7 +245,7 @@ test('SSH host manager updates a selected host in place and keeps its identity',
     config: config(),
     settingsStore: store,
     fsImpl: fakeFs(),
-    execFileImpl: async () => ({ stdout: 'ssh=1\ndocker=1\nimage=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' }),
+    execFileImpl: async () => ({ stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' }),
   });
   await manager.load();
 

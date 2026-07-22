@@ -36,6 +36,7 @@ export default {
     keyHelp: 'Bàn phím: Ctrl+T, Ctrl+C, Ctrl+V, Ctrl+L, Ctrl+W, Ctrl+R, Ctrl+Shift+T, Alt+Trái/Phải, F5, Escape và nhập chữ thông thường.',
     screen: 'Màn hình Chromium từ xa của {name}',
     waiting: 'Đang chờ khung hình đầu tiên...',
+    updating: '\u0110ang c\u1eadp nh\u1eadt Browser Agent cho \u0111i\u1ec1u khi\u1ec3n m\u00e0n h\u00ecnh...',
     focus: 'Chọn làm máy chính',
     stopInput: 'Nhả toàn bộ phím/chuột',
     selectTarget: 'Hãy chọn ít nhất một container đang trực tuyến.',

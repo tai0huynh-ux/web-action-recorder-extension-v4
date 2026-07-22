@@ -120,6 +120,28 @@ test('application re-probes the selected Docker host before provisioning a conta
   assert.deepEqual(core.containers.listContainers().containers, []);
 });
 
+test('application validates the managed host image before create, duplicate, start, and restart', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  const ensured = [];
+  const host = { id: 'ssh-host-1', image: 'war-browser-agent:phase1' };
+  const containerHostManager = {
+    getHost: (hostId) => hostId === host.id ? host : null,
+    firstHostId: () => host.id,
+    getAdapter: (hostId) => hostId === host.id ? adapter : null,
+    ensureReady: async (hostId) => { ensured.push(hostId); return { id: hostId, connected: true }; },
+  };
+  const app = new ControllerApplicationService({ core, containerHostManager, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  const added = await app.addContainer({ name: 'Agent One', host: host.id, runtime: { dockerName: 'agent-one' } });
+  await app.duplicateContainer({ containerId: added.data.container.id, name: 'Agent Two' });
+  await app.startContainer({ containerId: added.data.container.id });
+  await app.restartContainer({ containerId: added.data.container.id });
+
+  assert.deepEqual(ensured, [host.id, host.id, host.id, host.id]);
+  assert.deepEqual(adapter.calls.map((item) => item.action), ['probe', 'create', 'create', 'start', 'restart']);
+});
+
 test('application manages container lifecycle through a bounded adapter', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
@@ -539,6 +561,51 @@ test('application fans synchronized remote input to selected online Agents and c
   assert.equal(capture.data.frame.width, 800);
 });
 
+test('remote capture starts one automatic managed Agent upgrade and succeeds after reconnect', async () => {
+  const core = await connectedCore();
+  await core.devices.registerDevice('dev-a', { capabilities: { ...core.devices.getDevice('dev-a').capabilities, remoteVideo: false } });
+  await core.containers.createContainer({ name: 'Chromium 1', host: 'ssh-host-1', image: 'war-browser-agent:phase1', deviceId: 'dev-a', runtime: { dockerName: 'war-chromium-1' } });
+  let ensureCalls = 0;
+  let restartCalls = 0;
+  const adapter = {
+    async restart(container) {
+      restartCalls += 1;
+      return { status: 'running', runtime: structuredClone(container.runtime) };
+    },
+  };
+  const containerHostManager = {
+    ensureReady: async () => { ensureCalls += 1; return { connected: true }; },
+    getAdapter: () => adapter,
+  };
+  const transport = fakeTransport();
+  const app = new ControllerApplicationService({ core, containerHostManager, wssTransport: transport, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  const first = await app.remoteCapture({ deviceId: 'dev-a', quality: 45 });
+  const second = await app.remoteCapture({ deviceId: 'dev-a', quality: 45 });
+  assert.equal(first.data.status, 'updating');
+  assert.equal(second.data.status, 'updating');
+
+  const upgrade = app.remoteReadiness.get('dev-a').promise;
+  await core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' });
+  await upgrade;
+  const capture = await app.remoteCapture({ deviceId: 'dev-a', quality: 45 });
+
+  assert.equal(ensureCalls, 1);
+  assert.equal(restartCalls, 1);
+  assert.equal(capture.data.frame.mimeType, 'image/jpeg');
+  assert.equal(transport.remoteRequests.length, 1);
+});
+
+test('remote capture rejects an unsupported non-managed Agent without waiting for transport timeout', async () => {
+  const core = await connectedCore();
+  await core.devices.registerDevice('dev-a', { capabilities: { ...core.devices.getDevice('dev-a').capabilities, remoteVideo: false } });
+  const transport = fakeTransport();
+  const app = application(core, transport);
+
+  await assert.rejects(() => app.remoteCapture({ deviceId: 'dev-a', quality: 45 }), code('REMOTE_AGENT_UPDATE_REQUIRED'));
+  assert.equal(transport.remoteRequests.length, 0);
+});
+
 function application(core, transport) {
   return new ControllerApplicationService({
     core,
@@ -720,7 +787,7 @@ function device(overrides = {}) {
       rawBrowserInput: true,
       nativeX11Input: true,
       screenshot: true,
-      remoteVideo: false,
+      remoteVideo: true,
       clipboardText: false,
       synchronizedInput: false
     },
