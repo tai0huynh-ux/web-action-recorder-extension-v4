@@ -54,6 +54,11 @@ export class ControllerApplicationService extends EventEmitter {
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
   listContainers() { return this.result(this.core.containers.listContainers()); }
+  listContainerTrash() {
+    const containers = this.core.containers.listContainers().containers.filter((container) => container.status === 'deleted');
+    const hosts = this.containerHostManager?.listTrashedHosts?.().hosts || [];
+    return this.result({ containers, hosts });
+  }
   async listContainerHosts() {
     if (this.containerHostManager) return this.result(await this.containerHostManager.listHosts());
     const publicConfig = this.config ? toPublicRuntimeConfig(this.config).containers : null;
@@ -87,6 +92,26 @@ export class ControllerApplicationService extends EventEmitter {
   async repairContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
     const data = await this.containerHostManager.repairHost(hostId);
+    this.invalidate('containers', { hostId });
+    return this.result(data);
+  }
+  async trashContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const inUse = this.core.containers.listContainers().containers.filter((container) => container.host === hostId && container.status !== 'deleted');
+    if (inUse.length) throw codedError('CONTAINER_HOST_IN_USE', 'Move containers on this Linux host to trash before removing the host', { containerIds: inUse.map((container) => container.id) });
+    const data = await this.containerHostManager.trashHost(hostId);
+    this.invalidate('containers', { hostId });
+    return this.result(data);
+  }
+  async restoreContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = await this.containerHostManager.restoreHost(hostId);
+    this.invalidate('containers', { hostId });
+    return this.result(data);
+  }
+  async purgeContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = await this.containerHostManager.purgeHost(hostId);
     this.invalidate('containers', { hostId });
     return this.result(data);
   }
@@ -181,6 +206,25 @@ export class ControllerApplicationService extends EventEmitter {
   }
   async deleteContainer({ containerId }) {
     const container = this.core.containers.getContainer(containerId);
+    if (container.status === 'deleted') return this.result({ container, operation: { ok: true, status: 'deleted', alreadyTrashed: true } });
+    const needsStop = !['created', 'stopped', 'failed'].includes(container.status);
+    const operation = needsStop
+      ? await this.safeContainerOperation('stop', container)
+      : { ok: true, status: 'stopped', skipped: true };
+    const next = operation.ok
+      ? await this.core.containers.deleteContainer(containerId)
+      : await this.core.containers.updateStatus(containerId, 'failed', { desiredState: 'stopped', lastError: operation.error });
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
+  async restoreContainer({ containerId }) {
+    const container = await this.core.containers.restoreContainer(containerId);
+    this.invalidate('containers', { containerId });
+    return this.result({ container });
+  }
+  async purgeContainer({ containerId }) {
+    const container = this.core.containers.getContainer(containerId);
+    if (container.status !== 'deleted') throw codedError('CONTAINER_NOT_IN_TRASH', 'Container must be in trash before permanent deletion');
     if (container.deviceId) {
       await this.revokeAgent({ deviceId: container.deviceId }).catch((error) => {
         if (error?.code !== 'DEVICE_NOT_FOUND') throw error;
@@ -189,11 +233,14 @@ export class ControllerApplicationService extends EventEmitter {
     const operation = isUnprovisionedContainer(container) && !this.containerAdapterForHost(container.host)?.delete
       ? { ok: true, status: 'deleted', localOnly: true }
       : await this.safeContainerOperation('delete', container);
-    const next = operation.ok
-      ? await this.core.containers.deleteContainer(containerId)
-      : await this.core.containers.updateStatus(containerId, 'failed', { desiredState: 'deleted', lastError: operation.error });
+    if (!operation.ok) {
+      const failed = await this.core.containers.updateStatus(containerId, 'deleted', { desiredState: 'deleted', lastError: operation.error });
+      this.invalidate('containers', { containerId });
+      return this.result({ container: failed, operation, purged: null });
+    }
+    const purged = await this.core.containers.purgeContainer(containerId);
     this.invalidate('containers', { containerId });
-    return this.result({ container: next, operation });
+    return this.result({ container: null, operation, purged });
   }
   listGroups() { return this.result(this.core.groups.listGroups()); }
   async createGroup(payload) { const data = await this.core.groups.createGroup(payload); this.invalidate('groups'); return this.result(data); }
@@ -784,7 +831,10 @@ function randomIpv6Suffix() {
 
 function isUnprovisionedContainer(container = {}) {
   return container.status === 'failed'
-    && container.desiredState === 'stopped';
+    && container.desiredState === 'stopped'
+    || container.status === 'deleted'
+      && container.trashedFromStatus === 'failed'
+      && container.trashedFromDesiredState === 'stopped';
 }
 
 function codedError(code, message, details) {

@@ -134,23 +134,30 @@ test('application manages container lifecycle through a bounded adapter', async 
   const network = await app.updateContainerNetwork({ containerId, ipv4Enabled: true, ipv6Enabled: true, ipv6Suffix: 'a8bb:ccff:fedd:eeff' });
   const duplicate = await app.duplicateContainer({ containerId, name: 'Agent Two' });
   const managedDeviceId = added.data.container.deviceId;
-  const deleted = await app.deleteContainer({ containerId });
+  const trashed = await app.deleteContainer({ containerId });
 
   assert.equal(added.data.operation.ok, true);
   assert.equal(core.containers.getContainer(containerId).status, 'deleted');
-  assert.ok(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt);
-  assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
+  assert.equal(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt || null, null);
+  assert.equal(Boolean(core.devices.getDevice(managedDeviceId).revoked), false);
   assert.equal(duplicate.data.container.name, 'Agent Two');
   assert.equal(duplicate.data.operation.ok, true);
   assert.notEqual(duplicate.data.container.runtime.dockerName, added.data.container.runtime.dockerName);
   assert.equal(network.data.container.runtime.ipv6Address, '2001:db8:1:2:a8bb:ccff:fedd:eeff');
   assert.notEqual(duplicate.data.container.runtime.ipv6Suffix, network.data.container.runtime.ipv6Suffix);
   assert.match(duplicate.data.container.runtime.ipv6Suffix, /^[0-9a-f]{1,4}:[0-9a-f]{1,2}ff:fe[0-9a-f]{1,2}:[0-9a-f]{1,4}$/);
-  assert.equal(deleted.data.operation.ok, true);
+  assert.equal(trashed.data.operation.ok, true);
+  const restored = await app.restoreContainer({ containerId });
+  assert.equal(restored.data.container.status, 'stopped');
+  await app.deleteContainer({ containerId });
+  const purged = await app.purgeContainer({ containerId });
+  assert.equal(purged.data.purged.id, containerId);
+  assert.ok(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt);
+  assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
   assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'updateNetwork', 'create', 'delete']);
 });
 
-test('deleting an already-revoked failed managed container remains idempotent', async () => {
+test('trashing an already-revoked failed managed container remains recoverable', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
   adapter.create = async function create(container) {
@@ -163,10 +170,12 @@ test('deleting an already-revoked failed managed container remains idempotent', 
   const deleted = await app.deleteContainer({ containerId: added.data.container.id });
 
   assert.equal(deleted.data.container.status, 'deleted');
-  assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'delete']);
+  assert.deepEqual(adapter.calls.map((item) => item.action), ['create']);
+  const restored = await app.restoreContainer({ containerId: added.data.container.id });
+  assert.equal(restored.data.container.status, 'failed');
 });
 
-test('managed container deletion failure revokes access but does not report registry deletion', async () => {
+test('managed container permanent deletion failure keeps the item in trash', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
   adapter.delete = async function deleteContainer(container) {
@@ -177,26 +186,47 @@ test('managed container deletion failure revokes access but does not report regi
   const added = await app.addContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'agent-one' } });
   const managedDeviceId = added.data.container.deviceId;
 
-  const deleted = await app.deleteContainer({ containerId: added.data.container.id });
+  await app.deleteContainer({ containerId: added.data.container.id });
+  const deleted = await app.purgeContainer({ containerId: added.data.container.id });
 
   assert.equal(deleted.data.operation.ok, false);
-  assert.equal(deleted.data.container.status, 'failed');
+  assert.equal(deleted.data.container.status, 'deleted');
   assert.equal(deleted.data.container.desiredState, 'deleted');
   assert.ok(core.pairing.listPairedAgents().find((item) => item.deviceId === managedDeviceId)?.revokedAt);
   assert.equal(core.devices.getDevice(managedDeviceId).revoked, true);
 });
 
-test('failed container without a proven runtime can be removed locally when no adapter exists', async () => {
+test('failed container without a proven runtime can be purged locally from trash', async () => {
   const core = await connectedCore();
   const app = new ControllerApplicationService({ core, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
   const added = await app.addContainer({ name: 'Never Provisioned', image: 'war-browser-agent:test', runtime: { dockerName: 'never-provisioned' } });
 
   assert.equal(added.data.container.status, 'failed');
-  const deleted = await app.deleteContainer({ containerId: added.data.container.id });
+  const trashed = await app.deleteContainer({ containerId: added.data.container.id });
+  const deleted = await app.purgeContainer({ containerId: added.data.container.id });
 
-  assert.equal(deleted.data.operation.ok, true);
+  assert.equal(trashed.data.operation.ok, true);
   assert.equal(deleted.data.operation.localOnly, true);
-  assert.equal(deleted.data.container.status, 'deleted');
+  assert.equal(deleted.data.container, null);
+});
+
+test('application blocks trashing a Linux host until its active containers are trashed', async () => {
+  const core = await connectedCore();
+  const container = await core.containers.createContainer({ name: 'Agent One', host: 'ssh-host-1' });
+  const hostCalls = [];
+  const containerHostManager = {
+    listTrashedHosts: () => ({ hosts: [{ id: 'ssh-trash', name: 'Old Linux' }] }),
+    trashHost: async (hostId) => { hostCalls.push(hostId); return { id: hostId, name: 'Linux' }; },
+  };
+  const app = new ControllerApplicationService({ core, containerHostManager, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  assert.equal(app.listContainerTrash().data.hosts.length, 1);
+  await assert.rejects(() => app.trashContainerHost({ hostId: 'ssh-host-1' }), (error) => error.code === 'CONTAINER_HOST_IN_USE');
+  assert.equal(hostCalls.length, 0);
+  await core.containers.deleteContainer(container.id);
+  const trashed = await app.trashContainerHost({ hostId: 'ssh-host-1' });
+  assert.equal(trashed.data.id, 'ssh-host-1');
+  assert.deepEqual(hostCalls, ['ssh-host-1']);
 });
 
 test('application cancel uses controller-side state and reports transport separately without acknowledgement', async () => {

@@ -166,6 +166,16 @@ test('container network payload accepts only explicit IPv4 and IPv6 preferences'
   );
 });
 
+test('trash operations accept only exact container and host identifiers', () => {
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.restore, { containerId: 'container-1' }), { containerId: 'container-1' });
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.purge, { containerId: 'container-1' }), { containerId: 'container-1' });
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.containers.hostTrash, { hostId: 'ssh-host-1' }), { hostId: 'ssh-host-1' });
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.containers.hostPurge, { hostId: 'ssh-host-1', force: true }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('validator does not mutate input', () => {
   const payload = { deviceId: 'device-1', workflowId: 'workflow-1', revision: 1, inputs: { count: 1 } };
   const before = JSON.stringify(payload);

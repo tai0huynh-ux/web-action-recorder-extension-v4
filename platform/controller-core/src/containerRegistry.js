@@ -74,12 +74,42 @@ export class ContainerRegistry {
   deleteContainer(containerId) {
     return this.store.update((state) => {
       const item = requireContainer(state, containerId);
+      if (item.status === 'deleted') return publicContainer(item);
+      item.trashedFromStatus = item.status;
+      item.trashedFromDesiredState = item.desiredState;
       item.status = 'deleted';
       item.desiredState = 'deleted';
       item.deletedAt = this.now();
       item.updatedAt = item.deletedAt;
       this.audit.append(state, 'container.deleted', { containerId });
       return publicContainer(item);
+    });
+  }
+
+  restoreContainer(containerId) {
+    return this.store.update((state) => {
+      const item = requireContainer(state, containerId);
+      if (item.status !== 'deleted') throw domainError(ERROR_CODES.INVALID_TARGET, 'Container is not in trash', 409);
+      item.status = ['created', 'stopped', 'failed'].includes(item.trashedFromStatus) ? item.trashedFromStatus : 'stopped';
+      item.desiredState = item.status === 'created' ? 'stopped' : item.status;
+      item.deletedAt = null;
+      item.lastError = null;
+      item.updatedAt = this.now();
+      delete item.trashedFromStatus;
+      delete item.trashedFromDesiredState;
+      this.audit.append(state, 'container.restored', { containerId });
+      return publicContainer(item);
+    });
+  }
+
+  purgeContainer(containerId) {
+    return this.store.update((state) => {
+      const item = requireContainer(state, containerId);
+      if (item.status !== 'deleted') throw domainError(ERROR_CODES.INVALID_TARGET, 'Container must be in trash before permanent deletion', 409);
+      state.managedContainers = (state.managedContainers || []).filter((container) => container.id !== containerId);
+      const purgedAt = this.now();
+      this.audit.append(state, 'container.purged', { containerId });
+      return { id: containerId, purgedAt };
     });
   }
 }

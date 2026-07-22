@@ -100,3 +100,21 @@ test('SSH host manager reports unreadable key without invoking SSH', async () =>
   assert.match(result.diagnostics.error, /identity file/i);
   assert.equal(calls, 0);
 });
+
+test('SSH host manager moves hosts to persistent trash and restores or purges them', async () => {
+  const store = settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] });
+  const manager = new SshContainerHostManager({ config: config(), settingsStore: store, fsImpl: fakeFs(), execFileImpl: async () => ({ stdout: '', stderr: '' }), now: () => '2026-07-16T00:00:00.000Z' });
+  await manager.load();
+
+  const trashed = await manager.trashHost('ssh-existing');
+  assert.equal(trashed.deletedAt, '2026-07-16T00:00:00.000Z');
+  assert.equal((await manager.listHosts()).hosts.length, 0);
+  assert.equal(manager.listTrashedHosts().hosts.length, 1);
+  await manager.restoreHost('ssh-existing');
+  assert.equal((await manager.listHosts()).hosts.length, 1);
+  await manager.trashHost('ssh-existing');
+  const purged = await manager.purgeHost('ssh-existing');
+  assert.equal(purged.id, 'ssh-existing');
+  assert.equal(manager.listTrashedHosts().hosts.length, 0);
+  assert.equal(store.snapshot().purgedContainerHostIds[0], 'ssh-existing');
+});

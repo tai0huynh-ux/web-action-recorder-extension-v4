@@ -224,9 +224,19 @@ try {
     await win.setSize?.(1440, 900);
     await win.webContents.setZoomFactor?.(1);
     assert(await bodyIncludes('Máy và container'), 'Vietnamese workspace labels missing');
+    await clickText('+ Thêm máy Linux');
+    await clickText('Thu gọn phần thêm máy Linux');
+    await clickText('+ Thêm container');
+    await clickText('Thu gọn phần tạo container');
+    assert(await bodyIncludes('Thùng rác'), 'Vietnamese trash panel missing');
     await screenshot('workspace-vi.png');
     await switchLocale('en');
     assert(await bodyIncludes('Machines and containers'), 'English workspace labels missing');
+    await clickText('+ Add Linux machine');
+    await clickText('Collapse Linux machine setup');
+    await clickText('+ Add container');
+    await clickText('Collapse container creation');
+    assert(await bodyIncludes('Trash'), 'English trash panel missing');
     await screenshot('workspace-en.png');
     const interactions = await verifyWorkspacePanelInteractions();
     assert(interactions.left.after === interactions.left.expected, 'Machines divider did not persist its dragged width');
@@ -244,11 +254,11 @@ try {
     await switchLocale('vi');
     const summary = {
       result: 'PASS',
-      checks: ['workspace opens', 'Vietnamese labels visible', 'English labels visible', 'language switch works', 'both panel dividers drag and persist', 'panel scroll survives refresh', 'collapse works', '1024x700 captured', '1920x1080 at 125 percent captured'],
+      checks: ['workspace opens', 'Vietnamese labels visible', 'English labels visible', 'language switch works', 'container and Linux setup collapse controls work', 'trash panel remains available', 'both panel dividers drag and persist', 'panel scroll survives refresh', 'collapse works', '1024x700 captured', '1920x1080 at 125 percent captured'],
       screenshots: ['workspace-vi.png', 'workspace-en.png', 'workspace-collapsed.png', 'workspace-small-window.png', 'workspace-large-window.png'],
     };
     fs.writeFileSync(path.join(uiPhaseArtifactDir, 'ui-phase-1-results.json'), JSON.stringify(summary, null, 2));
-    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'UI_PHASE_1_REPORT.md'), `# UI Phase 1 Report\n\nResult: PASS\n\n- Workspace opens: PASS\n- Vietnamese labels visible: PASS\n- English labels visible: PASS\n- Language switch without restart: PASS\n- Both panel dividers drag and persist: PASS\n- Panel scroll survives refresh: PASS\n- Panel collapse: PASS\n- 1024x700 screenshot: PASS\n- 1920x1080 at 125% screenshot: PASS\n`);
+    fs.writeFileSync(path.join(uiPhaseArtifactDir, 'UI_PHASE_1_REPORT.md'), `# UI Phase 1 Report\n\nResult: PASS\n\n- Workspace opens: PASS\n- Vietnamese labels visible: PASS\n- English labels visible: PASS\n- Language switch without restart: PASS\n- Container and Linux setup collapse controls: PASS\n- Trash panel remains available: PASS\n- Both panel dividers drag and persist: PASS\n- Panel scroll survives refresh: PASS\n- Panel collapse: PASS\n- 1024x700 screenshot: PASS\n- 1920x1080 at 125% screenshot: PASS\n`);
     return summary;
   });
 

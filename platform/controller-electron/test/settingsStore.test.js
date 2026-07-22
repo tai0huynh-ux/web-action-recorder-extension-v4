@@ -44,3 +44,19 @@ test('settings retain validated SSH host metadata without accepting unsafe field
   assert.equal(value.containerHosts[0].target, 'root@192.168.1.201');
   assert.equal(Object.hasOwn(value.containerHosts[0], 'extra'), false);
 });
+
+test('settings retain a bounded persistent host trash and purge tombstones', () => {
+  const value = normalizeSettings({
+    trashedContainerHosts: [{
+      id: 'ssh-host-1',
+      name: 'Reviewed Linux',
+      target: 'root@192.168.1.201',
+      identityFile: 'C:/Users/test/.ssh/id_ed25519',
+      deletedAt: '2026-07-16T00:00:00.000Z',
+    }],
+    purgedContainerHostIds: ['ssh-host-2', '__proto__', 'x'.repeat(200)],
+  });
+  assert.equal(value.trashedContainerHosts.length, 1);
+  assert.equal(value.trashedContainerHosts[0].deletedAt, '2026-07-16T00:00:00.000Z');
+  assert.deepEqual(value.purgedContainerHostIds, ['ssh-host-2']);
+});

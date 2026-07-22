@@ -158,7 +158,9 @@ function fakeApplication() {
   app.calls = [];
   const names = [
     'getBootstrapState', 'getRuntimeStatus', 'listPairings', 'requestPairing', 'confirmPairing', 'rejectPairing', 'revokeAgent',
-    'listDevices', 'getDevice', 'listSessions', 'listContainerHosts', 'listGroups', 'createGroup', 'updateGroup', 'deleteGroup', 'addDeviceToGroup',
+    'listDevices', 'getDevice', 'listSessions', 'listContainers', 'listContainerTrash', 'listContainerHosts', 'addContainerHost', 'checkContainerHost', 'repairContainerHost',
+    'trashContainerHost', 'restoreContainerHost', 'purgeContainerHost', 'addContainer', 'startContainer', 'stopContainer', 'restartContainer', 'refreshContainer',
+    'updateContainerNetwork', 'duplicateContainer', 'deleteContainer', 'restoreContainer', 'purgeContainer', 'listGroups', 'createGroup', 'updateGroup', 'deleteGroup', 'addDeviceToGroup',
     'removeDeviceFromGroup', 'getSettings', 'updateSettings', 'listWorkflows', 'getWorkflowRevision', 'importWorkflowRevision', 'listJobs', 'getJob',
     'listJobEvents', 'dispatchWorkflow', 'cancelJob',
   ];

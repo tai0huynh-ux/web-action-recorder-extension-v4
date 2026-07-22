@@ -49,13 +49,17 @@ export class SshContainerHostManager {
     this.execFile = execFileImpl;
     this.now = now;
     this.hosts = new Map();
+    this.trashedHosts = new Map();
+    this.purgedHostIds = new Set();
   }
 
   async load() {
     const settings = await this.settingsStore?.get?.() || {};
     this.hosts = new Map((settings.containerHosts || []).map((host) => [host.id, structuredClone(host)]));
+    this.trashedHosts = new Map((settings.trashedContainerHosts || []).map((host) => [host.id, structuredClone(host)]));
+    this.purgedHostIds = new Set(settings.purgedContainerHostIds || []);
     const legacy = legacyHost(this.config);
-    if (legacy) this.hosts.set(legacy.id, legacy);
+    if (legacy && !this.hosts.has(legacy.id) && !this.trashedHosts.has(legacy.id) && !this.purgedHostIds.has(legacy.id)) this.hosts.set(legacy.id, legacy);
     return { status: this.hosts.size ? 'configured' : 'unavailable', hosts: [...this.hosts.values()].map(publicHost) };
   }
 
@@ -65,14 +69,64 @@ export class SshContainerHostManager {
     return { status: hosts.length === 0 ? 'unavailable' : (ready.length ? 'connected' : 'unavailable'), hosts };
   }
 
+  listTrashedHosts() {
+    return { hosts: [...this.trashedHosts.values()].map(publicHost) };
+  }
+
   async addHost(payload = {}) {
     const host = normalizeHostPayload(payload);
     this.assertIdentity(host.identityFile);
     const settings = await this.settingsStore.get();
     const existing = (settings.containerHosts || []).filter((item) => item.id !== host.id);
-    await this.settingsStore.update({ containerHosts: [...existing, host] });
+    const trashed = (settings.trashedContainerHosts || []).filter((item) => item.id !== host.id);
+    const purged = (settings.purgedContainerHostIds || []).filter((id) => id !== host.id);
+    await this.settingsStore.update({ containerHosts: [...existing, host], trashedContainerHosts: trashed, purgedContainerHostIds: purged });
     this.hosts.set(host.id, host);
+    this.trashedHosts.delete(host.id);
+    this.purgedHostIds.delete(host.id);
     return this.checkHost(host.id);
+  }
+
+  async trashHost(hostId) {
+    const host = this.requireHost(hostId);
+    const settings = await this.settingsStore.get();
+    const deleted = { ...host, deletedAt: this.now() };
+    const active = (settings.containerHosts || []).filter((item) => item.id !== hostId);
+    const trashed = (settings.trashedContainerHosts || []).filter((item) => item.id !== hostId);
+    const purged = (settings.purgedContainerHostIds || []).filter((id) => id !== hostId);
+    await this.settingsStore.update({ containerHosts: active, trashedContainerHosts: [...trashed, deleted], purgedContainerHostIds: purged });
+    this.hosts.delete(hostId);
+    this.trashedHosts.set(hostId, deleted);
+    this.purgedHostIds.delete(hostId);
+    return publicHost(deleted);
+  }
+
+  async restoreHost(hostId) {
+    const host = this.trashedHosts.get(hostId);
+    if (!host) throw Object.assign(new Error('SSH host is not in trash'), { code: 'CONTAINER_HOST_NOT_IN_TRASH' });
+    if (this.hosts.has(hostId)) throw Object.assign(new Error('SSH host already exists'), { code: 'CONTAINER_HOST_ALREADY_EXISTS' });
+    const settings = await this.settingsStore.get();
+    const restored = { ...host };
+    delete restored.deletedAt;
+    const active = (settings.containerHosts || []).filter((item) => item.id !== hostId);
+    const trashed = (settings.trashedContainerHosts || []).filter((item) => item.id !== hostId);
+    const purged = (settings.purgedContainerHostIds || []).filter((id) => id !== hostId);
+    await this.settingsStore.update({ containerHosts: [...active, restored], trashedContainerHosts: trashed, purgedContainerHostIds: purged });
+    this.hosts.set(hostId, restored);
+    this.trashedHosts.delete(hostId);
+    this.purgedHostIds.delete(hostId);
+    return publicHost(restored);
+  }
+
+  async purgeHost(hostId) {
+    if (!this.trashedHosts.has(hostId)) throw Object.assign(new Error('SSH host is not in trash'), { code: 'CONTAINER_HOST_NOT_IN_TRASH' });
+    const settings = await this.settingsStore.get();
+    const trashed = (settings.trashedContainerHosts || []).filter((item) => item.id !== hostId);
+    const purged = [...new Set([...(settings.purgedContainerHostIds || []), hostId])];
+    await this.settingsStore.update({ trashedContainerHosts: trashed, purgedContainerHostIds: purged });
+    this.trashedHosts.delete(hostId);
+    this.purgedHostIds.add(hostId);
+    return { id: hostId, purgedAt: this.now() };
   }
 
   async checkHost(hostId) {
@@ -219,6 +273,7 @@ function publicHost(host) {
     image: host.image,
     identityConfigured: Boolean(host.identityFile),
     connected: false,
+    ...(host.deletedAt ? { deletedAt: host.deletedAt } : {}),
   };
 }
 

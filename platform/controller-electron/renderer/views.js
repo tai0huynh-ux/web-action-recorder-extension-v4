@@ -105,13 +105,13 @@ function containersPane(refresh, active = false, resizeHandle = null) {
         el('p', { className: 'muted', text: status }),
       ]),
       el('div', { className: 'toolbar tight' }, [
-        button(t('workspace.containers.checkAll'), () => refreshAllContainers(refresh), { className: 'button compact', disabled: store.workspace.containerAllPending || !store.containers.length }),
-        button(`+ ${t('workspace.containers.addHost')}`, () => {
+        button(t('workspace.containers.checkAll'), () => refreshAllContainers(refresh), { className: 'button compact', disabled: store.workspace.containerAllPending || !activeManagedContainers().length }),
+        button(store.workspace.hostSetupOpen ? t('workspace.containers.collapseHostSetup') : `+ ${t('workspace.containers.addHost')}`, () => {
           store.workspace.hostSetupOpen = !store.workspace.hostSetupOpen;
           store.workspace.hostError = '';
           refresh();
         }, { className: 'button compact' }),
-        button(`+ ${t('workspace.containers.add')}`, async () => {
+        button(store.workspace.addContainerOpen ? t('workspace.containers.collapseAdd') : `+ ${t('workspace.containers.add')}`, async () => {
           const opening = !store.workspace.addContainerOpen;
           store.workspace.addContainerOpen = opening;
           if (opening) await loadContainerHosts(refresh);
@@ -125,6 +125,7 @@ function containersPane(refresh, active = false, resizeHandle = null) {
       ariaLive: 'polite',
     }),
     store.workspace.hostSetupOpen ? hostSetupForm(refresh) : null,
+    hostDiagnosticsList(refresh),
     search,
     el('div', { className: 'toolbar tight' }, [
       button(t('workspace.containers.all'), () => {
@@ -149,6 +150,7 @@ function containersPane(refresh, active = false, resizeHandle = null) {
     store.workspace.addContainerOpen ? addContainerForm(refresh) : null,
     devices.length ? deviceList(devices, refresh) : el('p', { className: 'empty-state', text: t('workspace.containers.empty') }),
     activeManagedContainers().length ? managedContainerActions(refresh) : null,
+    trashPanel(refresh),
     resizeHandle,
   ]);
   pane.setAttribute('data-scroll-key', 'workspace-machines');
@@ -219,12 +221,18 @@ function hostSetupForm(refresh) {
   const pending = Boolean(store.workspace.hostPending);
   const status = el('p', { className: store.workspace.hostError ? 'status error' : 'status', text: store.workspace.hostError || store.workspace.containerNotice || '', ariaLive: 'polite' });
   return el('article', { className: 'host-setup-card', role: 'form', ariaLabel: t('workspace.containers.addHost') }, [
-    el('div', { className: 'host-setup-heading' }, [
+      el('div', { className: 'host-setup-heading' }, [
       el('div', {}, [
         el('strong', { text: t('workspace.containers.addHost') }),
         el('p', { className: 'muted', text: t('workspace.containers.hostSetupHelp') }),
       ]),
-      el('span', { className: 'status-pill connecting', text: pending ? t('workspace.containers.hostWorking') : t('workspace.containers.sshKeyRequired') }),
+      el('div', { className: 'toolbar tight' }, [
+        el('span', { className: 'status-pill connecting', text: pending ? t('workspace.containers.hostWorking') : t('workspace.containers.sshKeyRequired') }),
+        button(t('workspace.containers.collapseHostSetup'), () => {
+          store.workspace.hostSetupOpen = false;
+          refresh();
+        }, { className: 'button compact' }),
+      ]),
     ]),
     el('div', { className: 'form-grid host-form-grid' }, [
       field(t('workspace.containers.hostName'), name),
@@ -239,7 +247,6 @@ function hostSetupForm(refresh) {
       button(t('workspace.containers.repairAndConnectHost'), () => submitHostSetup('repair', status, refresh), { className: 'button primary', disabled: pending }),
     ]),
     status,
-    hostDiagnosticsList(),
   ]);
 }
 
@@ -291,11 +298,12 @@ async function submitHostSetup(mode, status, refresh) {
   }
 }
 
-function hostDiagnosticsList() {
+function hostDiagnosticsList(refresh) {
   const hosts = store.workspace.containerHosts || [];
   if (!hosts.length) return el('p', { className: 'muted', text: t('workspace.containers.noHostConfigured') });
   return el('div', { className: 'host-diagnostics-list' }, hosts.map((host) => {
     const checks = host.diagnostics || {};
+    const pending = store.workspace.trashPending?.[`host:${host.id}`];
     return el('div', { className: 'host-diagnostics-row' }, [
       el('strong', { text: host.label || host.id }),
       el('span', { className: host.connected ? 'status-pill online' : 'status-pill failed', text: host.connected ? t('workspace.containers.hostReady') : t('workspace.containers.hostRepairRequired') }),
@@ -307,12 +315,156 @@ function hostDiagnosticsList() {
         policy: checkMark(checks.apparmor && checks.seccomp),
         ca: checkMark(checks.ca),
       }) }),
+      button('×', () => trashHost(host, refresh), {
+        className: 'device-card-delete',
+        disabled: Boolean(pending),
+        ariaLabel: t('workspace.containers.moveHostToTrash', { name: host.label || host.id }),
+        title: t('workspace.containers.moveHostToTrash', { name: host.label || host.id }),
+      }),
     ]);
   }));
 }
 
 function checkMark(value) {
   return value ? 'OK' : '--';
+}
+
+function trashPanel(refresh) {
+  const containers = store.containers.filter((container) => container.status === 'deleted');
+  const hosts = store.workspace.trashHosts || [];
+  const count = containers.length + hosts.length;
+  const open = store.workspace.trashOpen === true;
+  return el('section', { className: `trash-panel${open ? ' open' : ''}`, ariaLabel: t('workspace.containers.trash') }, [
+    el('div', { className: 'trash-panel-heading' }, [
+      el('div', {}, [
+        el('h3', { text: t('workspace.containers.trash') }),
+        el('p', { className: 'muted', text: t('workspace.containers.trashHelp') }),
+      ]),
+      button(`${open ? '−' : '+'} ${t('workspace.containers.trash')} (${count})`, () => {
+        store.workspace.trashOpen = !open;
+        refresh();
+      }, { className: 'button compact', ariaLabel: t('workspace.containers.openTrash') }),
+    ]),
+    open ? trashContents(containers, hosts, refresh) : null,
+  ]);
+}
+
+function trashContents(containers, hosts, refresh) {
+  if (!containers.length && !hosts.length) return el('p', { className: 'empty-state', text: t('workspace.containers.trashEmpty') });
+  return el('div', { className: 'trash-list' }, [
+    ...hosts.map((host) => trashHostCard(host, refresh)),
+    ...containers.map((container) => trashContainerCard(container, refresh)),
+  ]);
+}
+
+function trashHostCard(host, refresh) {
+  const pending = store.workspace.trashPending?.[`host:${host.id}`];
+  return el('article', { className: 'trash-card' }, [
+    el('div', {}, [
+      el('strong', { text: host.label || host.name || host.id }),
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.linuxHost')} · ${host.target || host.id}` }),
+    ]),
+    el('div', { className: 'toolbar tight' }, [
+      button(t('workspace.containers.restore'), () => restoreTrashHost(host, refresh), { className: 'button compact', disabled: Boolean(pending) }),
+      button(t('workspace.containers.purge'), () => purgeTrashHost(host, refresh), { className: 'button compact danger', disabled: Boolean(pending) }),
+    ]),
+  ]);
+}
+
+function trashContainerCard(container, refresh) {
+  const pending = store.workspace.trashPending?.[`container:${container.id}`];
+  return el('article', { className: 'trash-card' }, [
+    el('div', {}, [
+      el('strong', { text: container.name || container.id }),
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.container')} · ${container.host || t('workspace.containers.unknown')}` }),
+      el('span', { className: 'device-meta', text: container.deletedAt || '' }),
+    ]),
+    el('div', { className: 'toolbar tight' }, [
+      button(t('workspace.containers.restore'), () => restoreTrashContainer(container, refresh), { className: 'button compact', disabled: Boolean(pending) }),
+      button(t('workspace.containers.purge'), () => purgeTrashContainer(container, refresh), { className: 'button compact danger', disabled: Boolean(pending) }),
+    ]),
+  ]);
+}
+
+async function trashHost(host, refresh) {
+  const hostId = host.id;
+  if (store.workspace.trashPending?.[`host:${hostId}`]) return;
+  if (!window.confirm(t('workspace.containers.moveHostToTrashConfirm', { name: host.label || host.id }))) return;
+  store.workspace.trashPending = { ...store.workspace.trashPending, [`host:${hostId}`]: 'trash' };
+  refresh();
+  try {
+    const result = await window.warController.containers.trashHost({ hostId });
+    if (result?.ok === false) throw new Error(safeError(result));
+    store.workspace.containerNotice = t('workspace.containers.movedToTrash');
+    await loadContainerHosts(refresh);
+    await refreshAll();
+  } catch (error) {
+    store.workspace.trashError = safeError({ code: error?.code || 'HOST_TRASH_FAILED', message: error?.message || String(error) });
+    store.workspace.containerNotice = store.workspace.trashError;
+  } finally {
+    const { [`host:${hostId}`]: _removed, ...remaining } = store.workspace.trashPending || {};
+    store.workspace.trashPending = remaining;
+    refresh();
+  }
+}
+
+async function restoreTrashHost(host, refresh) {
+  await trashHostAction('restoreHost', host, refresh, t('workspace.containers.restoredFromTrash'));
+}
+
+async function purgeTrashHost(host, refresh) {
+  if (!window.confirm(t('workspace.containers.purgeConfirm', { name: host.label || host.id }))) return;
+  await trashHostAction('purgeHost', host, refresh, t('workspace.containers.purgedFromTrash'));
+}
+
+async function trashHostAction(action, host, refresh, successNotice) {
+  const key = `host:${host.id}`;
+  if (store.workspace.trashPending?.[key]) return;
+  store.workspace.trashPending = { ...store.workspace.trashPending, [key]: action };
+  refresh();
+  try {
+    const result = await window.warController.containers[action]({ hostId: host.id });
+    if (result?.ok === false) throw new Error(safeError(result));
+    store.workspace.containerNotice = successNotice;
+    await loadContainerHosts(refresh);
+    await refreshAll();
+  } catch (error) {
+    store.workspace.trashError = safeError({ code: error?.code || 'HOST_TRASH_ACTION_FAILED', message: error?.message || String(error) });
+    store.workspace.containerNotice = store.workspace.trashError;
+  } finally {
+    const { [key]: _removed, ...remaining } = store.workspace.trashPending || {};
+    store.workspace.trashPending = remaining;
+    refresh();
+  }
+}
+
+async function restoreTrashContainer(container, refresh) {
+  await trashContainerAction('restore', container, refresh, t('workspace.containers.restoredFromTrash'));
+}
+
+async function purgeTrashContainer(container, refresh) {
+  if (!window.confirm(t('workspace.containers.purgeConfirm', { name: container.name || container.id }))) return;
+  await trashContainerAction('purge', container, refresh, t('workspace.containers.purgedFromTrash'));
+}
+
+async function trashContainerAction(action, container, refresh, successNotice) {
+  const key = `container:${container.id}`;
+  if (store.workspace.trashPending?.[key]) return;
+  store.workspace.trashPending = { ...store.workspace.trashPending, [key]: action };
+  refresh();
+  try {
+    const result = await window.warController.containers[action]({ containerId: container.id });
+    if (result?.ok === false || result?.data?.operation?.ok === false) throw new Error(safeError(result?.data?.operation || result));
+    store.workspace.containerNotice = successNotice;
+    await refreshAll();
+  } catch (error) {
+    store.workspace.trashError = safeError({ code: error?.code || 'CONTAINER_TRASH_ACTION_FAILED', message: error?.message || String(error) });
+    store.workspace.containerNotice = store.workspace.trashError;
+  } finally {
+    const { [key]: _removed, ...remaining } = store.workspace.trashPending || {};
+    store.workspace.trashPending = remaining;
+    refresh();
+  }
 }
 
 function addContainerForm(refresh) {
@@ -373,7 +525,13 @@ function addContainerForm(refresh) {
   const status = el('p', { className: 'status', text: store.workspace.containerNotice || '', ariaLive: 'polite' });
   const createDisabled = store.workspace.addContainerPending === true || !hosts.length;
   return el('article', { className: 'prototype-note', role: 'form', ariaLabel: t('workspace.containers.add') }, [
-    el('strong', { text: t('workspace.containers.add') }),
+    el('div', { className: 'form-section-heading' }, [
+      el('strong', { text: t('workspace.containers.add') }),
+      button(t('workspace.containers.collapseAdd'), () => {
+        store.workspace.addContainerOpen = false;
+        refresh();
+      }, { className: 'button compact' }),
+    ]),
     field(t('workspace.containers.host'), host),
     el('div', { className: 'form-grid container-name-grid' }, [
       field(t('workspace.containers.namePrefix'), namePrefix),
@@ -488,7 +646,7 @@ function managedContainerActions(refresh) {
             refresh();
           }, { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.duplicate'), () => duplicateContainer(container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
-          button(t('workspace.containers.delete'), () => containerAction('delete', container, refresh), { className: 'button chip danger', disabled: terminalDisabled || busy }),
+          button(t('workspace.containers.moveToTrash'), () => containerAction('delete', container, refresh), { className: 'button chip danger', disabled: terminalDisabled || busy }),
         ]),
         store.workspace.containerNetworkOpenId === container.id ? containerNetworkForm(container, refresh) : null,
       ]);
@@ -573,7 +731,7 @@ async function containerAction(action, container, refresh) {
   if (store.workspace.containerPending?.[containerId]) return;
   if (action === 'delete') {
     const label = container.name || container.id;
-    if (!window.confirm(t('workspace.containers.deleteConfirm', { name: label, id: container.id }))) return;
+    if (!window.confirm(t('workspace.containers.moveContainerToTrashConfirm', { name: label, id: container.id }))) return;
   }
   store.workspace.containerPending = { ...store.workspace.containerPending, [containerId]: action };
   store.workspace.containerNotice = t('workspace.containers.actionPending', { action: t(`workspace.containers.${action}`), name: container.name || container.id });
@@ -695,8 +853,8 @@ function deviceCard(device, devices, index, refresh) {
       }, {
         className: 'device-card-delete',
         disabled: deleteDisabled,
-        ariaLabel: t('workspace.containers.deleteConfirm', { name, id: managedContainer.id }),
-        title: t('workspace.containers.delete'),
+        ariaLabel: t('workspace.containers.moveContainerToTrashConfirm', { name, id: managedContainer.id }),
+        title: t('workspace.containers.moveToTrash'),
       }) : null,
     ]),
     el('span', { className: 'device-meta', text: shortId(id) }),

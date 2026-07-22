@@ -41,6 +41,12 @@ export function normalizeSettings(value = {}) {
   const containerHosts = Array.isArray(value.containerHosts)
     ? value.containerHosts.map(normalizeContainerHost).filter(Boolean)
     : [];
+  const trashedContainerHosts = Array.isArray(value.trashedContainerHosts)
+    ? value.trashedContainerHosts.map(normalizeTrashedContainerHost).filter(Boolean)
+    : [];
+  const purgedContainerHostIds = Array.isArray(value.purgedContainerHostIds)
+    ? value.purgedContainerHostIds.filter((id) => typeof id === 'string' && !['__proto__', 'constructor', 'prototype'].includes(id) && /^[A-Za-z0-9_.:-]{1,120}$/.test(id)).slice(0, 200)
+    : [];
   return {
     locale: value.locale === 'en' ? 'en' : 'vi',
     workspace: {
@@ -50,7 +56,18 @@ export function normalizeSettings(value = {}) {
     },
     ...(Object.keys(aliases).length ? { hostAliases: aliases } : {}),
     ...(containerHosts.length ? { containerHosts } : {}),
+    ...(trashedContainerHosts.length ? { trashedContainerHosts } : {}),
+    ...(purgedContainerHostIds.length ? { purgedContainerHostIds } : {}),
   };
+}
+
+function normalizeTrashedContainerHost(value) {
+  const host = normalizeContainerHost(value);
+  if (!host) return null;
+  const deletedAt = typeof value.deletedAt === 'string' && !/[\u0000-\u001f\u007f]/.test(value.deletedAt)
+    ? value.deletedAt.slice(0, 40)
+    : null;
+  return deletedAt ? { ...host, deletedAt } : null;
 }
 
 function normalizeContainerHost(value) {

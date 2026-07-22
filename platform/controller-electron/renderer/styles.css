@@ -433,12 +433,19 @@ th {
 }
 
 .host-setup-heading,
+.form-section-heading,
+.trash-panel-heading,
 .host-diagnostics-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.form-section-heading,
+.trash-panel-heading {
+  margin-bottom: 10px;
 }
 
 .host-form-grid {
@@ -453,8 +460,49 @@ th {
 }
 
 .host-diagnostics-row {
+  position: relative;
   padding: 8px 0;
   border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 35%);
+}
+
+.trash-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger), var(--line) 72%);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #fff4ed, var(--panel) 72%);
+}
+
+.trash-panel h3 {
+  margin-bottom: 2px;
+}
+
+.trash-panel.open {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--danger), transparent 35%);
+}
+
+.trash-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--danger), transparent 72%);
+}
+
+.trash-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.trash-card > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .status-pill.failed {
@@ -1034,6 +1082,11 @@ th {
   }
 
   .task-package-heading {
+    flex-direction: column;
+  }
+
+  .trash-card {
+    align-items: stretch;
     flex-direction: column;
   }
 }

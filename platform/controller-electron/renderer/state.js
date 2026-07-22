@@ -23,6 +23,10 @@ export const store = {
     containerNameSequence: null,
     containerHostId: '',
     containerHosts: [],
+    trashHosts: [],
+    trashOpen: false,
+    trashPending: {},
+    trashError: '',
     containerHostStatus: 'idle',
     containerNotice: '',
     hostSetupOpen: false,
@@ -118,7 +122,7 @@ export function unwrap(result) {
 }
 
 export async function refreshAll() {
-  const [bootstrap, runtime, settings, pairings, devices, sessions, containers, groups, workflows, jobs] = await Promise.all([
+  const [bootstrap, runtime, settings, pairings, devices, sessions, containers, trash, groups, workflows, jobs] = await Promise.all([
     api.system.getBootstrapState(),
     api.system.getRuntimeStatus(),
     api.settings.get(),
@@ -126,6 +130,7 @@ export async function refreshAll() {
     api.devices.list({ limit: 200 }),
     api.sessions.list({ limit: 200 }),
     api.containers.list({ limit: 200 }),
+    api.containers.trash(),
     api.groups.list({ limit: 200 }),
     api.workflows.list({ limit: 200 }),
     api.jobs.list({ limit: 200 }),
@@ -134,10 +139,21 @@ export async function refreshAll() {
   store.runtime = unwrap(runtime);
   store.settings = unwrap(settings) || store.settings;
   store.settings.workspace = clampWorkspaceLayout(store.settings.workspace);
+  if (!store.workspace.containerHosts.length && Array.isArray(store.settings.containerHosts)) {
+    store.workspace.containerHosts = store.settings.containerHosts.map((host) => ({
+      id: host.id,
+      label: host.name,
+      name: host.name,
+      target: host.target,
+      runtime: 'ssh-docker',
+      connected: false,
+    }));
+  }
   store.pairings = unwrap(pairings) || { pending: [], paired: [] };
   store.devices = unwrap(devices)?.devices || [];
   store.sessions = unwrap(sessions)?.sessions || [];
   store.containers = unwrap(containers)?.containers || [];
+  store.workspace.trashHosts = unwrap(trash)?.hosts || [];
   store.groups = unwrap(groups)?.groups || [];
   store.workflows = unwrap(workflows)?.workflows || [];
   store.jobs = unwrap(jobs)?.jobs || [];

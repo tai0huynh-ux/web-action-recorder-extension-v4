@@ -75,7 +75,7 @@ test('group registry creates, updates, deletes, mutates membership idempotently,
   assert.deepEqual(await core.groups.deleteGroup(group.id), { ok: true });
 });
 
-test('container registry creates, updates status, duplicates, and soft deletes managed containers', async () => {
+test('container registry creates, updates status, duplicates, trashes, restores, and purges managed containers', async () => {
   const store = createMemoryStore();
   const core = new ControllerCore({ store, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
   await core.load();
@@ -100,6 +100,13 @@ test('container registry creates, updates status, duplicates, and soft deletes m
   const deleted = await core.containers.deleteContainer(created.id);
   assert.equal(deleted.status, 'deleted');
   assert.equal(core.containers.listContainers().containers.length, 2);
+  const restored = await core.containers.restoreContainer(created.id);
+  assert.equal(restored.status, 'stopped');
+  assert.equal(restored.deletedAt, null);
+  await core.containers.deleteContainer(created.id);
+  const purged = await core.containers.purgeContainer(created.id);
+  assert.equal(purged.id, created.id);
+  assert.equal(core.containers.listContainers().containers.length, 1);
 });
 
 test('job service creates dispatch plan, per-device jobs, idempotency, transitions, cancel, timeout, and target snapshot', async () => {

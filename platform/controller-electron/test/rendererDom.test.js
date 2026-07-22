@@ -181,6 +181,23 @@ test('workspace renders three panels and accessible prototype controls', () => {
   assert.ok(accessibleName(all(rendered, (node) => node.localName === 'button' && node.textContent.includes('Thêm container'))[0]).includes('Thêm container'));
 });
 
+test('container and Linux host setup sections expose working collapse controls', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+  await clickButton(current, `+ ${i18n.t('workspace.containers.addHost')}`);
+  assert.ok(all(current, (node) => node.className === 'host-setup-card').length);
+  await clickButton(current, i18n.t('workspace.containers.collapseHostSetup'));
+  assert.equal(all(current, (node) => node.className === 'host-setup-card').length, 0);
+
+  await clickButton(current, `+ ${i18n.t('workspace.containers.add')}`);
+  assert.ok(all(current, (node) => node.getAttribute('role') === 'form' && node.getAttribute('aria-label') === i18n.t('workspace.containers.add')).length);
+  await clickButton(current, i18n.t('workspace.containers.collapseAdd'));
+  assert.equal(all(current, (node) => node.className === 'prototype-note').length, 0);
+});
+
 test('workspace exposes two accessible draggable panel separators and stable scroll keys', () => {
   resetStore();
   state.store.view = 'workspace';
@@ -640,7 +657,7 @@ test('managed container delete requires exact confirmation', async () => {
   let confirmText = '';
   window.confirm = (message) => { confirmText = message; return false; };
   const rendered = views.renderView(() => {});
-  await clickButton(rendered, 'Xóa');
+  await clickButton(rendered, i18n.t('workspace.containers.moveToTrash'));
   assert.equal(apiState.containerCalls.delete || 0, 0);
   assert.ok(confirmText.includes('Agent One'));
   assert.ok(confirmText.includes('container-1'));
@@ -655,10 +672,61 @@ test('managed container delete calls the Controller and refreshes terminal statu
   let current;
   const refresh = () => { current = views.renderView(refresh); };
   current = views.renderView(refresh);
-  await clickButton(current, i18n.t('workspace.containers.delete'));
+  await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
   assert.equal(apiState.containerCalls.delete, 1);
   assert.equal(apiState.containers[0].status, 'deleted');
   assert.ok(current.textContent.includes(i18n.t('workspace.containers.actionDone')));
+});
+
+test('container trash remains available when empty and supports restore and permanent deletion', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({ id: 'container-1', name: 'Agent One' })];
+  state.store.containers = apiState.containers;
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  assert.ok(current.textContent.includes(`${i18n.t('workspace.containers.trash')} (0)`));
+  await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
+  assert.equal(apiState.containers[0].status, 'deleted');
+  await clickButton(current, `+ ${i18n.t('workspace.containers.trash')} (1)`);
+  await clickButton(current, i18n.t('workspace.containers.restore'));
+  assert.equal(apiState.containerCalls.restore, 1);
+  assert.equal(apiState.containers[0].status, 'stopped');
+
+  await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
+  await clickButton(current, i18n.t('workspace.containers.purge'));
+  assert.equal(apiState.containerCalls.purge, 1);
+  assert.equal(apiState.containers.length, 0);
+  assert.ok(current.textContent.includes(i18n.t('workspace.containers.trashEmpty')));
+});
+
+test('Linux host X moves the host to trash where it can be restored or purged', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const host = { id: 'ssh-host-1', label: 'Reviewed Linux', name: 'Reviewed Linux', target: 'root@192.168.1.201', connected: true, diagnostics: { docker: true } };
+  apiState.containerHostsResult = { ok: true, data: { status: 'connected', hosts: [host] } };
+  state.store.workspace.containerHosts = [host];
+  window.confirm = () => true;
+  let current;
+  const refresh = () => { current = views.renderView(refresh); };
+  current = views.renderView(refresh);
+
+  const hostRow = all(current, (node) => node.className === 'host-diagnostics-row')[0];
+  await all(hostRow, (node) => node.className === 'device-card-delete')[0].click();
+  assert.equal(apiState.hostCalls.trash, 1);
+  assert.equal(state.store.workspace.containerHosts.length, 0);
+  await clickButton(current, `+ ${i18n.t('workspace.containers.trash')} (1)`);
+  await clickButton(current, i18n.t('workspace.containers.restore'));
+  assert.equal(apiState.hostCalls.restore, 1);
+
+  const restoredRow = all(current, (node) => node.className === 'host-diagnostics-row')[0];
+  await all(restoredRow, (node) => node.className === 'device-card-delete')[0].click();
+  await clickButton(current, i18n.t('workspace.containers.purge'));
+  assert.equal(apiState.hostCalls.purge, 1);
+  assert.equal(apiState.trashHosts.length, 0);
 });
 
 test('managed container card exposes a direct delete control without changing selection', async () => {
@@ -745,7 +813,7 @@ test('managed container delete reports backend cleanup failure instead of claimi
   const refresh = () => { current = views.renderView(refresh); };
   current = views.renderView(refresh);
 
-  await clickButton(current, i18n.t('workspace.containers.delete'));
+  await clickButton(current, i18n.t('workspace.containers.moveToTrash'));
 
   assert.equal(apiState.containerCalls.delete, 1);
   assert.equal(state.store.workspace.containerErrors['container-1'], 'CONTAINER_ADAPTER_UNAVAILABLE: Adapter unavailable');
@@ -1314,6 +1382,7 @@ function resetStore() {
   apiState.containerCalls = {};
   apiState.containerResults = {};
   apiState.containerHostsResult = null;
+  apiState.trashHosts = [];
   apiState.hostCalls = {};
   apiState.hostRequests = [];
   apiState.lastContainerAddPayload = null;
@@ -1356,6 +1425,10 @@ function resetStore() {
       containerNameSequence: null,
       containerHostId: '',
       containerHosts: [],
+      trashHosts: [],
+      trashOpen: false,
+      trashPending: {},
+      trashError: '',
       containerHostStatus: 'idle',
       containerNotice: '',
       hostSetupOpen: false,
@@ -1505,6 +1578,7 @@ const apiState = {
   containerCalls: {},
   containerResults: {},
   containerHostsResult: null,
+  trashHosts: [],
   hostCalls: {},
   hostRequests: [],
   lastContainerAddPayload: null,
@@ -1557,6 +1631,7 @@ function installControllerApi() {
       sessions: { list: async () => ({ ok: true, data: { sessions: [] } }) },
       containers: {
         list: async () => ({ ok: true, data: { containers: apiState.containers } }),
+        trash: async () => ({ ok: true, data: { containers: apiState.containers.filter((container) => container.status === 'deleted'), hosts: apiState.trashHosts } }),
         hosts: async () => apiState.containerHostsResult || ({
           ok: true,
           data: { status: 'connected', hosts: [{ id: 'configured-docker-host', label: 'Linux Docker', runtime: 'ssh-docker', connected: true }] },
@@ -1572,6 +1647,27 @@ function installControllerApi() {
           apiState.hostCalls.repair = (apiState.hostCalls.repair || 0) + 1;
           apiState.containerHostsResult = { ok: true, data: { status: 'connected', hosts: [{ id: hostId, label: 'Reviewed Linux', name: 'Reviewed Linux', target: 'root@192.168.1.201', runtime: 'ssh-docker', connected: true, diagnostics: { ready: true } }] } };
           return { ok: true, data: { id: hostId, label: 'Reviewed Linux', connected: true } };
+        },
+        trashHost: async ({ hostId }) => {
+          apiState.hostCalls.trash = (apiState.hostCalls.trash || 0) + 1;
+          const hosts = apiState.containerHostsResult?.data?.hosts || [];
+          const host = hosts.find((item) => item.id === hostId) || { id: hostId, label: hostId };
+          apiState.trashHosts = [...apiState.trashHosts, { ...host, deletedAt: '2026-07-16T00:00:00.000Z' }];
+          apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: hosts.filter((item) => item.id !== hostId) } };
+          return { ok: true, data: host };
+        },
+        restoreHost: async ({ hostId }) => {
+          apiState.hostCalls.restore = (apiState.hostCalls.restore || 0) + 1;
+          const host = apiState.trashHosts.find((item) => item.id === hostId);
+          apiState.trashHosts = apiState.trashHosts.filter((item) => item.id !== hostId);
+          const active = apiState.containerHostsResult?.data?.hosts || [];
+          apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [...active, { ...host, connected: false }] } };
+          return { ok: true, data: host };
+        },
+        purgeHost: async ({ hostId }) => {
+          apiState.hostCalls.purge = (apiState.hostCalls.purge || 0) + 1;
+          apiState.trashHosts = apiState.trashHosts.filter((item) => item.id !== hostId);
+          return { ok: true, data: { id: hostId } };
         },
         add: async (payload) => {
           const { name, image, host, runtime } = payload;
@@ -1610,6 +1706,12 @@ function installControllerApi() {
           return { ok: true, data: {} };
         },
         delete: async ({ containerId }) => containerOperation('delete', containerId, 'deleted'),
+        restore: async ({ containerId }) => containerOperation('restore', containerId, 'stopped'),
+        purge: async ({ containerId }) => {
+          apiState.containerCalls.purge = (apiState.containerCalls.purge || 0) + 1;
+          apiState.containers = apiState.containers.filter((container) => container.id !== containerId);
+          return { ok: true, data: { operation: { ok: true }, purged: { id: containerId } } };
+        },
       },
       groups: {
         list: async () => ({ ok: true, data: { groups: apiState.groups } }),
