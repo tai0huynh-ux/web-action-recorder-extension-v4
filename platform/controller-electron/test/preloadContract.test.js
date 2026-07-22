@@ -23,6 +23,7 @@ test('preload exposes only the warController global with the exact API shape', (
     devices: ['get', 'list'],
     settings: ['get', 'update'],
     sessions: ['list'],
+    remote: ['capture', 'control'],
     containers: ['add', 'addHost', 'checkHost', 'delete', 'duplicate', 'hosts', 'list', 'purge', 'purgeHost', 'reconnect', 'reconnectHost', 'refresh', 'repairHost', 'restart', 'restore', 'restoreHost', 'start', 'stop', 'trash', 'trashHost', 'updateHost', 'updateNetwork'],
     groups: ['addDevice', 'create', 'list', 'remove', 'removeDevice', 'update'],
     workflows: ['get', 'graphGet', 'graphPreview', 'graphSave', 'importFile', 'list', 'originPreview', 'originPull'],

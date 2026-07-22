@@ -255,6 +255,40 @@ test('controller session handles origin sync requests and sends correlated respo
   assert.equal(sent.sessionId, 'session-1');
 });
 
+test('controller session receives remote control and returns a correlated response', () => {
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler: fakeScheduler(),
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const requests = [];
+  client.on('remoteControl', (request) => requests.push(request));
+  client.start();
+  socket.emit('open');
+  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
+  socket.emit('message', JSON.stringify({
+    protocolVersion: 'war-control.v2',
+    messageId: 'remote-request-a',
+    type: 'remote.control.request',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    deadline: '2026-07-16T00:00:10.000Z',
+    idempotencyKey: 'remote-a',
+    payload: { command: 'input.shortcut', payload: { keys: 'CTRL+T' } }
+  }));
+
+  client.sendRemoteControlResponse(requests[0], { ok: true, requestId: 'remote-a', result: { executed: true } });
+
+  const sent = JSON.parse(socket.sent.at(-1));
+  assert.equal(requests.length, 1);
+  assert.equal(sent.type, 'remote.control.response');
+  assert.equal(sent.correlationId, 'remote-request-a');
+  assert.equal(sent.sessionId, 'session-1');
+});
+
 class FakeSocket extends EventEmitter {
   constructor() {
     super();

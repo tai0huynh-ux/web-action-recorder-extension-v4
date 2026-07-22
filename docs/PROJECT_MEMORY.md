@@ -33,7 +33,7 @@ WAR v5 Phase 1 - Localized Three-Pane Controller Workspace.
 - No Companion HTTP or scheduler runtime behavior changed.
 - Browser Agent HTTP runtime behavior remains unchanged; Native Bridge uses a private local socket.
 - Companion command statuses map through a pure compatibility adapter.
-- Unsupported future capabilities such as remote video and clipboard are represented as false.
+- Remote live control now uses bounded JPEG viewport frames plus typed raw-input commands over the authenticated WSS session; bidirectional clipboard synchronization remains represented as false.
 - `legacyCompanionPollingEnabled` defaults to true for existing compatibility.
 - Companion HTTP is now a compatibility adapter over Controller Core.
 - Controller Core has no HTTP, WebSocket, Electron, Chrome API, or fixed filesystem path dependency.

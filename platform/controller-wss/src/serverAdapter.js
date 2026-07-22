@@ -162,6 +162,16 @@ export class ControllerWssServerAdapter extends EventEmitter {
     }, { timeoutMs: 10000, expectedTypes: ['origin.workflow.response'] });
   }
 
+  requestRemoteControl(deviceId, generation, payload = {}) {
+    const { deadline, ...requestPayload } = payload;
+    return this.requestAgent(deviceId, generation, {
+      type: 'remote.control.request',
+      deadline: deadline || new Date(Date.parse(this.now()) + 10000).toISOString(),
+      idempotencyKey: payload.idempotencyKey || this.id('remote'),
+      payload: requestPayload,
+    }, { timeoutMs: 10000, expectedTypes: ['remote.control.response'] });
+  }
+
   registerActiveConnection(session, connection) {
     if (!connection) return;
     this.activeConnections.set(session.deviceId, { generation: session.generation, connection });

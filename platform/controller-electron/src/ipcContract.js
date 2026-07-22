@@ -28,6 +28,10 @@ export const IPC_CHANNELS = deepFreeze({
   sessions: {
     list: `${CHANNEL_PREFIX}sessions:list`,
   },
+  remote: {
+    capture: `${CHANNEL_PREFIX}remote:capture`,
+    control: `${CHANNEL_PREFIX}remote:control`,
+  },
   containers: {
     list: `${CHANNEL_PREFIX}containers:list`,
     trash: `${CHANNEL_PREFIX}containers:trash`,
@@ -106,6 +110,8 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.settings.get,
   IPC_CHANNELS.settings.update,
   IPC_CHANNELS.sessions.list,
+  IPC_CHANNELS.remote.capture,
+  IPC_CHANNELS.remote.control,
   IPC_CHANNELS.containers.list,
   IPC_CHANNELS.containers.trash,
   IPC_CHANNELS.containers.hosts,
@@ -181,6 +187,8 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.settings.get, NO_PAYLOAD],
   [IPC_CHANNELS.settings.update, objectSchema({ locale: 'optionalString', workspace: 'optionalObject', hostAliases: 'optionalObject' })],
   [IPC_CHANNELS.sessions.list, LIST_PAYLOAD],
+  [IPC_CHANNELS.remote.capture, objectSchema({ deviceId: 'id', quality: 'optionalPositiveInteger' })],
+  [IPC_CHANNELS.remote.control, objectSchema({ deviceIds: 'optionalIdArray', command: 'id', payload: 'optionalObject', synchronized: 'optionalBoolean' })],
   [IPC_CHANNELS.containers.list, LIST_PAYLOAD],
   [IPC_CHANNELS.containers.trash, NO_PAYLOAD],
   [IPC_CHANNELS.containers.hosts, NO_PAYLOAD],

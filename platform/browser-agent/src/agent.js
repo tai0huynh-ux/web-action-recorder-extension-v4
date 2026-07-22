@@ -4,7 +4,7 @@ import { loadConfig, ensureDataDirs, serializeConfig } from './config.js';
 import { loadOrCreateDeviceIdentity } from './deviceIdentity.js';
 import { BrowserController } from './browserController.js';
 import { BrowserSupervisor } from './browserSupervisor.js';
-import { ControlDispatcher } from './controlDispatcher.js';
+import { ControlDispatcher, supportedCommandTypes } from './controlDispatcher.js';
 import { createHttpServer, listen } from './httpServer.js';
 import { createLogger } from './errors.js';
 import { createWorkflowRegistry } from './workflowRegistry.js';
@@ -87,6 +87,11 @@ export async function main() {
     controllerSession.on('cancel', (cancel) => {
       nativeBridge.enqueueCancel(cancel);
     });
+    controllerSession.on('remoteControl', (request) => {
+      executeRemoteControlRequest({ request, controllerSession, controller, dispatcher, identity, log }).catch((error) => {
+        log('warn', 'agent', 'remote_control_response_failed', { message: error.message });
+      });
+    });
     controllerSession.on('authenticated', () => {
       nativeBridge.flushTerminalOutbox().catch((error) => log('warn', 'agent', 'terminal_outbox_flush_failed', { message: error.message }));
     });
@@ -123,6 +128,54 @@ export async function main() {
   await listen(server, config);
   log('info', 'agent', 'http_listening', { host: config.host, port: config.port });
   controllerSession?.start();
+}
+
+async function executeRemoteControlRequest({ request, controllerSession, controller, dispatcher, identity, log }) {
+  const payload = request?.payload || {};
+  const command = String(payload.command || '');
+  const commandPayload = payload.payload && typeof payload.payload === 'object' ? payload.payload : {};
+  try {
+    await waitUntil(payload.syncAt);
+    let result;
+    if (command === 'remote.capture') {
+      result = await controller.captureRemoteFrame(commandPayload);
+    } else {
+      if (!supportedCommandTypes.includes(command)) throw new Error('Remote command is not supported');
+      const deadline = request.deadline ? Date.parse(request.deadline) : Date.now() + 10000;
+      const deadlineMs = Math.max(0, deadline - Date.now());
+      result = await dispatcher.dispatch({
+        protocol: 'war-control.v1',
+        messageId: `remote-${request.messageId}`,
+        type: command,
+        deviceId: identity.deviceId,
+        timestamp: new Date().toISOString(),
+        deadlineMs,
+        idempotencyKey: payload.idempotencyKey || `remote-${request.messageId}`,
+        payload: commandPayload
+      });
+    }
+    return controllerSession.sendRemoteControlResponse(request, {
+      ok: true,
+      requestId: payload.requestId || request.messageId,
+      result: command === 'remote.capture' ? { captured: true, targetId: result.targetId } : result,
+      ...(command === 'remote.capture' ? { frame: result } : {})
+    });
+  } catch (error) {
+    log('warn', 'agent', 'remote_control_failed', { command, message: error.message });
+    return controllerSession.sendRemoteControlResponse(request, {
+      ok: false,
+      requestId: payload.requestId || request.messageId,
+      error: { code: error.code || 'REMOTE_CONTROL_FAILED', message: String(error.message || 'Remote control failed').slice(0, 300) }
+    });
+  }
+}
+
+async function waitUntil(syncAt) {
+  if (!syncAt) return;
+  const target = Date.parse(syncAt);
+  if (!Number.isFinite(target)) return;
+  const delay = Math.min(500, Math.max(0, target - Date.now()));
+  if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

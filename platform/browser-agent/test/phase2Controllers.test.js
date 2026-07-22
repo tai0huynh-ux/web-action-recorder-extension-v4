@@ -126,6 +126,7 @@ test('phase2 raw input shortcut validation allows only typed shortcuts', () => {
   assert.equal(validateShortcut(['CTRL', 'L']), 'CTRL+L');
   assert.equal(validateShortcut(['CTRL', 'A']), 'CTRL+A');
   assert.equal(validateShortcut(['CTRL', 'C']), 'CTRL+C');
+  assert.equal(validateShortcut(['CTRL', 'V']), 'CTRL+V');
   assert.throws(() => validateShortcut(['CTRL', 'ALT', 'DELETE']), /shortcut/);
 });
 
@@ -215,6 +216,16 @@ test('phase2 internal pages allow extensions', async () => {
   const controller = fakeBrowserController();
   const tab = await controller.openInternalPage('extensions');
   assert.equal(tab.url, 'chrome://extensions/');
+});
+
+test('phase2 raw input supports viewport drag through coordinate-aware mouse down/up', async () => {
+  const raw = makeRaw();
+  const moves = [];
+  raw.page.mouse.move = async (...args) => moves.push(args);
+  await raw.execute('input.mouseDown', { space: 'viewport', x: 10, y: 20, button: 'left' });
+  await raw.execute('input.mouseUp', { space: 'viewport', x: 80, y: 90, button: 'left' });
+  assert.deepEqual(moves, [[10, 20], [80, 90]]);
+  assert.deepEqual(raw.getState().heldButtons, []);
 });
 
 test('phase2 sandbox status parses the Chromium-rendered ZygoteHost table', async () => {

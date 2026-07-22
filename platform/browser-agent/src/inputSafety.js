@@ -22,6 +22,7 @@ export const KEY_ALLOWLIST = new Set([
 export const SHORTCUT_ALLOWLIST = new Set([
   'CTRL+A',
   'CTRL+C',
+  'CTRL+V',
   'CTRL+L',
   'CTRL+T',
   'CTRL+W',

@@ -107,6 +107,7 @@ export class ControllerSessionClient extends EventEmitter {
     if (envelope.payload?.session) this.setSession(envelope.payload.session);
     if (envelope.type === 'execution.dispatch') this.emit('dispatch', envelope.payload);
     if (envelope.type === 'execution.cancel') this.emit('cancel', envelope.payload);
+    if (envelope.type === 'remote.control.request') this.emit('remoteControl', envelope);
     if (envelope.type === 'origin.inventory.request') this.emit('originInventoryRequest', envelope);
     if (envelope.type === 'origin.workflow.get') this.emit('originWorkflowGet', envelope);
     if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
@@ -123,6 +124,19 @@ export class ControllerSessionClient extends EventEmitter {
       protocolVersion: PROTOCOL_VERSION,
       messageId: id('origin'),
       type: request.type === 'origin.workflow.get' ? 'origin.workflow.response' : 'origin.inventory.response',
+      sentAt: this.now(),
+      correlationId: request.messageId,
+      deviceId: this.identity.deviceId,
+      sessionId: this.session?.sessionId,
+      payload
+    });
+  }
+
+  sendRemoteControlResponse(request, payload) {
+    return this.send({
+      protocolVersion: PROTOCOL_VERSION,
+      messageId: id('remote-response'),
+      type: 'remote.control.response',
       sentAt: this.now(),
       correlationId: request.messageId,
       deviceId: this.identity.deviceId,
@@ -321,9 +335,9 @@ export function buildDeviceDescriptor(identity, version, now) {
       rawBrowserInput: true,
       nativeX11Input: true,
       screenshot: true,
-      remoteVideo: false,
+      remoteVideo: true,
       clipboardText: false,
-      synchronizedInput: false
+      synchronizedInput: true
     },
     labels: identity.labels || [],
     groupIds: identity.groupIds || [],

@@ -96,6 +96,24 @@ test('extension detection works when service worker is asleep but extension page
   assert.equal(status.extensionId, 'abc123');
 });
 
+test('remote frame capture returns a bounded JPEG for the active Chromium viewport', async () => {
+  const controller = fakeController();
+  const page = fakePage('https://fixture.local/remote', {
+    screenshot: async () => Buffer.from('jpeg-frame'),
+    viewportSize: () => ({ width: 1280, height: 720 }),
+  });
+  controller.context._pages.push(page);
+  controller.activeTargetId = controller.registerPage(page);
+
+  const frame = await controller.captureRemoteFrame({ quality: 45 });
+
+  assert.equal(frame.mimeType, 'image/jpeg');
+  assert.equal(frame.encoding, 'base64');
+  assert.equal(frame.data, Buffer.from('jpeg-frame').toString('base64'));
+  assert.equal(frame.width, 1280);
+  assert.equal(frame.height, 720);
+});
+
 test('native bridge manifest creation wakes extension polling after load', async () => {
   const extensionDir = tempExtension();
   const hostPath = path.join(os.tmpdir(), `war-native-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -183,6 +201,8 @@ function fakePage(url, methods = {}) {
     page._url = nextUrl;
   });
   page.evaluate = methods.evaluate || (async () => {});
+  page.screenshot = methods.screenshot || (async () => Buffer.from('jpeg'));
+  page.viewportSize = methods.viewportSize || (() => ({ width: 800, height: 600 }));
   page.close = async () => {
     page._closed = true;
     page.emit('close');

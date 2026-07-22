@@ -33,6 +33,8 @@ Unknown top-level properties, unknown message types, wrong protocol versions, in
 - `controller.job.cancel`
 - `native.bridge.request`
 - `native.bridge.response`
+- `remote.control.request`
+- `remote.control.response`
 - `pairing.request`
 - `pairing.result`
 
@@ -41,6 +43,14 @@ Unknown top-level properties, unknown message types, wrong protocol versions, in
 Required fields: `deviceId`, `displayName`, `hostName`, `platform`, `architecture`, `agentVersion`, `extensionVersion`, `browserVersion`, `protocolVersion`, `capabilities`, `labels`, `groupIds`, `status`, `lastSeenAt`.
 
 Capabilities include `workflowExecution`, `semanticControl`, `rawViewportInput`, `rawBrowserInput`, `nativeX11Input`, `screenshot`, `remoteVideo`, `clipboardText`, and `synchronizedInput`. Unsupported future features are represented as `false`.
+
+`remoteVideo=true` means the Agent supports bounded JPEG viewport frames over the authenticated Controller session. It does not imply VNC, WebRTC, arbitrary desktop capture, or remote shell. `synchronizedInput=true` means the Controller may fan the same typed input command to multiple authenticated Agent sessions with a shared `syncAt` timestamp. `clipboardText` remains false until bidirectional clipboard read/write is implemented.
+
+## Remote Control
+
+`remote.control.request` carries one allowlisted typed Browser Agent command, its bounded payload, optional request/synchronization identifiers, and optional `syncAt`. It is mutating and therefore requires an envelope deadline. The Agent returns a correlated `remote.control.response` with a bounded result or safe error.
+
+The `remote.capture` command returns an `image/jpeg` base64 frame with width, height, target ID, and sequence metadata. Raw JPEG bytes are capped at 500 KB and the encoded protocol field is capped at 700,000 characters so it remains below the WSS payload limit.
 
 ## WorkflowRevision
 

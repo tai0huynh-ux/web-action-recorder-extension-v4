@@ -523,6 +523,22 @@ test('offline cancel keeps controller-side cancellation and returns an offline t
   assert.equal(cancelled.data.transport.warningCode, 'SESSION_OFFLINE');
 });
 
+test('application fans synchronized remote input to selected online Agents and captures a bounded frame', async () => {
+  const core = await connectedCore();
+  await pairSecondDevice(core);
+  const transport = fakeTransport();
+  const app = application(core, transport);
+
+  const control = await app.remoteControl({ deviceIds: ['dev-a', 'dev-b'], command: 'input.shortcut', payload: { keys: 'CTRL+T' }, synchronized: true });
+  assert.equal(control.data.targets.every((item) => item.ok), true);
+  assert.equal(transport.remoteRequests.length, 2);
+  assert.equal(transport.remoteRequests[0].payload.syncAt, transport.remoteRequests[1].payload.syncAt);
+
+  const capture = await app.remoteCapture({ deviceId: 'dev-a', quality: 45 });
+  assert.equal(capture.data.frame.mimeType, 'image/jpeg');
+  assert.equal(capture.data.frame.width, 800);
+});
+
 function application(core, transport) {
   return new ControllerApplicationService({
     core,
@@ -538,6 +554,7 @@ function fakeTransport({ failDispatch = false, failDispatchDeviceId = null, fail
     cancels: [],
     originInventoryRequests: [],
     originWorkflowRequests: [],
+    remoteRequests: [],
     sendDispatch(deviceId, generation, dispatch) {
       if (failDispatch || deviceId === failDispatchDeviceId) throw Object.assign(new Error('send failed'), { code: 'WSS_SEND_FAILED' });
       this.dispatches.push({ deviceId, generation, dispatch });
@@ -556,6 +573,13 @@ function fakeTransport({ failDispatch = false, failDispatchDeviceId = null, fail
       this.originWorkflowRequests.push({ deviceId, generation, payload });
       const workflow = originWorkflows[`${payload.workflowId}:${payload.revision}`];
       return workflow ? { payload: { workflow: structuredClone(workflow) } } : { payload: { error: { code: 'WORKFLOW_NOT_FOUND', message: 'missing' } } };
+    },
+    async requestRemoteControl(deviceId, generation, payload) {
+      this.remoteRequests.push({ deviceId, generation, payload: structuredClone(payload) });
+      if (payload.command === 'remote.capture') {
+        return { payload: { ok: true, frame: { mimeType: 'image/jpeg', encoding: 'base64', data: 'YQ==', width: 800, height: 600, sequence: 1 } } };
+      }
+      return { payload: { ok: true, result: { executed: true } } };
     }
   };
 }

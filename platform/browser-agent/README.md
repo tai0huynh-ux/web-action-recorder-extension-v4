@@ -154,6 +154,12 @@ Status: Implemented but Gate Blocked.
 
 Phase 2 extends `/v1/control` with typed semantic and raw browser commands. It still does not expose arbitrary JavaScript, generic CDP passthrough, shell execution, VNC/noVNC, WebRTC streaming, Native Messaging, clipboard sync, or Windows file transfer.
 
+### Controller Live Control
+
+The authenticated outbound Controller WSS session additionally supports `remote.control.request` / `remote.control.response`. The Agent can return a bounded JPEG viewport frame and execute the existing allowlisted raw-input commands, including pointer drag/wheel, regular typing, and `Ctrl+T`, `Ctrl+C`, and `Ctrl+V`. Multiple-container synchronization is performed by Controller fan-out with a shared `syncAt`; the Agent does not open another listener or expose generic CDP.
+
+This is a lightweight LAN control path with selectable 1/3/6 FPS snapshots, not VNC, noVNC, WebRTC, full desktop capture, or bidirectional clipboard synchronization.
+
 ### Semantic Commands
 
 - `page.click`

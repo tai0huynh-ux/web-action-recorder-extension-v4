@@ -17,6 +17,28 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_GROUPED_INPUT_BYTES = 64 * 1024;
 const MAX_GROUPED_INPUT_ROWS = 200;
 const GROUPED_INPUT_MODES = new Set(['text', 'table', 'cell']);
+const REMOTE_CONTROL_COMMANDS = new Set([
+  'browser.getState',
+  'browser.focusWindow',
+  'tab.list',
+  'tab.open',
+  'tab.activate',
+  'tab.navigate',
+  'tab.close',
+  'input.mouseMove',
+  'input.mouseDown',
+  'input.mouseUp',
+  'input.click',
+  'input.wheel',
+  'input.keyDown',
+  'input.keyUp',
+  'input.insertText',
+  'input.shortcut',
+  'input.stopAll',
+  'input.getState',
+]);
+const MAX_REMOTE_TARGETS = 8;
+const MAX_REMOTE_PAYLOAD_BYTES = 32768;
 
 export class ControllerApplicationService extends EventEmitter {
   constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; }
@@ -150,6 +172,48 @@ export class ControllerApplicationService extends EventEmitter {
   async getSettings() { return this.result(await this.settingsStore.get()); }
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
+  async remoteCapture({ deviceId, quality = 45 } = {}) {
+    const session = this.requireRemoteSession(deviceId);
+    if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
+    if (!Number.isInteger(quality) || quality < 20 || quality > 70) throw codedError('REMOTE_INVALID_QUALITY', 'Remote frame quality must be between 20 and 70');
+    const response = await this.wssTransport.requestRemoteControl(deviceId, session.generation, {
+      command: 'remote.capture',
+      payload: { quality },
+      requestId: this.id('remote-capture'),
+      deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
+    });
+    if (response?.payload?.ok !== true) {
+      throw codedError(response?.payload?.error?.code || 'REMOTE_CAPTURE_FAILED', response?.payload?.error?.message || 'Remote frame capture failed');
+    }
+    return this.result({ deviceId, frame: response.payload.frame || response.payload.result });
+  }
+  async remoteControl({ deviceIds, command, payload = {}, synchronized = false } = {}) {
+    if (!REMOTE_CONTROL_COMMANDS.has(command)) throw codedError('REMOTE_COMMAND_NOT_ALLOWED', 'Remote command is not allowed');
+    const ids = [...new Set(Array.isArray(deviceIds) ? deviceIds.filter((item) => typeof item === 'string' && item.trim()) : [])];
+    if (!ids.length || ids.length > MAX_REMOTE_TARGETS) throw codedError('REMOTE_TARGET_LIMIT', `Select between 1 and ${MAX_REMOTE_TARGETS} online containers`);
+    if (!isPlainObject(payload)) throw codedError('REMOTE_INVALID_PAYLOAD', 'Remote command payload must be an object');
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_REMOTE_PAYLOAD_BYTES) throw codedError('REMOTE_PAYLOAD_TOO_LARGE', 'Remote command payload is too large');
+    if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
+    const syncAt = synchronized && ids.length > 1 ? new Date(Date.parse(this.now()) + 80).toISOString() : undefined;
+    const results = await Promise.all(ids.map(async (deviceId) => {
+      try {
+        const session = this.requireRemoteSession(deviceId);
+        const response = await this.wssTransport.requestRemoteControl(deviceId, session.generation, {
+          command,
+          payload: structuredClone(payload),
+          requestId: this.id('remote-control'),
+          idempotencyKey: this.id('remote-command'),
+          ...(syncAt ? { syncAt } : {}),
+          deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
+        });
+        if (response?.payload?.ok !== true) return { deviceId, ok: false, error: response?.payload?.error || { code: 'REMOTE_CONTROL_FAILED', message: 'Remote command failed' } };
+        return { deviceId, ok: true, result: response.payload.result };
+      } catch (error) {
+        return { deviceId, ok: false, error: { code: error.code || 'REMOTE_CONTROL_FAILED', message: String(error.message || 'Remote command failed').slice(0, 300) } };
+      }
+    }));
+    return this.result({ command, synchronized: Boolean(syncAt), targets: results });
+  }
   listContainers() { return this.result(this.core.containers.listContainers()); }
   listContainerTrash() {
     const containers = this.core.containers.listContainers().containers.filter((container) => container.status === 'deleted');
@@ -483,6 +547,12 @@ export class ControllerApplicationService extends EventEmitter {
     const session = this.core.sessions.getPublicSession(deviceId);
     if (!session || session.status !== 'online') throw codedError('SESSION_OFFLINE', 'Origin device is not connected');
     if (!this.wssTransport?.requestOriginInventory || !this.wssTransport?.requestOriginWorkflow) throw codedError('ORIGIN_SYNC_UNAVAILABLE', 'Origin sync transport is unavailable');
+    return session;
+  }
+
+  requireRemoteSession(deviceId) {
+    const session = this.core.sessions.getPublicSession(deviceId);
+    if (!session || session.status !== 'online') throw codedError('SESSION_OFFLINE', 'Remote target is offline');
     return session;
   }
 
@@ -929,8 +999,9 @@ function managedDeviceDescriptor({ deviceId, displayName }) {
       rawBrowserInput: true,
       nativeX11Input: true,
       screenshot: true,
-      clipboardText: true,
-      synchronizedInput: false
+      clipboardText: false,
+      remoteVideo: true,
+      synchronizedInput: true
     },
     labels: ['managed-container'],
     groupIds: []

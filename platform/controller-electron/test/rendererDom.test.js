@@ -157,6 +157,7 @@ test('all navigation controls receive non-empty Vietnamese names by default', ()
   const buttons = state.views.map((view) => dom.button(state.navLabel(view), () => {}));
   assert.deepEqual(buttons.map(accessibleName), [
     'Workspace',
+    'Điều khiển trực tiếp',
     'Tổng quan',
     'Ghép nối',
     'Thiết bị',
@@ -1531,6 +1532,47 @@ test('workspace exposes reconnect controls for Linux hosts and managed container
   assert.equal(apiState.containerCalls.reconnect, 1);
 });
 
+test('remote control view sends one synchronized command to every selected online container', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [
+    containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' }),
+    containerFixture({ id: 'container-2', deviceId: 'managed-device-2', name: 'Chromium 2', status: 'running' }),
+  ];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1'), deviceFixture('managed-device-2', 'Chromium 2')];
+  state.store.sessions = [
+    { deviceId: 'managed-device-1', status: 'online' },
+    { deviceId: 'managed-device-2', status: 'online' },
+  ];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1', 'managed-device-2'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: true, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+
+  const current = views.renderView(() => {});
+  await clickButton(current, i18n.t('remote.stopInput'));
+
+  assert.deepEqual(apiState.remoteCalls, [{ deviceIds: ['managed-device-1', 'managed-device-2'], command: 'input.stopAll', payload: {}, synchronized: true }]);
+  assert.ok(current.textContent.includes('Ctrl+V'));
+});
+
+test('remote pointer remains safe when the first frame arrives during a drag', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+
+  const current = views.renderView(() => {});
+  const image = first(current, 'img');
+  image.focus = () => {};
+  image.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 });
+  await fireWithEvent(image, 'pointerdown', { clientX: 100, clientY: 100 });
+  state.store.remote.frames['managed-device-1'] = { mimeType: 'image/jpeg', data: 'YQ==', width: 800, height: 600 };
+  await fireWithEvent(image, 'pointermove', { clientX: 120, clientY: 120 });
+  await fireWithEvent(image, 'pointerup', { clientX: 120, clientY: 120 });
+
+  assert.deepEqual(apiState.remoteCalls.map((call) => call.command), ['input.mouseMove', 'input.mouseUp']);
+});
+
 test('jobs dispatch transport warning remains visible after refresh', async () => {
   resetStore();
   state.store.view = 'jobs';
@@ -1589,6 +1631,7 @@ function resetStore() {
   apiState.diagnosticsRepairs = [];
   apiState.diagnosticsResult = null;
   apiState.diagnosticsRepairResult = null;
+  apiState.remoteCalls = [];
   Object.assign(state.store, {
     view: 'overview',
     settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
@@ -1645,6 +1688,7 @@ function resetStore() {
     devices: [],
     sessions: [],
     containers: [],
+    remote: { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' },
     groups: [],
     workflows: [],
     jobs: [],
@@ -1799,6 +1843,7 @@ const apiState = {
   diagnosticsRepairs: [],
   diagnosticsResult: null,
   diagnosticsRepairResult: null,
+  remoteCalls: [],
 };
 
 function installControllerApi() {
@@ -1832,6 +1877,13 @@ function installControllerApi() {
         },
       },
       sessions: { list: async () => ({ ok: true, data: { sessions: [] } }) },
+      remote: {
+        capture: async ({ deviceId }) => ({ ok: true, data: { deviceId, frame: { mimeType: 'image/jpeg', data: 'YQ==', width: 800, height: 600 } } }),
+        control: async (payload) => {
+          apiState.remoteCalls.push(structuredClone(payload));
+          return { ok: true, data: { command: payload.command, synchronized: payload.synchronized === true, targets: (payload.deviceIds || []).map((deviceId) => ({ deviceId, ok: true })) } };
+        },
+      },
       containers: {
         list: async () => ({ ok: true, data: { containers: apiState.containers } }),
         trash: async () => ({ ok: true, data: { containers: apiState.containers.filter((container) => container.status === 'deleted'), hosts: apiState.trashHosts } }),

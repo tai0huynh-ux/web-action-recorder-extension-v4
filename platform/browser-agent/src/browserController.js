@@ -176,6 +176,33 @@ export class BrowserController {
     return this.describePage(page, true);
   }
 
+  async captureRemoteFrame({ quality = 45, maxBytes = 500000 } = {}) {
+    this.assertRunning();
+    const page = await this.findPage(this.activeTargetId || this.firstOpenTargetId());
+    const viewport = page.viewportSize?.() || { width: this.config.width, height: this.config.height };
+    maxBytes = Number.isInteger(maxBytes) ? Math.min(500000, Math.max(16384, maxBytes)) : 500000;
+    let currentQuality = Number.isInteger(quality) ? Math.min(70, Math.max(20, quality)) : 45;
+    let buffer;
+    do {
+      buffer = await page.screenshot({ type: 'jpeg', quality: currentQuality, fullPage: false });
+      if (buffer.length <= maxBytes || currentQuality <= 20) break;
+      currentQuality -= 10;
+    } while (currentQuality >= 20);
+    if (buffer.length > maxBytes) {
+      throw new AgentError('remote_frame_too_large', 'Remote frame exceeds the configured transport limit', 413);
+    }
+    return {
+      mimeType: 'image/jpeg',
+      encoding: 'base64',
+      data: buffer.toString('base64'),
+      width: viewport.width,
+      height: viewport.height,
+      quality: currentQuality,
+      targetId: this.getTargetId(page),
+      sequence: Date.now()
+    };
+  }
+
   async getSandboxStatus() {
     this.assertRunning();
     let page;

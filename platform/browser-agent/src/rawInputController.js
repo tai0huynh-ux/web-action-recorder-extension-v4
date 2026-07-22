@@ -102,15 +102,23 @@ export class RawInputController {
       }
       case 'input.mouseDown': {
         const button = validateButton(payload.button);
+        if (payload.x !== undefined || payload.y !== undefined) {
+          const point = this.mapper.validatePoint(payload, 'viewport');
+          await page.mouse.move(point.x, point.y);
+        }
         await page.mouse.down({ button });
         this.heldButtons.add(button);
-        return { button };
+        return { button, ...(payload.x !== undefined || payload.y !== undefined ? { point: this.mapper.validatePoint(payload, 'viewport') } : {}) };
       }
       case 'input.mouseUp': {
         const button = validateButton(payload.button);
+        if (payload.x !== undefined || payload.y !== undefined) {
+          const point = this.mapper.validatePoint(payload, 'viewport');
+          await page.mouse.move(point.x, point.y);
+        }
         await page.mouse.up({ button });
         this.heldButtons.delete(button);
-        return { button };
+        return { button, ...(payload.x !== undefined || payload.y !== undefined ? { point: this.mapper.validatePoint(payload, 'viewport') } : {}) };
       }
       case 'input.click': {
         const point = this.mapper.validatePoint(payload, 'viewport');
@@ -164,12 +172,14 @@ export class RawInputController {
       }
       case 'input.mouseDown': {
         const button = validateButton(payload.button);
+        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'));
         await this.x11.mouseDown(button);
         this.heldButtons.add(button);
         return { button };
       }
       case 'input.mouseUp': {
         const button = validateButton(payload.button);
+        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'));
         await this.x11.mouseUp(button);
         this.heldButtons.delete(button);
         return { button };

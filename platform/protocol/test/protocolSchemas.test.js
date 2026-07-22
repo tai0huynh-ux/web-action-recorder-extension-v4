@@ -147,6 +147,37 @@ test('origin synchronization envelopes validate bounded inventory and workflow p
   assert.equal(validateEnvelope({ ...inventory, type: 'origin.workflow.response', payload: { error: { code: 'WORKFLOW_NOT_FOUND', message: 'missing' } } }).ok, true);
 });
 
+test('remote control request and bounded JPEG response validate', () => {
+  const request = {
+    ...agentEnvelope(),
+    type: 'remote.control.request',
+    deadline: '2026-07-14T00:00:10.000Z',
+    idempotencyKey: 'remote-1',
+    payload: { command: 'input.shortcut', payload: { keys: 'CTRL+V' }, requestId: 'remote-1' }
+  };
+  assert.equal(validateEnvelope(request).ok, true);
+  const response = {
+    ...agentEnvelope(),
+    type: 'remote.control.response',
+    correlationId: request.messageId,
+    payload: {
+      ok: true,
+      requestId: 'remote-1',
+      frame: {
+        mimeType: 'image/jpeg',
+        encoding: 'base64',
+        data: 'A'.repeat(5000),
+        width: 1280,
+        height: 720,
+        sequence: 1,
+      }
+    }
+  };
+  assert.equal(validateEnvelope(response).ok, true);
+  assert.equal(validateEnvelope({ ...response, payload: { ...response.payload, frame: { ...response.payload.frame, data: '!' } } }).ok, false);
+  assert.equal(validateEnvelope({ ...response, payload: { ...response.payload, frame: { ...response.payload.frame, data: 'A'.repeat(700001) } } }).ok, false);
+});
+
 test('companion status compatibility mapping normalizes leased commands', () => {
   assert.equal(mapCompanionStatusToExecutionJobStatus('leased'), 'dispatched');
   const job = createExecutionJobFromCompanionCommand({

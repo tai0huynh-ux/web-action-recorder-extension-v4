@@ -56,6 +56,8 @@ export const MESSAGE_TYPES = Object.freeze([
   'origin.inventory.response',
   'origin.workflow.get',
   'origin.workflow.response',
+  'remote.control.request',
+  'remote.control.response',
   'execution.dispatch',
   'execution.cancel',
   'execution.event',
@@ -87,6 +89,7 @@ const MUTATING_TYPES = new Set([
   'execution.event',
   'execution.result',
   'execution.cancelled',
+  'remote.control.request',
   'emergency.stop',
   'emergency.stop.ack'
 ]);
@@ -167,6 +170,8 @@ export function validateEnvelope(envelope, options = {}) {
   if (envelope.type === 'origin.inventory.request') validateOriginInventoryRequestPayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'origin.inventory.response') validateOriginInventoryResponsePayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'origin.workflow.get') validateWorkflowGetPayload(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'remote.control.request') validateRemoteControlRequest(envelope.payload, '$.payload', errors);
+  if (envelope.type === 'remote.control.response') validateRemoteControlResponse(envelope.payload, '$.payload', errors);
   if (envelope.type === 'origin.workflow.response') validateOriginWorkflowResponsePayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'execution.dispatch') validateExecutionDispatchPayload(envelope.payload, '$.payload', errors);
   if (envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') validateExecutionEvent(envelope.payload, '$.payload', errors);
@@ -372,6 +377,46 @@ function validateOriginWorkflowResponsePayload(value, path, errors) {
   validateWorkflowRevisionInto(value.workflow, `${path}.workflow`, errors);
 }
 
+function validateRemoteControlRequest(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'remote.control.request payload must be an object.');
+  requireString(value, 'command', `${path}.command`, errors);
+  requirePlainObject(value.payload, `${path}.payload`, errors);
+  optionalString(value.requestId, `${path}.requestId`, errors);
+  optionalString(value.syncId, `${path}.syncId`, errors);
+  if (value.syncAt !== undefined) requireIsoUtc(value.syncAt, `${path}.syncAt`, errors);
+}
+
+function validateRemoteControlResponse(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'remote.control.response payload must be an object.');
+  if (typeof value.ok !== 'boolean') error(errors, `${path}.ok`, 'ok must be boolean.');
+  optionalString(value.requestId, `${path}.requestId`, errors);
+  if (value.result !== undefined) requirePlainObject(value.result, `${path}.result`, errors);
+  if (value.error !== undefined) {
+    requirePlainObject(value.error, `${path}.error`, errors);
+    if (isPlainObject(value.error)) {
+      requireString(value.error, 'code', `${path}.error.code`, errors);
+      requireString(value.error, 'message', `${path}.error.message`, errors);
+    }
+  }
+  if (value.frame !== undefined) validateRemoteFrame(value.frame, `${path}.frame`, errors);
+}
+
+function validateRemoteFrame(value, path, errors) {
+  if (!isPlainObject(value)) return error(errors, path, 'Remote frame must be an object.');
+  requireString(value, 'mimeType', `${path}.mimeType`, errors);
+  requireString(value, 'encoding', `${path}.encoding`, errors);
+  if (typeof value.data !== 'string' || value.data.length === 0) error(errors, `${path}.data`, 'Remote frame data must be a non-empty string.');
+  if (typeof value.mimeType === 'string' && value.mimeType !== 'image/jpeg') error(errors, `${path}.mimeType`, 'Remote frames must use image/jpeg.');
+  if (typeof value.encoding === 'string' && value.encoding !== 'base64') error(errors, `${path}.encoding`, 'Remote frames must use base64 encoding.');
+  if (typeof value.data === 'string') {
+    if (value.data.length > 700000) error(errors, `${path}.data`, 'Remote frame exceeds the transport limit.');
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value.data)) error(errors, `${path}.data`, 'Remote frame data is not valid base64.');
+  }
+  requirePositiveInteger(value.width, `${path}.width`, errors);
+  requirePositiveInteger(value.height, `${path}.height`, errors);
+  if (value.sequence !== undefined) requirePositiveInteger(value.sequence, `${path}.sequence`, errors, { allowZero: true });
+}
+
 function validateWorkflowMetadataPayload(value, path, errors) {
   if (!isPlainObject(value)) return error(errors, path, 'workflow metadata must be an object.');
   requireString(value, 'workflowId', `${path}.workflowId`, errors);
@@ -406,7 +451,8 @@ function validatePairingResult(value, path, errors) {
 }
 
 function validateLimits(value, path, errors) {
-  if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) error(errors, path, `String exceeds max length ${MAX_STRING_LENGTH}.`);
+  const remoteFrameData = path === '$.payload.frame.data';
+  if (typeof value === 'string' && value.length > MAX_STRING_LENGTH && !remoteFrameData) error(errors, path, `String exceeds max length ${MAX_STRING_LENGTH}.`);
   if (Array.isArray(value)) {
     if (value.length > MAX_ARRAY_LENGTH) error(errors, path, `Array exceeds max length ${MAX_ARRAY_LENGTH}.`);
     value.forEach((item, index) => validateLimits(item, `${path}[${index}]`, errors));

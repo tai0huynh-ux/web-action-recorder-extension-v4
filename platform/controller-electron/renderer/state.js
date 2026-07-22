@@ -3,7 +3,7 @@ import { clampWorkspaceLayout, createWorkspaceSelection, WORKSPACE_SAMPLE_NODES 
 
 const api = window.warController;
 
-export const views = Object.freeze(['workspace', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics', 'trash']);
+export const views = Object.freeze(['workspace', 'remote', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics', 'trash']);
 
 export const store = {
   view: 'workspace',
@@ -61,6 +61,18 @@ export const store = {
   devices: [],
   sessions: [],
   containers: [],
+  remote: {
+    selectedDeviceIds: [],
+    selectionInitialized: false,
+    activeDeviceId: '',
+    synchronized: false,
+    fps: 3,
+    live: true,
+    frames: {},
+    pending: {},
+    notice: '',
+    error: '',
+  },
   groups: [],
   workflows: [],
   jobs: [],

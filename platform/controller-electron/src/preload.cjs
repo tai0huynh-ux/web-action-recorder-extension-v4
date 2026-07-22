@@ -24,6 +24,10 @@ const IPC_CHANNELS = Object.freeze({
   sessions: Object.freeze({
     list: 'war-controller:v1:sessions:list',
   }),
+  remote: Object.freeze({
+    capture: 'war-controller:v1:remote:capture',
+    control: 'war-controller:v1:remote:control',
+  }),
   containers: Object.freeze({
     list: 'war-controller:v1:containers:list',
     trash: 'war-controller:v1:containers:trash',
@@ -140,6 +144,10 @@ const api = deepFreeze({
   },
   sessions: {
     list: call(IPC_CHANNELS.sessions.list),
+  },
+  remote: {
+    capture: call(IPC_CHANNELS.remote.capture),
+    control: call(IPC_CHANNELS.remote.control),
   },
   containers: {
     list: call(IPC_CHANNELS.containers.list),

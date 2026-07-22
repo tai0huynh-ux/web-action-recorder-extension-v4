@@ -201,6 +201,34 @@ test('controller WSS refuses a duplicate pending origin request identifier witho
   await firstHandled;
 });
 
+test('controller WSS sends remote control and resolves only the correlated Agent response', async () => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const connection = new FakeConnection();
+  const state = { connection };
+  await adapter.handleMessage(JSON.stringify(agentHello()), state, 'cred-a', () => {});
+  const session = core.sessions.getPublicSession('dev-a');
+
+  const pending = adapter.requestRemoteControl('dev-a', session.generation, { command: 'input.shortcut', payload: { keys: 'CTRL+T' } });
+  const sent = JSON.parse(connection.sent.at(-1));
+  assert.equal(sent.type, 'remote.control.request');
+  assert.equal(sent.deadline, '2026-07-16T00:00:10.000Z');
+
+  const ack = await adapter.handleMessage(JSON.stringify({
+    protocolVersion: PROTOCOL_VERSION,
+    messageId: 'remote-response-a',
+    type: 'remote.control.response',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    correlationId: sent.messageId,
+    deviceId: 'dev-a',
+    sessionId: session.sessionId,
+    payload: { ok: true, requestId: 'remote-a', result: { executed: true } }
+  }), state, 'cred-a', () => {});
+
+  assert.equal(ack, null);
+  assert.equal((await pending).payload.result.executed, true);
+});
+
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
   assert.deepEqual(parseAuthorization('Bearer credential-a'), { ok: true, credential: 'credential-a' });
   assert.deepEqual(parseAuthorization('bearer credential-a'), { ok: true, credential: 'credential-a' });

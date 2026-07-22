@@ -9,9 +9,21 @@ import {
   reduceDeviceSelection,
   selectedDevices,
 } from './workspaceState.js';
+import {
+  normalizeRemoteSelection,
+  pointForRemoteFrame,
+  pollIntervalForFps,
+  printableTextForKeyboardEvent,
+  qualityForFps,
+  remoteTargetsForAction,
+  shortcutForKeyboardEvent,
+} from './remoteControl.js';
 
 let oneTimeSecret = null;
 let pairingNotice = '';
+let remotePolling = null;
+let remoteScreens = new Map();
+let remoteStatusNode = null;
 
 export function clearPairingSecret() {
   oneTimeSecret = null;
@@ -19,6 +31,7 @@ export function clearPairingSecret() {
 }
 
 export function renderView(refresh) {
+  if (store.view !== 'remote') stopRemotePolling();
   if (store.view !== 'pairing') clearPairingSecret();
   if (store.view === 'workspace') return workspaceView(refresh);
   if (store.view === 'overview') return overviewView(refresh);
@@ -28,6 +41,7 @@ export function renderView(refresh) {
   if (store.view === 'workflows') return workflowsView(refresh);
   if (store.view === 'jobs') return jobsView(refresh);
   if (store.view === 'trash') return trashView(refresh);
+  if (store.view === 'remote') return remoteView(refresh);
   return diagnosticsView(refresh);
 }
 
@@ -2196,6 +2210,231 @@ function devicesView() {
       { key: 'lastSeenAt', label: 'Last seen' },
     ], store.devices),
   ]);
+}
+
+function remoteView(refresh) {
+  store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, notice: '', error: '' };
+  const targets = allWorkspaceDevices().filter((device) => device.managedContainer && isContainerAgentOnline(device.managedContainer ? store.containers.find((item) => item.id === device.containerId) : device));
+  const ids = targets.map((device) => device.id || device.deviceId).filter(Boolean);
+  store.remote.selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
+  if (!store.remote.selectionInitialized) {
+    if (!store.remote.selectedDeviceIds.length && ids.length) store.remote.selectedDeviceIds = [ids[0]];
+    store.remote.selectionInitialized = true;
+  }
+  if (!ids.includes(store.remote.activeDeviceId)) store.remote.activeDeviceId = store.remote.selectedDeviceIds[0] || ids[0] || '';
+  remoteScreens = new Map();
+  const selected = new Set(store.remote.selectedDeviceIds);
+  const sync = el('input', { type: 'checkbox', checked: store.remote.synchronized === true, ariaLabel: t('remote.sync') });
+  sync.addEventListener('change', () => { store.remote.synchronized = sync.checked; refresh(); });
+  const fps = el('select', { ariaLabel: t('remote.fps') }, [
+    el('option', { value: '1', text: '1 FPS' }),
+    el('option', { value: '3', text: '3 FPS' }),
+    el('option', { value: '6', text: '6 FPS' }),
+  ]);
+  fps.value = String(store.remote.fps || 3);
+  fps.addEventListener('change', () => { store.remote.fps = Number(fps.value); refresh(); });
+  const live = button(store.remote.live ? t('remote.pause') : t('remote.resume'), () => {
+    store.remote.live = !store.remote.live;
+    if (!store.remote.live) stopRemotePolling();
+    refresh();
+  }, { className: 'button primary' });
+  const status = el('p', { className: store.remote.error ? 'status error' : 'status', text: store.remote.error || store.remote.notice || (ids.length ? t('remote.help') : t('remote.empty')), ariaLive: 'polite' });
+  remoteStatusNode = status;
+  const root = section(t('remote.title'), [
+    el('p', { className: 'muted', text: t('remote.description') }),
+    el('div', { className: 'remote-toolbar' }, [
+      field(t('remote.sync'), sync),
+      field(t('remote.fps'), fps),
+      button(t('remote.selectAll'), () => { store.remote.selectedDeviceIds = ids.slice(0, 8); refresh(); }, { className: 'button compact', disabled: !ids.length }),
+      button(t('remote.clear'), () => { store.remote.selectedDeviceIds = []; refresh(); }, { className: 'button compact', disabled: !selected.size }),
+      live,
+    ]),
+    status,
+    ids.length ? el('div', { className: 'remote-target-list' }, targets.map((device) => remoteTargetCheckbox(device, selected, refresh))) : null,
+    ids.length ? el('div', { className: 'remote-grid' }, targets.filter((device) => selected.has(device.id || device.deviceId)).map((device) => remoteTile(device, refresh))) : el('p', { className: 'empty-state', text: t('remote.empty') }),
+    el('p', { className: 'remote-key-help', text: t('remote.keyHelp') }),
+  ]);
+  if (store.remote.live && ids.length && typeof window.warController?.remote?.capture === 'function') {
+    queueMicrotask(() => startRemotePolling());
+  }
+  return root;
+}
+
+function remoteTargetCheckbox(device, selected, refresh) {
+  const id = device.id || device.deviceId;
+  const checkbox = el('input', { type: 'checkbox', checked: selected.has(id), ariaLabel: device.displayName || device.name || id });
+  checkbox.addEventListener('change', () => {
+    const next = new Set(store.remote.selectedDeviceIds);
+    if (checkbox.checked) next.add(id);
+    else next.delete(id);
+    store.remote.selectedDeviceIds = [...next].slice(0, 8);
+    if (!store.remote.activeDeviceId || checkbox.checked) store.remote.activeDeviceId = id;
+    refresh();
+  });
+  return el('label', { className: 'remote-target-chip' }, [checkbox, el('span', { text: device.displayName || device.name || id })]);
+}
+
+function remoteTile(device, refresh) {
+  const id = device.id || device.deviceId;
+  const frame = store.remote.frames?.[id];
+  const image = el('img', { className: 'remote-screen', tabIndex: 0, ariaLabel: t('remote.screen', { name: device.displayName || device.name || id }) });
+  const placeholder = frame ? null : el('span', { className: 'remote-screen-placeholder', text: t('remote.waiting') });
+  image.setAttribute('alt', t('remote.screen', { name: device.displayName || device.name || id }));
+  image.setAttribute('draggable', 'false');
+  if (frame?.data) image.setAttribute('src', `data:${frame.mimeType || 'image/jpeg'};base64,${frame.data}`);
+  remoteScreens.set(id, { image, placeholder });
+  image.addEventListener('pointerdown', (event) => {
+    store.remote.activeDeviceId = id;
+    image.focus?.();
+    const point = pointForRemoteFrame(event, image.getBoundingClientRect?.(), store.remote.frames?.[id]);
+    image._remotePointer = { point, moved: false, lastMoveAt: 0 };
+    if (point) sendRemoteCommand('input.mouseDown', { ...point, button: 'left' });
+  });
+  image.addEventListener('pointermove', (event) => {
+    const pointer = image._remotePointer;
+    const point = pointForRemoteFrame(event, image.getBoundingClientRect?.(), store.remote.frames?.[id]);
+    if (!pointer || !point) return;
+    if (pointer.point) {
+      const distance = Math.abs(point.x - pointer.point.x) + Math.abs(point.y - pointer.point.y);
+      if (distance > 3) pointer.moved = true;
+    }
+    pointer.point = point;
+    if (Date.now() - pointer.lastMoveAt < 50) return;
+    pointer.lastMoveAt = Date.now();
+    sendRemoteCommand('input.mouseMove', point);
+  });
+  image.addEventListener('pointerup', (event) => {
+    const point = pointForRemoteFrame(event, image.getBoundingClientRect?.(), store.remote.frames?.[id]);
+    if (point) sendRemoteCommand('input.mouseUp', { ...point, button: 'left' });
+    image._remotePointer = null;
+  });
+  image.addEventListener('pointercancel', () => { image._remotePointer = null; sendRemoteCommand('input.stopAll', {}); });
+  image.addEventListener('wheel', (event) => {
+    event.preventDefault?.();
+    const point = pointForRemoteFrame(event, image.getBoundingClientRect?.(), store.remote.frames?.[id]);
+    if (point) sendRemoteCommand('input.wheel', { ...point, deltaX: event.deltaX || 0, deltaY: event.deltaY || 0 });
+  }, { passive: false });
+  image.addEventListener('keydown', (event) => handleRemoteKey(event));
+  image.addEventListener('keyup', (event) => {
+    if (shortcutForKeyboardEvent(event) || printableTextForKeyboardEvent(event)) return;
+    sendRemoteCommand('input.keyUp', { key: mapRemoteKey(event.key) });
+  });
+  return el('article', { className: `remote-tile${store.remote.activeDeviceId === id ? ' active' : ''}` }, [
+    el('div', { className: 'remote-tile-heading' }, [
+      el('strong', { text: device.displayName || device.name || id }),
+      el('span', { className: 'status-pill online', text: t('status.online') }),
+    ]),
+    el('div', { className: 'remote-screen-wrap' }, [image, placeholder]),
+    el('div', { className: 'toolbar tight' }, [
+      button(t('remote.focus'), () => { store.remote.activeDeviceId = id; refresh(); }, { className: 'button compact' }),
+      button(t('remote.stopInput'), () => sendRemoteCommand('input.stopAll', {}), { className: 'button compact danger' }),
+    ]),
+    frame ? el('span', { className: 'device-meta', text: `${frame.width}x${frame.height} · ${Math.round((frame.data?.length || 0) * 0.75 / 1024)} KB` }) : null,
+  ]);
+}
+
+function startRemotePolling() {
+  if (remotePolling || store.view !== 'remote' || !store.remote.live) return;
+  const state = { inFlight: false, timer: null };
+  remotePolling = state;
+  const tick = async () => {
+    if (remotePolling !== state || store.view !== 'remote' || !store.remote.live) return;
+    if (!state.inFlight) {
+      state.inFlight = true;
+      const ids = store.remote.selectedDeviceIds.slice(0, 8);
+      try {
+        await Promise.all(ids.map(async (deviceId) => {
+          try {
+            const result = unwrap(await window.warController.remote.capture({ deviceId, quality: qualityForFps(store.remote.fps) }));
+            const frame = result?.frame;
+            if (!frame?.data) return;
+            store.remote.frames = { ...store.remote.frames, [deviceId]: frame };
+            const screen = remoteScreens.get(deviceId);
+            if (screen?.image) screen.image.setAttribute('src', `data:${frame.mimeType || 'image/jpeg'};base64,${frame.data}`);
+            if (screen?.placeholder) screen.placeholder.hidden = true;
+          } catch (error) {
+            store.remote.error = safeError(error, 'REMOTE_CAPTURE_FAILED');
+            updateRemoteStatus();
+          }
+        }));
+      } finally {
+        state.inFlight = false;
+      }
+    }
+    if (remotePolling !== state || store.view !== 'remote' || !store.remote.live) return;
+    state.timer = setTimeout(tick, pollIntervalForFps(store.remote.fps));
+  };
+  tick();
+}
+
+function stopRemotePolling() {
+  if (remotePolling?.timer) clearTimeout(remotePolling.timer);
+  remotePolling = null;
+  remoteScreens.clear();
+  remoteStatusNode = null;
+}
+
+async function sendRemoteCommand(command, payload) {
+  const targets = remoteTargetsForAction({
+    selectedDeviceIds: store.remote.selectedDeviceIds,
+    activeDeviceId: store.remote.activeDeviceId,
+    synchronized: store.remote.synchronized,
+  });
+  if (!targets.length) {
+    store.remote.error = t('remote.selectTarget');
+    updateRemoteStatus();
+    return;
+  }
+  store.remote.error = '';
+  try {
+    const result = await window.warController.remote.control({ deviceIds: targets, command, payload, synchronized: store.remote.synchronized });
+    if (result?.ok === false) throw controllerError(result, 'REMOTE_CONTROL_FAILED');
+    const data = unwrap(result) || {};
+    const failed = (data.targets || []).filter((item) => !item.ok);
+    store.remote.notice = failed.length ? `${t('remote.partialFailure')} ${failed.length}` : t('remote.commandSent');
+    updateRemoteStatus();
+  } catch (error) {
+    store.remote.error = safeError(error, 'REMOTE_CONTROL_FAILED');
+    updateRemoteStatus();
+  }
+}
+
+function updateRemoteStatus() {
+  if (!remoteStatusNode) return;
+  remoteStatusNode.className = store.remote.error ? 'status error' : 'status';
+  remoteStatusNode.textContent = store.remote.error || store.remote.notice || t('remote.help');
+}
+
+function handleRemoteKey(event) {
+  const shortcut = shortcutForKeyboardEvent(event);
+  if (shortcut) {
+    event.preventDefault?.();
+    if (shortcut === 'CTRL+V' && globalThis.navigator?.clipboard?.readText) {
+      globalThis.navigator.clipboard.readText().then((text) => {
+        if (text) sendRemoteCommand('input.insertText', { text });
+      }).catch(() => sendRemoteCommand('input.shortcut', { keys: shortcut }));
+    } else {
+      sendRemoteCommand('input.shortcut', { keys: shortcut });
+    }
+    return;
+  }
+  const text = printableTextForKeyboardEvent(event);
+  if (text) {
+    event.preventDefault?.();
+    sendRemoteCommand('input.insertText', { text });
+    return;
+  }
+  const key = mapRemoteKey(event.key);
+  if (key) {
+    event.preventDefault?.();
+    sendRemoteCommand('input.keyDown', { key });
+  }
+}
+
+function mapRemoteKey(key) {
+  const aliases = { Esc: 'Escape', ' ': 'Space', Ctrl: 'Control', Cmd: 'Meta', Left: 'ArrowLeft', Right: 'ArrowRight', Up: 'ArrowUp', Down: 'ArrowDown' };
+  const value = aliases[key] || key;
+  return value || '';
 }
 
 function groupsView(refresh) {
