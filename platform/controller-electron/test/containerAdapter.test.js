@@ -286,6 +286,26 @@ test('managed Docker deletion propagates runtime cleanup failure', async () => {
   await assert.rejects(() => adapter.delete({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } }), /cleanup failed/);
 });
 
+test('managed Docker stop accepts cleared endpoint addresses while preserving policy checks', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'exited\n', stderr: '' };
+      if (args[0] === 'inspect') {
+        return { stdout: `${JSON.stringify(managedIpv4Inspection({
+          State: { Running: false, Status: 'exited' },
+          NetworkSettings: { Networks: { [ipv4NetworkName()]: { IPAddress: '', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 } } },
+        }))}\n`, stderr: '' };
+      }
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  const result = await adapter.stop(container({ runtime: { ipv4Network: ipv4NetworkName() } }));
+  assert.equal(result.status, 'stopped');
+  assert.equal(result.runtime.nonRootUser, 'war');
+});
+
 function managedConfig(runtime) {
   return {
     wss: { enabled: true, host: 'controller.example', port: 47651 },

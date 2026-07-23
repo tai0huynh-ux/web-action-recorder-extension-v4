@@ -492,6 +492,7 @@ export class DockerContainerAdapter {
     const inspection = await this.inspectContainer(name);
     const host = inspection.HostConfig || {};
     const config = inspection.Config || {};
+    const stopped = inspection.State?.Running === false;
     const actualNetworks = inspection.NetworkSettings?.Networks || {};
     const actualNetworkNames = Object.keys(actualNetworks);
     const binds = Array.isArray(host.Binds) ? host.Binds : [];
@@ -503,8 +504,10 @@ export class DockerContainerAdapter {
       && actualNetworkNames.length > 0
       && actualNetworkNames.every((name) => name === network.ipv4Network || name === 'bridge' || name === network.ipv6Network)
       && Boolean(actualNetworks[network.ipv4Network]) === network.ipv4Enabled
-      && (!network.ipv4Enabled || network.ipv4Network === 'bridge' || actualNetworks[network.ipv4Network]?.IPAddress)
-      && (!network.ipv6Enabled || matchesIpv6Endpoint(actualNetworks[network.ipv6Network], network.ipv6Address))
+      // Docker clears assigned addresses after stop; keep validating membership and
+      // security while allowing a stopped container to have no live endpoint.
+      && (!network.ipv4Enabled || network.ipv4Network === 'bridge' || actualNetworks[network.ipv4Network]?.IPAddress || stopped)
+      && (!network.ipv6Enabled || matchesIpv6Endpoint(actualNetworks[network.ipv6Network], network.ipv6Address) || stopped)
       && (!network.ipv6Enabled || actualNetworks[network.ipv6Network]?.GlobalIPv6PrefixLen === 64)
       && securityOptions.includes('apparmor=war-browser-agent')
       && matchesApprovedSeccompSecurityOption(securityOptions)
