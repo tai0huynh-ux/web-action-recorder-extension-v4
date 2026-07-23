@@ -8,7 +8,7 @@ Phase 1 - Browser Agent minimal container gate is complete on a reviewed Linux D
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS on implementation SHA `6e0be390758851d94921450a7ded3d17fc85bdf1`. Final decision awaits exact-final-SHA GitHub workflow confirmation.
+Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS on implementation SHA `62f9095e570c406d6483ed688a0c21008ebe50f1`. Final decision awaits exact-final-SHA GitHub workflow confirmation.
 
 ## Phase 10 Reviewed Host Acceptance
 

@@ -1,16 +1,16 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 10 - Final packaged-product acceptance and soak complete on implementation SHA `6e0be390758851d94921450a7ded3d17fc85bdf1`; exact-head workflow synchronization for this documentation checkpoint remains the final gate.
+Phase 10 - Final packaged-product acceptance and soak complete on implementation SHA `62f9095e570c406d6483ed688a0c21008ebe50f1`; exact-head workflow synchronization for this documentation checkpoint remains the final gate.
 
 Current subphase:
 Final documentation checkpoint and all three GitHub workflows on that exact commit.
 
 Phase 10 implementation checkpoint:
-6e0be390758851d94921450a7ded3d17fc85bdf1
+62f9095e570c406d6483ed688a0c21008ebe50f1
 
 Working tree before this documentation update:
-Clean; `HEAD == origin/main == 6e0be390758851d94921450a7ded3d17fc85bdf1`.
+Clean; `HEAD == origin/main == 62f9095e570c406d6483ed688a0c21008ebe50f1`.
 
 ## Phase 10 final acceptance evidence
 
@@ -20,7 +20,7 @@ Clean; `HEAD == origin/main == 6e0be390758851d94921450a7ded3d17fc85bdf1`.
 - Managed product path: PASS for real Browser Agent/Chromium/MV3/Native Messaging execution, exact clipboard match, cancel and duplicate cancel, grouped text/table/cell dispatch, three graph revision save/execute cycles with every previous revision preserved, three origin pull cycles including repeated-pull idempotency, offline same-job replay exactly once, Agent restart persistence, Controller restart persistence, and cleanup. Evidence: ignored runtime artifact `phase10-managed-product-1784445868094.json`.
 - Required soak matrix: PASS for 20 successful dispatches, 5 Agent/container restarts, 3 Controller restarts, 5 offline replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases. Duplicate execution/device/session, lost terminal result, and unsandboxed-cycle counts are zero. Evidence: ignored runtime artifact `phase10-soak-1784444918548.json`.
 - Negative security: PASS for wrong TLS trust, wrong TLS hostname/endpoint, missing authorization, wrong credential, unpaired Agent, revoked credential, terminal replay count zero, and cleanup. The WSS gate now makes these cases mandatory.
-- Local final regression: `npm.cmd run test:all` (226/226), WSS gate (`wss-gate-1784833851028.json`), Controller-to-Extension Edge E2E (`controller-extension-e2e-1784833893846.json`), Electron smoke, package generation, packaged smoke, release bundle, release integrity, and release gate (`release-gate-1784833714174.json`) all pass on `6e0be390`. Release integrity checks 79 artifacts with tamper detection and secret scan PASS.
+- Local final regression: `npm.cmd run test:all` (226/226), WSS gate (`wss-gate-1784833851028.json`), Controller-to-Extension Edge E2E (`controller-extension-e2e-1784833893846.json`), Electron smoke, package generation, packaged smoke, release bundle, release integrity, and release gate (`release-gate-1784833714174.json`) all pass on `62f9095`. Release integrity checks 79 artifacts with tamper detection and secret scan PASS.
 - Source repairs pushed during Phase 10: `29e20aa68de6da640791141b119e47a493074ba6` adds explicit managed-Docker SSH identity/options and redacted runtime configuration; `8fe2706c8803f04cedfc092babbe7b004b8f3f79` expands mandatory WSS negative acceptance.
 
 Phase 8 result:
