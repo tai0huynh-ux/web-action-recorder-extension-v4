@@ -1,6 +1,6 @@
 # Chromium Control Platform State
 
-Updated: 2026-07-19
+Updated: 2026-07-24
 
 ## Phase
 
@@ -8,13 +8,14 @@ Phase 1 - Browser Agent minimal container gate is complete on a reviewed Linux D
 
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
-Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS. Final decision awaits exact-final-SHA GitHub workflow confirmation.
+Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS on implementation SHA `6e0be390758851d94921450a7ded3d17fc85bdf1`. Final decision awaits exact-final-SHA GitHub workflow confirmation.
 
 ## Phase 10 Reviewed Host Acceptance
 
 - Installed AppArmor and seccomp policies match the repository-reviewed hashes and are root-owned, non-symlink, non-group/world-writable regular files.
 - A disposable non-root container starts with `war-browser-agent (enforce)` and seccomp mode `2` without privileged, host network/PID, mounts, capabilities, unconfined options, or sandbox bypass.
 - Managed lifecycle and the complete product path pass using explicit SSH identity, `IdentitiesOnly=yes`, `BatchMode=yes`, and `ConnectTimeout=10` with `-F NUL`.
+- Final managed lifecycle re-run passed against the reviewed Linux Docker 29.4.2 host with `war-browser-agent:phase10-6e0be39`; temporary `war-phase10-*` containers and volumes were cleaned up.
 - Managed Chromium executes without `WAR_BROWSER_NO_SANDBOX=1`, `--no-sandbox`, or equivalent bypass; the required Phase 10 soak matrix passes with zero unsandboxed cycles.
 
 ## Phase 9 Managed Chromium Sandbox

@@ -1,26 +1,26 @@
 # Codex MVP Execution State
 
 Current phase:
-Phase 10 - Final packaged-product acceptance and soak complete; exact-head workflow synchronization remains the final gate.
+Phase 10 - Final packaged-product acceptance and soak complete on implementation SHA `6e0be390758851d94921450a7ded3d17fc85bdf1`; exact-head workflow synchronization for this documentation checkpoint remains the final gate.
 
 Current subphase:
 Final documentation checkpoint and all three GitHub workflows on that exact commit.
 
 Phase 10 implementation checkpoint:
-8fe2706c8803f04cedfc092babbe7b004b8f3f79
+6e0be390758851d94921450a7ded3d17fc85bdf1
 
 Working tree before this documentation update:
-Clean; `HEAD == origin/main == 8fe2706c8803f04cedfc092babbe7b004b8f3f79`.
+Clean; `HEAD == origin/main == 6e0be390758851d94921450a7ded3d17fc85bdf1`.
 
 ## Phase 10 final acceptance evidence
 
 - Persistent host policy verification: PASS. AppArmor `/etc/apparmor.d/containers/war-browser-agent` is root-owned mode `0644`, SHA-256 `0d28cf5e412992d3cb1bc8759bb6cf9cf1602e9aee54ebef52046f3f9b9b710d`, loaded as `war-browser-agent (enforce)`. Seccomp `/etc/war/security/chromium-userns-seccomp.json` is root-owned mode `0644`, parses as JSON, and has SHA-256 `e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d`.
 - Disposable policy-bound probe: PASS with non-root UID `1001`, AppArmor enforce, seccomp mode `2`, bridge network, private PID namespace, no mounts, no capability additions, no privileged mode, and no unconfined/bypass option.
-- Managed-container lifecycle: PASS for Add, status, Stop, Start, Restart, Duplicate, Delete, authenticated WSS online state, exact SSH identity options, exact policy paths, bounded resources, loopback-only published control port, and cleanup. Evidence: ignored runtime artifact `phase10-managed-acceptance-1784443609836.json`.
+- Managed-container lifecycle: PASS for Add, status, Stop, Start, Restart, Duplicate, Delete, authenticated WSS online state, exact SSH identity options, exact policy paths, bounded resources, loopback-only published control port, active Chromium sandbox, and cleanup on the final implementation SHA. Evidence: ignored runtime artifact `phase10-managed-acceptance-1784833772124.json` using `war-browser-agent:phase10-6e0be39`.
 - Managed product path: PASS for real Browser Agent/Chromium/MV3/Native Messaging execution, exact clipboard match, cancel and duplicate cancel, grouped text/table/cell dispatch, three graph revision save/execute cycles with every previous revision preserved, three origin pull cycles including repeated-pull idempotency, offline same-job replay exactly once, Agent restart persistence, Controller restart persistence, and cleanup. Evidence: ignored runtime artifact `phase10-managed-product-1784445868094.json`.
 - Required soak matrix: PASS for 20 successful dispatches, 5 Agent/container restarts, 3 Controller restarts, 5 offline replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases. Duplicate execution/device/session, lost terminal result, and unsandboxed-cycle counts are zero. Evidence: ignored runtime artifact `phase10-soak-1784444918548.json`.
 - Negative security: PASS for wrong TLS trust, wrong TLS hostname/endpoint, missing authorization, wrong credential, unpaired Agent, revoked credential, terminal replay count zero, and cleanup. The WSS gate now makes these cases mandatory.
-- Local final regression: `npm.cmd ci`, `npm.cmd run test:all`, WSS gate, Controller-to-Extension Edge E2E, Electron smoke, package generation, packaged smoke, release bundle, release integrity, and release gate all pass. Release integrity checks 79 artifacts with tamper detection and secret scan PASS.
+- Local final regression: `npm.cmd run test:all` (226/226), WSS gate (`wss-gate-1784833851028.json`), Controller-to-Extension Edge E2E (`controller-extension-e2e-1784833893846.json`), Electron smoke, package generation, packaged smoke, release bundle, release integrity, and release gate (`release-gate-1784833714174.json`) all pass on `6e0be390`. Release integrity checks 79 artifacts with tamper detection and secret scan PASS.
 - Source repairs pushed during Phase 10: `29e20aa68de6da640791141b119e47a493074ba6` adds explicit managed-Docker SSH identity/options and redacted runtime configuration; `8fe2706c8803f04cedfc092babbe7b004b8f3f79` expands mandatory WSS negative acceptance.
 
 Phase 8 result:
@@ -63,7 +63,7 @@ Phase 9 local verification after documentation:
 - Phase 10 local Browser Agent soak: `BLOCKED_INFRASTRUCTURE` with `spawn docker ENOENT`; no soak success is claimed.
 
 Final acceptance:
-The complete secure Phase 10 product path, soak matrix, local regression, release gates, cleanup, and Git synchronization pass. `MVP_READY_FOR_PERSONAL_LAN_USE` may be returned only after CI, Container Real World Gate, and Windows Release Gate pass on the exact final documentation commit.
+The complete secure Phase 10 product path, soak matrix, local regression, release gates, cleanup, and implementation Git synchronization pass. `MVP_READY_FOR_PERSONAL_LAN_USE` may be returned only after CI, Container Real World Gate, and Windows Release Gate pass on the exact final documentation commit.
 
 Known blockers:
 - No remaining Chromium sandbox blocker. GitHub Container Real World Gate `29654213429` passed at exact SHA `9fa0c1af53921d7e887c71d3fa63da9854aebc73` with probe classification `USERNS_SANDBOX_CAPABLE`, all 40 runtime/product assertions true, SUID false, user/PID/network/seccomp-BPF/TSYNC and overall sandbox true, bounded resources, canonical measured seccomp match, and no full seccomp JSON or detected secret category in the sanitized artifact.
@@ -74,7 +74,7 @@ Next exact action:
 Commit and push this documentation checkpoint, run all three GitHub workflows on that exact SHA, verify Git synchronization/cleanliness, and return the final decision.
 
 Remaining MVP work:
-- Exact-final-SHA GitHub CI, Container Real World Gate, and Windows Release Gate only.
+- Commit and push this documentation checkpoint, then pass exact-final-SHA GitHub CI, Container Real World Gate, and Windows Release Gate.
 
 Starting baseline for Phase 8:
 0d78b10271378fc4b73bc69033d2a8bfd15d11ad

@@ -1,6 +1,6 @@
 # Project State - Web Action Recorder v4
 
-Updated: 2026-07-19
+Updated: 2026-07-24
 Source of truth: the checked-out repository root.
 
 ## Current Status
@@ -19,9 +19,9 @@ Controller dispatch reaches the real MV3 Extension through the Browser Agent, Na
 
 ## Phase 10 Final Personal-LAN Acceptance
 
-Updated: 2026-07-19
+Updated: 2026-07-24
 
-Status: Product path, security verification, soak, local regression, release gates, and cleanup PASS. Final decision is conditioned only on all three GitHub workflows passing on the exact documentation commit.
+Status: Product path, security verification, soak, local regression, release gates, and cleanup PASS on implementation SHA `6e0be390758851d94921450a7ded3d17fc85bdf1`. Final decision is conditioned only on all three GitHub workflows passing on the exact documentation commit.
 
 - Persistent reviewed AppArmor and seccomp installation verified by path, owner, mode, hash, JSON parse, enforce state, and disposable container startup.
 - Managed Controller lifecycle PASS: Add, status, Stop, Start, Restart, Duplicate, Delete, authenticated online state, bounded resources, and exact SSH identity/options without user SSH config.
@@ -29,6 +29,7 @@ Status: Product path, security verification, soak, local regression, release gat
 - Soak PASS: 20 successful dispatches, 5 Agent restarts, 3 Controller restarts, 5 offline replay cycles, 5 running cancellations, and 3 disconnect-during-execution cases.
 - Zero unexpected duplicates, lost terminal results, duplicate devices/sessions, synchronization duplicates, revision overwrites, credential exposures, or unsandboxed executions were observed.
 - Local `npm.cmd ci`, `test:all`, WSS negative gate, Edge E2E, Electron/package/release integrity and release gate PASS.
+- Re-run on final implementation SHA: managed-container lifecycle PASS with image `war-browser-agent:phase10-6e0be39`; WSS gate, Edge E2E, `npm.cmd run test:all` (226/226), and `npm.cmd run test:release:gate` PASS.
 
 ## Phase 9 Active Chromium Sandbox Acceptance
 
