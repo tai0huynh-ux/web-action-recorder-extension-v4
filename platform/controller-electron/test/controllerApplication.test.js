@@ -142,6 +142,56 @@ test('application validates the managed host image before create, duplicate, sta
   assert.deepEqual(adapter.calls.map((item) => item.action), ['probe', 'create', 'create', 'start', 'restart']);
 });
 
+test('startup reconciliation honors each container persisted desired state', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const adapter = {
+    async status(container) { calls.push(['status', container.id]); return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } }; },
+    async start(container) { calls.push(['start', container.id]); return { status: 'running', runtime: { dockerName: container.runtime.dockerName } }; },
+  };
+  const created = await core.containers.createContainer({ name: 'Persisted running', deviceId: 'dev-a', runtime: { dockerName: 'persisted-running' } });
+  await core.containers.updateStatus(created.id, 'stopped', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+  const result = await app.reconcileManagedState();
+  assert.equal(result.containers[0].ok, true);
+  assert.deepEqual(calls, [['status', created.id], ['start', created.id]]);
+  assert.equal(core.containers.getContainer(created.id).status, 'running');
+  assert.equal(core.containers.getContainer(created.id).desiredState, 'running');
+});
+
+test('scan imports only validated managed containers and reuses their credential without returning it', async () => {
+  const core = await connectedCore();
+  const adapter = {
+    async scanManagedContainers() {
+      return {
+        containers: [{
+          containerId: 'container-imported-1',
+          name: 'Imported Chromium 1',
+          dockerName: 'war-imported-1',
+          deviceId: 'managed-imported-1',
+          credential: 'c'.repeat(43),
+          image: 'war-browser-agent:reviewed',
+          runtime: { dockerName: 'war-imported-1', ipv4Enabled: true },
+          status: 'running',
+        }],
+        rejected: [{ dockerName: 'unsafe', reason: 'security policy failed' }],
+      };
+    },
+  };
+  const hostManager = {
+    configuredHostIds: () => ['ssh-host-1'],
+    ensureReady: async () => ({ connected: true }),
+    getAdapter: () => adapter,
+  };
+  const app = new ControllerApplicationService({ core, containerHostManager: hostManager });
+  const result = await app.scanContainerHost({ hostId: 'ssh-host-1' });
+  assert.equal(result.data.imported.length, 1);
+  assert.equal(result.data.rejected.length, 1);
+  assert.equal(JSON.stringify(result.data).includes('cccc'), false);
+  assert.equal(core.containers.getContainer('container-imported-1').name, 'Imported Chromium 1');
+  assert.equal(core.containers.getContainer('container-imported-1').desiredState, 'running');
+});
+
 test('application manages container lifecycle through a bounded adapter', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();

@@ -13,21 +13,28 @@ export function registerControllerIpcHandlers({
   dialog,
   fs,
   path,
+  openRemoteWindow,
+  allowedWindows,
 } = {}) {
   const registrations = new Set();
   const invalidationListener = (event) => {
     const payload = sanitizeInvalidation(event);
-    const contents = typeof mainWindow === 'function' ? mainWindow()?.webContents : mainWindow?.webContents;
-    if (contents && !contents.isDestroyed?.()) contents.send?.(IPC_CHANNELS.events.invalidation, payload);
+    const primary = typeof mainWindow === 'function' ? mainWindow() : mainWindow;
+    const extra = typeof allowedWindows === 'function' ? allowedWindows() : allowedWindows;
+    const windows = new Set([primary, ...(extra ? [...extra] : [])].filter(Boolean));
+    for (const window of windows) {
+      const contents = window?.webContents;
+      if (contents && !contents.isDestroyed?.()) contents.send?.(IPC_CHANNELS.events.invalidation, payload);
+    }
   };
 
-  const methodMap = buildMethodMap(application, { dialog, fs, path });
+  const methodMap = buildMethodMap(application, { dialog, fs, path, openRemoteWindow });
   for (const channel of REQUEST_CHANNELS) {
     const method = methodMap.get(channel);
     if (!method) continue;
     ipcMain.handle(channel, async (event, payload) => {
       try {
-        assertTrustedIpcSender(event, { mainWindow });
+        assertTrustedIpcSender(event, { mainWindow, allowedWindows });
         const validated = validateIpcPayload(channel, payload);
         const data = await method(validated);
         return { ok: true, data };
@@ -69,6 +76,10 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.sessions.list, () => application.listSessions()],
     [IPC_CHANNELS.remote.capture, (payload) => application.remoteCapture(payload)],
     [IPC_CHANNELS.remote.control, (payload) => application.remoteControl(payload)],
+    [IPC_CHANNELS.remote.openWindow, (payload) => {
+      if (typeof dependencies.openRemoteWindow !== 'function') throw codedError('REMOTE_WINDOW_UNAVAILABLE', 'Remote window support is unavailable');
+      return dependencies.openRemoteWindow(payload);
+    }],
     [IPC_CHANNELS.containers.list, () => application.listContainers()],
     [IPC_CHANNELS.containers.trash, () => application.listContainerTrash()],
     [IPC_CHANNELS.containers.hosts, () => application.listContainerHosts()],
@@ -80,11 +91,13 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.containers.hostTrash, (payload) => application.trashContainerHost(payload)],
     [IPC_CHANNELS.containers.hostRestore, (payload) => application.restoreContainerHost(payload)],
     [IPC_CHANNELS.containers.hostPurge, (payload) => application.purgeContainerHost(payload)],
+    [IPC_CHANNELS.containers.scan, (payload) => application.scanContainerHost(payload)],
     [IPC_CHANNELS.containers.add, (payload) => application.addContainer(payload)],
     [IPC_CHANNELS.containers.start, (payload) => application.startContainer(payload)],
     [IPC_CHANNELS.containers.stop, (payload) => application.stopContainer(payload)],
     [IPC_CHANNELS.containers.restart, (payload) => application.restartContainer(payload)],
     [IPC_CHANNELS.containers.reconnect, (payload) => application.reconnectContainer(payload)],
+    [IPC_CHANNELS.containers.repair, (payload) => application.repairContainer(payload)],
     [IPC_CHANNELS.containers.refresh, (payload) => application.refreshContainer(payload)],
     [IPC_CHANNELS.containers.updateNetwork, (payload) => application.updateContainerNetwork(payload)],
     [IPC_CHANNELS.containers.duplicate, (payload) => application.duplicateContainer(payload)],

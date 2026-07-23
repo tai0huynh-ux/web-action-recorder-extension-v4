@@ -7,7 +7,7 @@ export const views = Object.freeze(['workspace', 'remote', 'overview', 'pairing'
 
 export const store = {
   view: 'workspace',
-  settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
+  settings: { locale: 'vi', theme: 'light', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
   workspace: {
     selection: createWorkspaceSelection(),
     activeInputMode: 'text',
@@ -38,6 +38,7 @@ export const store = {
     containerPending: {},
     containerErrors: {},
     containerAllPending: false,
+    containerScanPending: false,
     hostNicknameDraft: '',
     containerNetworkOpenId: '',
     graphViewport: { scale: 1, offsetX: 0, offsetY: 0 },
@@ -68,6 +69,7 @@ export const store = {
     synchronized: false,
     fps: 3,
     live: true,
+    layout: 'auto',
     frames: {},
     pending: {},
     notice: '',

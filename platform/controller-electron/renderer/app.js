@@ -13,6 +13,8 @@ const language = document.querySelector('[data-language]');
 async function boot() {
   await refreshAll();
   await initLocale(store.settings);
+  applyLaunchQuery();
+  applyTheme(store.settings.theme);
   renderLanguageControl();
   render();
   window.warController.system.onInvalidation(async () => {
@@ -58,10 +60,40 @@ function renderLanguageControl() {
     renderLanguageControl();
     render();
   });
-  language.replaceChildren(el('label', { className: 'language-picker' }, [
-    el('span', { text: t('app.language') }),
-    picker,
-  ]));
+  const theme = button(store.settings.theme === 'dark' ? t('app.lightMode') : t('app.darkMode'), async () => {
+    const next = store.settings.theme === 'dark' ? 'light' : 'dark';
+    const result = await window.warController.settings.update({ theme: next });
+    if (result?.ok === false) return;
+    store.settings.theme = next;
+    applyTheme(next);
+    renderLanguageControl();
+  }, { className: 'button compact theme-toggle' });
+  language.replaceChildren(
+    el('label', { className: 'language-picker' }, [
+      el('span', { text: t('app.language') }),
+      picker,
+    ]),
+    theme,
+  );
+}
+
+function applyTheme(value) {
+  document.documentElement.dataset.theme = value === 'dark' ? 'dark' : 'light';
+}
+
+function applyLaunchQuery() {
+  const params = new URL(globalThis.location.href).searchParams;
+  if (params.get('view') !== 'remote') return;
+  store.view = 'remote';
+  const ids = String(params.get('devices') || '').split(',').map((value) => value.trim()).filter((value) => /^[A-Za-z0-9_.:-]{1,120}$/.test(value)).slice(0, 8);
+  if (ids.length) {
+    store.remote.selectedDeviceIds = ids;
+    store.remote.activeDeviceId = ids[0];
+    store.remote.selectionInitialized = true;
+  }
+  const layout = params.get('layout');
+  if (['1', '2', '3', '4'].includes(layout)) store.remote.layout = layout;
+  document.body.classList.add('remote-popout');
 }
 
 boot().catch((error) => {

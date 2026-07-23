@@ -43,7 +43,7 @@ const REMOTE_AGENT_READY_TIMEOUT_MS = 60000;
 const REMOTE_AGENT_READY_POLL_MS = 250;
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); this.reconciliation = null; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -271,7 +271,8 @@ export class ControllerApplicationService extends EventEmitter {
     return this.result(await this.containerHostManager.checkHost(hostId));
   }
   async reconnectContainerHost({ hostId }) {
-    const data = await this.checkContainerHost({ hostId });
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    const data = this.result(await this.containerHostManager.ensureReady(hostId));
     this.invalidate('containers', { hostId });
     return data;
   }
@@ -280,6 +281,101 @@ export class ControllerApplicationService extends EventEmitter {
     const data = await this.containerHostManager.repairHost(hostId);
     this.invalidate('containers', { hostId });
     return this.result(data);
+  }
+
+  async scanContainerHost({ hostId }) {
+    if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    await this.ensureManagedHostReady(hostId);
+    const adapter = this.containerAdapterForHost(hostId);
+    if (!adapter?.scanManagedContainers) throw codedError('CONTAINER_SCAN_UNAVAILABLE', 'Managed Docker scan is unavailable');
+    const result = await adapter.scanManagedContainers();
+    const imported = [];
+    for (const candidate of result.containers || []) {
+      const existing = this.core.containers.listContainers().containers.find((item) => item.host === hostId && (
+        item.runtime?.dockerName === candidate.dockerName
+        || item.deviceId === candidate.deviceId
+        || (candidate.containerId && item.id === candidate.containerId)
+      ));
+      const provisioning = await this.core.pairing.provisionManagedAgent({
+        device: managedDeviceDescriptor({ deviceId: candidate.deviceId, displayName: candidate.name }),
+        displayName: candidate.name,
+        credential: candidate.credential,
+      });
+      let container;
+      if (existing) {
+        container = await this.core.containers.updateStatus(existing.id, candidate.status, { runtime: candidate.runtime, lastError: null });
+      } else {
+        const id = candidate.containerId || `container-${crypto.createHash('sha256').update(`${hostId}:${candidate.dockerName}`).digest('hex').slice(0, 24)}`;
+        container = await this.core.containers.createContainer({
+          containerId: id,
+          name: candidate.name,
+          image: candidate.image,
+          host: hostId,
+          deviceId: candidate.deviceId,
+          runtime: { ...candidate.runtime, dockerName: candidate.dockerName },
+        });
+        container = await this.core.containers.updateStatus(id, candidate.status, { desiredState: candidate.status === 'running' ? 'running' : 'stopped', runtime: candidate.runtime });
+      }
+      imported.push({ container, reused: Boolean(existing), pairing: { deviceId: provisioning.deviceId, reused: provisioning.reused === true } });
+      this.invalidate('containers', { containerId: container.id, hostId });
+      this.invalidate('devices', { deviceId: candidate.deviceId });
+    }
+    return this.result({ hostId, imported, rejected: result.rejected || [] });
+  }
+
+  async repairContainer({ containerId }) {
+    const container = this.core.containers.getContainer(containerId);
+    if (container.status === 'deleted') throw codedError('CONTAINER_NOT_REPAIRABLE', 'Deleted container cannot be repaired');
+    await this.ensureManagedHostReady(container.host);
+    const operation = await this.safeContainerOperation('repair', container);
+    const next = operation.ok
+      ? await this.core.containers.updateStatus(containerId, operation.status || container.status, { runtime: operation.runtime, lastError: null })
+      : await this.core.containers.updateStatus(containerId, 'failed', { lastError: operation.error });
+    this.invalidate('containers', { containerId });
+    return this.result({ container: next, operation });
+  }
+
+  async reconcileManagedState() {
+    if (this.reconciliation) return this.reconciliation;
+    this.reconciliation = this._reconcileManagedState().finally(() => { this.reconciliation = null; });
+    return this.reconciliation;
+  }
+
+  async _reconcileManagedState() {
+    const containers = this.core.containers.listContainers().containers.filter((item) => !['deleted', 'deleting'].includes(item.status));
+    const hostIds = this.containerHostManager?.configuredHostIds?.() || [...new Set(containers.map((item) => item.host).filter(Boolean))];
+    const hostResults = new Map();
+    for (const hostId of hostIds) {
+      try { hostResults.set(hostId, await this.ensureManagedHostReady(hostId)); }
+      catch (error) { hostResults.set(hostId, { connected: false, error: sanitizeContainerError(error) }); }
+    }
+    const results = [];
+    for (const container of containers) {
+      if (container.host && hostResults.get(container.host)?.connected !== true) {
+        results.push({ containerId: container.id, ok: false, error: hostResults.get(container.host)?.error || 'CONTAINER_HOST_UNAVAILABLE' });
+        continue;
+      }
+      const operation = await this.safeContainerOperation('status', container);
+      if (!operation.ok) {
+        const failed = await this.core.containers.updateStatus(container.id, 'failed', { desiredState: container.desiredState, lastError: operation.error });
+        results.push({ containerId: container.id, ok: false, container: failed, error: operation.error });
+        this.invalidate('containers', { containerId: container.id });
+        continue;
+      }
+      const actual = operation.status === 'running' ? 'running' : 'stopped';
+      let next = await this.core.containers.updateStatus(container.id, actual, { runtime: operation.runtime, resourceUsage: operation.resourceUsage, desiredState: container.desiredState });
+      let lifecycle = null;
+      if (container.desiredState === 'running' && actual !== 'running') lifecycle = await this.safeContainerOperation('start', next);
+      else if (container.desiredState === 'stopped' && actual === 'running') lifecycle = await this.safeContainerOperation('stop', next);
+      if (lifecycle) {
+        next = lifecycle.ok
+          ? await this.core.containers.updateStatus(container.id, lifecycle.status || container.desiredState, { desiredState: container.desiredState, runtime: lifecycle.runtime, resourceUsage: lifecycle.resourceUsage, lastError: null })
+          : await this.core.containers.updateStatus(container.id, 'failed', { desiredState: container.desiredState, lastError: lifecycle.error });
+      }
+      results.push({ containerId: container.id, ok: lifecycle ? lifecycle.ok : true, status: next.status });
+      this.invalidate('containers', { containerId: container.id });
+    }
+    return { hosts: [...hostResults.entries()].map(([hostId, value]) => ({ hostId, connected: value?.connected === true })), containers: results };
   }
   async trashContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
@@ -341,6 +437,7 @@ export class ControllerApplicationService extends EventEmitter {
   }
   async refreshContainer({ containerId }) {
     const container = this.core.containers.getContainer(containerId);
+    if (container.host) await this.ensureManagedHostReady(container.host);
     const operation = await this.safeContainerOperation('status', container);
     const next = operation.ok ? await this.core.containers.updateStatus(containerId, operation.status || container.status, { resourceUsage: operation.resourceUsage, runtime: operation.runtime }) : await this.core.containers.updateStatus(containerId, 'failed', { lastError: operation.error });
     this.invalidate('containers', { containerId });
@@ -680,7 +777,7 @@ export class ControllerApplicationService extends EventEmitter {
 
   async containerLifecycle(containerId, action, status, desiredState) {
     const current = this.core.containers.getContainer(containerId);
-    if (['start', 'restart'].includes(action)) await this.ensureManagedHostReady(current.host);
+    if (current.host) await this.ensureManagedHostReady(current.host);
     if (current.deviceId) this.remoteReadiness.delete(current.deviceId);
     const progressStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
     const container = await this.core.containers.updateStatus(containerId, progressStatus, { desiredState });

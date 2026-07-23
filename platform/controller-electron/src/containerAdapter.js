@@ -7,6 +7,7 @@ import {
   macAddressFromIpv6Eui64Suffix,
   normalizeIpv6Address,
   normalizeIpv6Eui64Suffix,
+  ipv6Eui64SuffixFromMacAddress,
   normalizeIpv6Prefix,
   normalizeManagedNetwork,
 } from '../../controller-core/src/networkConfig.js';
@@ -15,6 +16,8 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_IMAGE = 'war-browser-agent:phase1';
 const CONTROL_PORT = '3766';
 const MANAGED_LABEL = 'war-controller';
+const MANAGED_CONTAINER_ID_LABEL = 'war-container-id';
+const MANAGED_CONTAINER_NAME_LABEL = 'war-container-name';
 const CREDENTIAL_PATH = '/data/device/controller-session.credential';
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 const MANAGED_IPV4_NETWORK_PREFIX = 'war-managed-ipv4-';
@@ -98,6 +101,36 @@ export class DockerContainerAdapter {
     return { runtime: await this.inspectRuntime(name, dataVolume(name), { network }), status: 'running' };
   }
 
+  async repair(container) {
+    const name = dockerName(container);
+    const network = await this.reconcileNetworks(container);
+    const approvedImage = this.approvedImage(container);
+    const approvedImageId = await this.imageId(approvedImage);
+    try {
+      const runtime = await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network });
+      const state = (await this.docker(['inspect', '-f', '{{.State.Status}}', name])).stdout.trim();
+      return { runtime, status: mapDockerStatus(state) };
+    } catch {
+      // Recreate only the container definition; the named /data volume remains intact.
+      const wasRunning = (await this.docker(['inspect', '-f', '{{.State.Running}}', name])).stdout.trim() === 'true';
+      const backupName = networkBackupName(name);
+      if (wasRunning) await this.docker(['stop', '--time', '10', name]);
+      await this.docker(['rename', name, backupName]);
+      try {
+        await this.launchContainer(container, network, { approvedImage, mode: wasRunning ? 'run' : 'create' });
+        await this.waitForIpv6Endpoint(name, network);
+        const runtime = await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network });
+        await this.docker(['rm', '-f', backupName]);
+        return { runtime, status: wasRunning ? 'running' : 'stopped', repaired: true };
+      } catch (error) {
+        await this.docker(['rm', '-f', name]).catch(() => {});
+        await this.docker(['rename', backupName, name]).catch(() => {});
+        if (wasRunning) await this.docker(['start', name]).catch(() => {});
+        throw error;
+      }
+    }
+  }
+
   async status(container) {
     const name = dockerName(container);
     const state = (await this.docker(['inspect', '-f', '{{.State.Status}}', name])).stdout.trim();
@@ -150,6 +183,9 @@ export class DockerContainerAdapter {
       ...(mode === 'run' ? ['-d'] : []),
       '--name', name,
       '--label', `managed-by=${MANAGED_LABEL}`,
+      ...(container.id ? ['--label', `${MANAGED_CONTAINER_ID_LABEL}=${safeLabel(container.id)}`] : []),
+      ...(container.name ? ['--label', `${MANAGED_CONTAINER_NAME_LABEL}=${safeLabel(container.name)}`] : []),
+      ...(container.deviceId ? ['--label', `war-device-id=${safeLabel(container.deviceId)}`] : []),
       '--restart', 'unless-stopped',
       '--memory', '2g',
       '--cpus', '2',
@@ -346,7 +382,14 @@ export class DockerContainerAdapter {
     const inspection = await this.inspectContainer(name);
     const actual = inspection.NetworkSettings?.Networks || {};
     const imageMatches = inspection.Config?.Image === approvedImage && inspection.Image === approvedImageId;
-    if (networkMatches(actual, desired) && imageMatches) return desired;
+    if (networkMatches(actual, desired) && imageMatches) {
+      try {
+        await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network: desired });
+        return desired;
+      } catch {
+        // The network/image can be correct while security options or mounts drifted.
+      }
+    }
     const wasRunning = (await this.docker(['inspect', '-f', '{{.State.Running}}', name])).stdout.trim() === 'true';
     const backupName = networkBackupName(name);
     if (wasRunning) await this.docker(['stop', '--time', '10', name]);
@@ -369,13 +412,55 @@ export class DockerContainerAdapter {
 
   async waitForIpv6Endpoint(name, network) {
     if (!network.ipv6Enabled || network.ipv6Driver !== 'macvlan') return;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       const inspection = await this.inspectContainer(name);
       const actual = inspection.NetworkSettings?.Networks?.[network.ipv6Network];
       if (matchesIpv6Endpoint(actual, network.ipv6Address)) return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
     throw new Error('Managed macvlan container did not receive the expected IPv6 SLAAC address');
+  }
+
+  async scanManagedContainers() {
+    const listed = await this.docker(['ps', '-a', '--filter', `label=managed-by=${MANAGED_LABEL}`, '--format', '{{.Names}}']);
+    const names = [...new Set(String(listed.stdout || '').split(/\r?\n/).map((value) => value.trim()).filter((value) => NAME_PATTERN.test(value)))];
+    const approvedImage = this.config.image || DEFAULT_IMAGE;
+    const approvedImageId = await this.imageId(approvedImage);
+    const containers = [];
+    const rejected = [];
+    for (const name of names) {
+      try {
+        const inspection = await this.inspectContainer(name);
+        if (inspection.Config?.Labels?.['managed-by'] !== MANAGED_LABEL) throw new Error('managed label missing');
+        const network = runtimeNetworkFromInspection(inspection, this.config);
+        const runtime = await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network });
+        const env = parseEnvironment(inspection.Config?.Env);
+        const labels = inspection.Config?.Labels || {};
+        const credential = await this.readCredential(name, dataVolume(name), approvedImage);
+        const deviceId = safeIdentifier(labels['war-device-id'] || env.WAR_MANAGED_DEVICE_ID);
+        if (!deviceId || !credential) throw new Error('managed identity credential is unavailable');
+        containers.push({
+          containerId: safeIdentifier(labels[MANAGED_CONTAINER_ID_LABEL]),
+          name: safeContainerName(labels[MANAGED_CONTAINER_NAME_LABEL] || name),
+          dockerName: name,
+          deviceId,
+          credential,
+          image: approvedImage,
+          host: this.config.hostId || null,
+          runtime,
+          status: mapDockerStatus(inspection.State?.Status),
+        });
+      } catch (error) {
+        rejected.push({ dockerName: name, reason: String(error?.message || 'invalid managed container').slice(0, 160) });
+      }
+    }
+    return { containers, rejected };
+  }
+
+  async readCredential(name, volume, approvedImage = this.config.image || DEFAULT_IMAGE) {
+    const result = await this.docker(['run', '--rm', '--user', 'war', '-v', `${volume}:/data:ro`, '--entrypoint', '/bin/sh', approvedImage, '-c', `umask 077; cat ${CREDENTIAL_PATH}`]);
+    const credential = String(result.stdout || '').trim();
+    return /^[A-Za-z0-9_-]{24,256}$/.test(credential) ? credential : null;
   }
 
   async ipv6PrefixChanged(runtime) {
@@ -618,6 +703,57 @@ function mapDockerStatus(status) {
   if (['created', 'restarting'].includes(status)) return 'starting';
   if (['removing', 'dead'].includes(status)) return 'failed';
   return 'stopped';
+}
+
+function runtimeNetworkFromInspection(inspection, config) {
+  const actual = inspection?.NetworkSettings?.Networks || {};
+  const entries = Object.entries(actual);
+  const ipv4Entry = entries.find(([name, value]) => (isManagedIpv4Network(name) || name === 'bridge') && Boolean(value?.IPAddress));
+  const ipv6Entry = entries.find(([name, value]) => isManagedIpv6Network(name) && Boolean(value?.GlobalIPv6Address));
+  if (!ipv4Entry && !ipv6Entry) throw new Error('managed container has no usable network endpoint');
+  const ipv6Address = ipv6Entry ? normalizeIpv6Address(ipv6Entry[1].GlobalIPv6Address) : null;
+  const ipv6MacAddress = ipv6Entry?.[1]?.MacAddress ? String(ipv6Entry[1].MacAddress).toLowerCase() : null;
+  const ipv6Suffix = ipv6Entry
+    ? (ipv6MacAddress ? ipv6Eui64SuffixFromMacAddress(ipv6MacAddress) : ipv6Address.split(':').slice(4).join(':'))
+    : null;
+  return {
+    ipv4Enabled: Boolean(ipv4Entry),
+    ipv4Network: ipv4Entry?.[0] || null,
+    ipv6Enabled: Boolean(ipv6Entry),
+    ipv6Suffix,
+    ipv6Driver: ipv6Entry ? (config.ipv6Driver === 'bridge' ? 'bridge' : 'macvlan') : null,
+    ipv6MacAddress,
+    ipv6Prefix: ipv6Entry ? ipv6PrefixFromAddress(ipv6Address, ipv6Entry[1].GlobalIPv6PrefixLen || 64) : null,
+    ipv6Address,
+    ipv6Network: ipv6Entry?.[0] || null,
+  };
+}
+
+function parseEnvironment(entries) {
+  const result = {};
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const separator = String(entry).indexOf('=');
+    if (separator <= 0) continue;
+    const key = String(entry).slice(0, separator);
+    if (/^[A-Z0-9_]{1,80}$/.test(key)) result[key] = String(entry).slice(separator + 1);
+  }
+  return result;
+}
+
+function safeIdentifier(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9_.:-]{1,120}$/.test(text) ? text : null;
+}
+
+function safeContainerName(value) {
+  const text = String(value || '').trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120);
+  return text || 'Managed Chromium';
+}
+
+function safeLabel(value) {
+  const text = String(value || '').trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120);
+  if (!text) throw new Error('Managed container label is invalid');
+  return text;
 }
 
 function parsePort(value) {

@@ -44,6 +44,8 @@ export function createElectronControllerRuntime(dependencies = {}) {
     core: null,
     application: null,
     mainWindow: null,
+    windows: new Set(),
+    remoteWindows: new Set(),
     ipcRegistration: null,
     wssRuntime: null,
     httpsServer: null,
@@ -106,6 +108,8 @@ export function createElectronControllerRuntime(dependencies = {}) {
         settingsStore: state.settingsStore,
         fs: state.fs,
       });
+      // Reconnect saved Linux hosts and reconcile each container's persisted desired state after startup.
+      Promise.resolve().then(() => state.application?.reconcileManagedState?.()).catch(() => {});
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
       });
@@ -123,6 +127,8 @@ export function createElectronControllerRuntime(dependencies = {}) {
         dialog: state.dialog,
         fs: state.fs,
         path: state.path,
+        allowedWindows: () => state.windows,
+        openRemoteWindow: (payload) => openRemoteWindow(state, payload),
       });
       state.session.defaultSession?.setPermissionRequestHandler?.((_webContents, _permission, callback) => callback(false));
       state.mainWindow = createMainWindow(state);
@@ -142,8 +148,11 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.httpsServer?.close?.();
       state.core?.sessions?.shutdown?.();
       if (state.mainWindow && !state.mainWindow.isDestroyed?.()) await closeWindow(state.mainWindow);
+      for (const window of [...state.remoteWindows]) if (!window.isDestroyed?.()) await closeWindow(window);
       state.protocol.unhandle?.('war-controller');
       state.mainWindow = null;
+      state.windows.clear();
+      state.remoteWindows.clear();
       state.application = null;
       state.core = null;
       state.store = null;
@@ -193,6 +202,8 @@ function registerProtocolHandler(state) {
 function createMainWindow(state) {
   const iconPath = state.path.join(state.rendererRoot, 'assets', 'war-controller-icon.svg');
   const win = new state.BrowserWindow(secureWindowOptions(state.preloadPath, iconPath));
+  state.windows.add(win);
+  win.once?.('closed', () => state.windows.delete(win));
   win.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
   win.webContents.on?.('will-navigate', (event, target) => {
     try {
@@ -203,6 +214,29 @@ function createMainWindow(state) {
     }
   });
   return win;
+}
+
+function openRemoteWindow(state, payload = {}) {
+  const mode = payload.mode === 'single' ? 'single' : 'all';
+  const ids = [...new Set(Array.isArray(payload.deviceIds) ? payload.deviceIds.filter((value) => typeof value === 'string' && value.trim()).slice(0, 8) : [])];
+  const layout = ['auto', '1', '2', '3', '4'].includes(payload.layout) ? payload.layout : 'auto';
+  const query = new URLSearchParams({ view: 'remote', mode, ...(ids.length ? { devices: ids.join(',') } : {}), ...(layout !== 'auto' ? { layout } : {}) });
+  const iconPath = state.path.join(state.rendererRoot, 'assets', 'war-controller-icon.svg');
+  const win = new state.BrowserWindow({ ...secureWindowOptions(state.preloadPath, iconPath), width: 1320, height: 860 });
+  state.windows.add(win);
+  state.remoteWindows.add(win);
+  win.once?.('closed', () => { state.windows.delete(win); state.remoteWindows.delete(win); });
+  win.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
+  win.webContents.on?.('will-navigate', (event, target) => {
+    try {
+      const url = new URL(target);
+      if (url.protocol !== 'war-controller:' || url.hostname !== 'app') event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
+  });
+  void win.loadURL(`war-controller://app/?${query.toString()}`);
+  return { opened: true, mode, deviceIds: ids };
 }
 
 async function maybeStartWss(state) {

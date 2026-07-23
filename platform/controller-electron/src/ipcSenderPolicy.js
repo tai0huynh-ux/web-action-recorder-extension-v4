@@ -1,7 +1,11 @@
-export function assertTrustedIpcSender(event, { mainWindow, allowedPaths = ['/', '/index.html'] } = {}) {
+export function assertTrustedIpcSender(event, { mainWindow, allowedWindows, allowedPaths = ['/', '/index.html'] } = {}) {
   const error = () => authDenied();
   const expectedWebContents = typeof mainWindow === 'function' ? mainWindow()?.webContents : mainWindow?.webContents;
-  if (!event?.sender || !expectedWebContents || event.sender !== expectedWebContents) throw error();
+  const extra = typeof allowedWindows === 'function' ? allowedWindows() : allowedWindows;
+  const allowed = Array.isArray(extra) ? extra : extra ? [...extra] : [];
+  const trusted = expectedWebContents && event?.sender === expectedWebContents
+    || allowed.some((window) => window?.webContents === event?.sender);
+  if (!event?.sender || !trusted) throw error();
   if (event.sender.isDestroyed?.()) throw error();
   if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw error();
   if (event.senderFrame.parent) throw error();

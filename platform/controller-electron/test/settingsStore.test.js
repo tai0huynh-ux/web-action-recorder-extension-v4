@@ -8,10 +8,12 @@ import { createControllerSettingsStore, normalizeSettings } from '../src/setting
 test('settings default to Vietnamese and bounded workspace layout', () => {
   assert.deepEqual(normalizeSettings({}), {
     locale: 'vi',
+    theme: 'light',
     workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false },
   });
   assert.deepEqual(normalizeSettings({ locale: 'fr', workspace: { leftWidth: 1, centerWidth: 999, graphCollapsed: true } }), {
     locale: 'vi',
+    theme: 'light',
     workspace: { leftWidth: 220, centerWidth: 600, graphCollapsed: true },
   });
 });
@@ -25,6 +27,11 @@ test('settings persist locale and panel layout', async () => {
   assert.equal(saved.locale, 'en');
   assert.deepEqual(await store.get(), saved);
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('settings persist the night mode choice', () => {
+  assert.equal(normalizeSettings({ theme: 'dark' }).theme, 'dark');
+  assert.equal(normalizeSettings({ theme: 'neon' }).theme, 'light');
 });
 
 test('settings retain validated SSH host metadata without accepting unsafe fields', () => {

@@ -107,7 +107,7 @@ test('closing active tab chooses fallback', async () => {
   assert.equal(tabs[0].active, true);
 });
 
-test('closing last tab keeps controlled blank page', async () => {
+test('closing last tab keeps a real Chromium new-tab page', async () => {
   const controller = fakeController();
   const page = fakePage('https://fixture.local/a');
   controller.context._pages.push(page);
@@ -115,46 +115,44 @@ test('closing last tab keeps controlled blank page', async () => {
   const result = await controller.closeTab(targetId);
   assert.equal(result.closed, false);
   assert.equal(result.reason, 'last_tab_kept_blank');
-  assert.equal(page.url(), 'about:blank');
-  assert.match(page._content, /data-war-ready-page="true"/);
-  assert.match(page._content, /Chromium &#273;&#227; s&#7861;n s&#224;ng/);
+  assert.equal(page.url(), 'chrome://newtab/');
+  assert.equal(page._setContentCalls, 0);
 });
 
-test('blank Chromium page gets a visible local landing page', async () => {
+test('blank Chromium page is promoted to a real new-tab page', async () => {
   const controller = fakeController();
   const page = fakePage('about:blank');
 
-  const applied = await controller.ensureBlankPageLanding(page);
+  const applied = await controller.ensureDefaultNewTab(page);
 
   assert.equal(applied, true);
-  assert.equal(page.url(), 'about:blank');
-  assert.match(page._content, /data-war-ready-page="true"/);
-  assert.match(page._content, /Ctrl<\/kbd> \+ <kbd>L/);
+  assert.equal(page.url(), 'chrome://newtab/');
+  assert.equal(page._setContentCalls, 0);
 });
 
-test('existing website is never replaced by the blank-page landing content', async () => {
+test('existing website is never replaced by the default new-tab page', async () => {
   const controller = fakeController();
   const page = fakePage('https://fixture.local/restored');
 
-  const applied = await controller.ensureBlankPageLanding(page);
+  const applied = await controller.ensureDefaultNewTab(page);
 
   assert.equal(applied, false);
   assert.equal(page._setContentCalls, 0);
   assert.equal(page.url(), 'https://fixture.local/restored');
 });
 
-test('normal navigation still works after the blank-page landing content', async () => {
+test('normal navigation still works after the default new-tab page', async () => {
   const controller = fakeController();
   const page = fakePage('about:blank');
   controller.context._pages.push(page);
   const targetId = controller.registerPage(page);
-  await controller.ensureBlankPageLanding(page);
+  await controller.ensureDefaultNewTab(page);
 
   const result = await controller.navigateTab(targetId, 'https://fixture.local/next');
 
   assert.equal(result.url, 'https://fixture.local/next');
   assert.equal(page.url(), 'https://fixture.local/next');
-  assert.equal(page._setContentCalls, 1);
+  assert.equal(page._setContentCalls, 0);
 });
 
 test('extension detection works when service worker is asleep but extension page loads', async () => {

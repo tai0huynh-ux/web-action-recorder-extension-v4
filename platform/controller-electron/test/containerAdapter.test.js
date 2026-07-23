@@ -125,7 +125,7 @@ test('managed Docker restart recreates a stale image container while preserving 
       if (args[0] === 'network' && args[1] === 'inspect') {
         return { stdout: `${JSON.stringify({ Driver: 'bridge', EnableIPv4: true, EnableIPv6: false, Labels: { 'managed-by': 'war-controller' } })}\n`, stderr: '' };
       }
-      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'true\n', stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: String(args[2]).includes('State.Status') ? 'running\n' : 'true\n', stderr: '' };
       if (args[0] === 'inspect') {
         return { stdout: `${JSON.stringify(managedIpv4Inspection({ Image: recreated ? IMAGE_ID : OLD_IMAGE_ID }))}\n`, stderr: '' };
       }
@@ -145,6 +145,30 @@ test('managed Docker restart recreates a stale image container while preserving 
   assert.equal(calls.some((args) => args[0] === 'rename'), true);
   assert.equal(calls.some((args) => args[0] === 'rm' && args[1] === '-f' && args[2]?.includes('network-backup')), true);
   assert.equal(result.status, 'running');
+});
+
+test('managed Docker repair restores the secure runtime without deleting the data volume', async () => {
+  const calls = [];
+  let inspected = 0;
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') return { stdout: `${JSON.stringify({ Driver: 'bridge', EnableIPv4: true, EnableIPv6: false, Labels: { 'managed-by': 'war-controller' } })}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: String(args[2]).includes('State.Status') ? 'running\n' : 'true\n', stderr: '' };
+      if (args[0] === 'inspect') {
+        inspected += 1;
+        return { stdout: `${JSON.stringify(managedIpv4Inspection(inspected === 2 ? { HostConfig: { Privileged: true } } : {}))}\n`, stderr: '' };
+      }
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+  const result = await adapter.repair(container());
+  const run = calls.find((args) => args[0] === 'run' && args.includes('--name'));
+  assert.equal(result.status, 'running');
+  assert.ok(run.includes('war-agent-one-data:/data'));
+  assert.equal(calls.some((args) => args[0] === 'volume' && args[1] === 'rm'), false);
 });
 
 test('managed Docker adapter creates an IPv6 network with a stable suffix and keeps IPv4 toggle explicit', async () => {

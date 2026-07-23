@@ -1,5 +1,6 @@
 export const DEFAULT_CONTROLLER_SETTINGS = Object.freeze({
   locale: 'vi',
+  theme: 'light',
   workspace: Object.freeze({
     leftWidth: 280,
     centerWidth: 420,
@@ -49,6 +50,7 @@ export function normalizeSettings(value = {}) {
     : [];
   return {
     locale: value.locale === 'en' ? 'en' : 'vi',
+    theme: value.theme === 'dark' ? 'dark' : 'light',
     workspace: {
       leftWidth: clampInteger(workspace.leftWidth, 220, 380, DEFAULT_CONTROLLER_SETTINGS.workspace.leftWidth),
       centerWidth: clampInteger(workspace.centerWidth, 320, 600, DEFAULT_CONTROLLER_SETTINGS.workspace.centerWidth),

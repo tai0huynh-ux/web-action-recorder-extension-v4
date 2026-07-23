@@ -1,6 +1,8 @@
 export default {
   app: {
     title: 'WAR Controller',
+    darkMode: 'Che do ban dem',
+    lightMode: 'Che do ban ngay',
     banner: 'Electron Controller an toàn',
     loading: 'Đang tải Controller...',
     startupFailed: 'Renderer không thể khởi động.',
@@ -42,6 +44,10 @@ export default {
     selectTarget: 'Hãy chọn ít nhất một container đang trực tuyến.',
     commandSent: 'Đã gửi lệnh điều khiển.',
     partialFailure: 'Số máy gửi lệnh thất bại:',
+    layout: 'Bo cuc',
+    layoutAuto: 'Tu dong',
+    openActive: 'Mo cua so may chinh',
+    openAll: 'Mo cua so tat ca',
   },
   originSync: {
     title: 'Đồng bộ từ máy gốc',
@@ -293,6 +299,9 @@ export default {
       restart: 'Restart',
       refreshStatus: 'Làm mới',
       checkAll: 'Kiểm tra tất cả',
+      scan: 'Quet container Linux',
+      scanning: 'Dang quet va xac minh container duoc quan ly tren Linux',
+      scanDone: 'Da nhap hoac cap nhat {count} container hop le; tu choi {rejected}.',
       checkingAll: 'Đang kiểm tra tất cả container',
       checkAllDone: 'Đã kiểm tra tất cả container',
       checkAllPartial: 'Có {count} container kiểm tra chưa thành công',
@@ -303,6 +312,7 @@ export default {
       networkUnavailable: 'Không có mạng',
       ipv6PrefixChanged: 'Prefix IPv6 đã thay đổi; Start, Restart hoặc Áp dụng mạng để đồng bộ.',
       reconnect: 'Kết nối lại',
+      repair: 'Sua an toan',
       reconnectHost: 'Kết nối lại máy Linux {name}',
       reconnecting: 'Đang kết nối lại {name}',
       reconnected: 'Đã kết nối lại {name}',

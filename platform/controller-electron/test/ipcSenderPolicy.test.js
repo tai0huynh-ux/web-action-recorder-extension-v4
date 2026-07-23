@@ -7,6 +7,13 @@ test('sender policy accepts trusted main frame', () => {
   assert.equal(assertTrustedIpcSender(event, { mainWindow }), true);
 });
 
+test('sender policy accepts a registered remote window but not an unregistered window', () => {
+  const remote = trustedFixture('war-controller://app/?view=remote');
+  const main = trustedFixture('war-controller://app/');
+  assert.equal(assertTrustedIpcSender(remote.event, { mainWindow: main.mainWindow, allowedWindows: new Set([remote.mainWindow]) }), true);
+  assert.throws(() => assertTrustedIpcSender(remote.event, { mainWindow: main.mainWindow, allowedWindows: new Set() }), { code: 'AUTH_DENIED' });
+});
+
 test('sender policy rejects wrong schemes, hosts, and malformed URLs', () => {
   for (const url of ['https://app/', 'file:///index.html', 'data:text/html,x', 'war-controller://evil/', '::::']) {
     const { event, mainWindow } = trustedFixture(url);

@@ -12,10 +12,29 @@
   --danger: #9b2c2c;
   --focus: #2f6fed;
   --surface-soft: #f1f5f9;
+  --nav: #edf1f5;
   --shadow: 0 10px 26px rgba(21, 31, 48, 0.12);
   --radius: 8px;
   --workspace-left: 280px;
   --workspace-center: 420px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #07131b;
+  --panel: #10212c;
+  --line: #2c4655;
+  --text: #e8f1f5;
+  --muted: #9db1bc;
+  --accent: #37a8bd;
+  --accent-dark: #7bd3df;
+  --success: #43b98b;
+  --warning: #e6a842;
+  --danger: #ef7777;
+  --focus: #7ab8ff;
+  --surface-soft: #162b37;
+  --nav: #0b1b25;
+  --shadow: 0 14px 34px rgba(0, 0, 0, .35);
 }
 
 * {
@@ -96,7 +115,7 @@ h3 {
   gap: 4px;
   padding: 12px;
   border-right: 1px solid var(--line);
-  background: #edf1f5;
+  background: var(--nav);
 }
 
 button,
@@ -1159,8 +1178,36 @@ th {
 
 .remote-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: repeat(var(--remote-columns, auto-fit), minmax(320px, 1fr));
   gap: 14px;
+}
+
+body.remote-popout .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.remote-popout .side-nav {
+  display: none;
+}
+
+body.remote-popout .content {
+  padding: 14px;
+}
+
+:root[data-theme='dark'] .remote-toolbar {
+  background: linear-gradient(120deg, #112a35, #152430);
+}
+
+:root[data-theme='dark'] .button.chip,
+:root[data-theme='dark'] .filter-panel,
+:root[data-theme='dark'] .network-settings,
+:root[data-theme='dark'] .prototype-note,
+:root[data-theme='dark'] .empty-state,
+:root[data-theme='dark'] input,
+:root[data-theme='dark'] select,
+:root[data-theme='dark'] textarea {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .remote-tile {

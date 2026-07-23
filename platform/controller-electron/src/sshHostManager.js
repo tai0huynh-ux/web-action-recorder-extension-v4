@@ -215,6 +215,10 @@ export class SshContainerHostManager {
     return this.hosts.keys().next().value || null;
   }
 
+  configuredHostIds() {
+    return [...this.hosts.keys()];
+  }
+
   getAdapter(hostId) {
     const host = this.getHost(hostId);
     if (!host) return null;

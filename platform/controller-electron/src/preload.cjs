@@ -27,6 +27,7 @@ const IPC_CHANNELS = Object.freeze({
   remote: Object.freeze({
     capture: 'war-controller:v1:remote:capture',
     control: 'war-controller:v1:remote:control',
+    openWindow: 'war-controller:v1:remote:open-window',
   }),
   containers: Object.freeze({
     list: 'war-controller:v1:containers:list',
@@ -40,11 +41,13 @@ const IPC_CHANNELS = Object.freeze({
     hostTrash: 'war-controller:v1:containers:host-trash',
     hostRestore: 'war-controller:v1:containers:host-restore',
     hostPurge: 'war-controller:v1:containers:host-purge',
+    scan: 'war-controller:v1:containers:scan',
     add: 'war-controller:v1:containers:add',
     start: 'war-controller:v1:containers:start',
     stop: 'war-controller:v1:containers:stop',
     restart: 'war-controller:v1:containers:restart',
     reconnect: 'war-controller:v1:containers:reconnect',
+    repair: 'war-controller:v1:containers:repair',
     refresh: 'war-controller:v1:containers:refresh',
     updateNetwork: 'war-controller:v1:containers:update-network',
     duplicate: 'war-controller:v1:containers:duplicate',
@@ -148,6 +151,7 @@ const api = deepFreeze({
   remote: {
     capture: call(IPC_CHANNELS.remote.capture),
     control: call(IPC_CHANNELS.remote.control),
+    openWindow: call(IPC_CHANNELS.remote.openWindow),
   },
   containers: {
     list: call(IPC_CHANNELS.containers.list),
@@ -161,11 +165,13 @@ const api = deepFreeze({
     trashHost: call(IPC_CHANNELS.containers.hostTrash),
     restoreHost: call(IPC_CHANNELS.containers.hostRestore),
     purgeHost: call(IPC_CHANNELS.containers.hostPurge),
+    scan: call(IPC_CHANNELS.containers.scan),
     add: call(IPC_CHANNELS.containers.add),
     start: call(IPC_CHANNELS.containers.start),
     stop: call(IPC_CHANNELS.containers.stop),
     restart: call(IPC_CHANNELS.containers.restart),
     reconnect: call(IPC_CHANNELS.containers.reconnect),
+    repair: call(IPC_CHANNELS.containers.repair),
     refresh: call(IPC_CHANNELS.containers.refresh),
     updateNetwork: call(IPC_CHANNELS.containers.updateNetwork),
     duplicate: call(IPC_CHANNELS.containers.duplicate),

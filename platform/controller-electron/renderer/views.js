@@ -124,6 +124,7 @@ function containersPane(refresh, active = false) {
       ]),
       el('div', { className: 'toolbar tight' }, [
         button(t('workspace.containers.checkAll'), () => refreshAllContainers(refresh), { className: 'button compact', disabled: store.workspace.containerAllPending || !activeManagedContainers().length }),
+        button(t('workspace.containers.scan'), () => scanAndImportContainers(refresh), { className: 'button compact', disabled: store.workspace.containerScanPending || !(store.workspace.containerHosts || []).length }),
         button(store.workspace.hostSetupOpen ? t('workspace.containers.collapseHostSetup') : `+ ${t('workspace.containers.addHost')}`, () => {
           store.workspace.hostSetupOpen = !store.workspace.hostSetupOpen;
           store.workspace.hostError = '';
@@ -776,6 +777,7 @@ function managedContainerActions(refresh) {
           button(t('workspace.containers.stop'), () => containerAction('stop', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy || container.status === 'stopped' }),
           button(t('workspace.containers.restart'), () => containerAction('restart', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.reconnect'), () => containerAction('reconnect', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
+          button(t('workspace.containers.repair'), () => containerAction('repair', container, refresh), { className: 'button chip', disabled: terminalDisabled || busy }),
           button(t('workspace.containers.refreshStatus'), () => containerAction('refresh', container, refresh), { className: 'button chip', disabled: terminalDisabled || Boolean(pendingAction) }),
           button(t('workspace.containers.networkSettings'), () => {
             store.workspace.containerNetworkOpenId = store.workspace.containerNetworkOpenId === container.id ? '' : container.id;
@@ -923,6 +925,28 @@ async function refreshAllContainers(refresh) {
       : t('workspace.containers.checkAllDone');
   } finally {
     store.workspace.containerAllPending = false;
+    refresh();
+  }
+}
+
+async function scanAndImportContainers(refresh) {
+  if (store.workspace.containerScanPending) return;
+  const hostId = store.workspace.containerHostId || store.workspace.containerHosts?.[0]?.id;
+  if (!hostId) return;
+  store.workspace.containerScanPending = true;
+  store.workspace.containerNotice = t('workspace.containers.scanning');
+  refresh();
+  try {
+    const result = await window.warController.containers.scan({ hostId });
+    if (result?.ok === false) throw controllerError(result, 'CONTAINER_SCAN_FAILED');
+    const data = unwrap(result) || {};
+    store.workspace.containerNotice = t('workspace.containers.scanDone', { count: data.imported?.length || 0, rejected: data.rejected?.length || 0 });
+    await loadContainerHosts(refresh);
+    await refreshAll();
+  } catch (error) {
+    store.workspace.containerNotice = safeError(error, 'CONTAINER_SCAN_FAILED');
+  } finally {
+    store.workspace.containerScanPending = false;
     refresh();
   }
 }
@@ -1082,7 +1106,7 @@ function allWorkspaceDevices() {
   const managedByDevice = new Map(activeContainers.map((container) => [container.deviceId, container]));
   const devices = store.devices.filter((device) => !deletedDeviceIds.has(device.id || device.deviceId)).map((device) => {
     const container = managedByDevice.get(device.id || device.deviceId);
-    return container ? { ...device, managedContainer: true, containerId: container.id, containerName: container.name, containerHost: container.host } : device;
+    return container ? { ...device, name: container.name, displayName: container.name, managedContainer: true, containerId: container.id, containerName: container.name, containerHost: container.host } : device;
   });
   const known = new Set(devices.map((device) => device.id || device.deviceId));
   return [...devices, ...activeContainers.filter((container) => !known.has(container.deviceId)).map((container) => ({
@@ -1245,6 +1269,7 @@ function pendingStatus(action) {
   if (action === 'stop') return 'stopping';
   if (action === 'restart') return 'restarting';
   if (action === 'reconnect') return 'restarting';
+  if (action === 'repair') return 'restarting';
   if (action === 'delete') return 'deleting';
   if (action === 'duplicate') return 'creating';
   if (action === 'network') return 'restarting';
@@ -2112,7 +2137,9 @@ function pairingView(refresh) {
         try {
           const device = parseJsonInput(descriptor.value);
           const result = await window.warController.pairings.request({ device, displayName: display.value || undefined });
-          pairingNotice = `Pairing requested. Code: ${unwrap(result)?.code || ''}`;
+          const pairingCode = unwrap(result)?.code || '';
+          code.value = pairingCode;
+          pairingNotice = `Pairing requested. Code: ${pairingCode}`;
           setStatus(status, result, pairingNotice);
           await refreshAll();
           refresh();
@@ -2124,6 +2151,13 @@ function pairingView(refresh) {
     ]),
     field('Pairing code', code),
     el('div', { className: 'toolbar' }, [
+      button('Reconnect offline agents', async () => {
+        const offline = activeAgents.filter((agent) => sessionForDevice(agent.deviceId)?.status !== 'online');
+        for (const agent of offline) await window.warController.pairings.reconnect({ deviceId: agent.deviceId });
+        pairingNotice = offline.length ? `Reconnect requested for ${offline.length} agents` : 'All agents are already online';
+        await refreshAll();
+        refresh();
+      }, { disabled: !activeAgents.length }),
       button('Clear one-time credential', () => { oneTimeSecret = null; secretBox.textContent = 'Cleared'; }),
     ]),
     status,
@@ -2154,7 +2188,7 @@ function sessionForDevice(deviceId) {
 function pairingAgentActions(agent, refresh, status) {
   const busy = store.diagnosticsPending;
   return el('div', { className: 'row-actions' }, [
-    el('span', { text: agent.deviceId }),
+    el('span', { text: pairedAgentDisplayName(agent.deviceId) }),
     button('Reconnect', async () => {
       try {
         const result = await window.warController.pairings.reconnect({ deviceId: agent.deviceId });
@@ -2173,6 +2207,12 @@ function pairingAgentActions(agent, refresh, status) {
       } catch (error) { status.textContent = safeError(error, 'PAIRING_DELETE_FAILED'); }
     }, { className: 'button danger', disabled: busy || Boolean(agent.revokedAt) }),
   ]);
+}
+
+function pairedAgentDisplayName(deviceId) {
+  const container = store.containers.find((item) => item.deviceId === deviceId && item.status !== 'deleted');
+  const device = store.devices.find((item) => (item.id || item.deviceId) === deviceId);
+  return container?.name || device?.displayName || device?.name || deviceId;
 }
 
 function pairingRow(item, codeInput, refresh, secretBox, status) {
@@ -2214,9 +2254,12 @@ function devicesView() {
 
 function remoteView(refresh) {
   store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, updating: {}, errors: {}, notice: '', error: '' };
+  store.remote.layout ||= 'auto';
   store.remote.updating ||= {};
   store.remote.errors ||= {};
-  const targets = allWorkspaceDevices().filter((device) => device.managedContainer && isContainerAgentOnline(device.managedContainer ? store.containers.find((item) => item.id === device.containerId) : device));
+  const targets = allWorkspaceDevices()
+    .filter((device) => device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
+    .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
   const ids = targets.map((device) => device.id || device.deviceId).filter(Boolean);
   store.remote.selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
   if (!store.remote.selectionInitialized) {
@@ -2240,6 +2283,12 @@ function remoteView(refresh) {
     if (!store.remote.live) stopRemotePolling();
     refresh();
   }, { className: 'button primary' });
+  const layout = el('select', { ariaLabel: t('remote.layout') }, [
+    el('option', { value: 'auto', text: t('remote.layoutAuto') }),
+    ...[1, 2, 3, 4].map((count) => el('option', { value: String(count), text: `${count} / hang` })),
+  ]);
+  layout.value = store.remote.layout || 'auto';
+  layout.addEventListener('change', () => { store.remote.layout = layout.value; refresh(); });
   const status = el('p', { className: store.remote.error ? 'status error' : 'status', text: store.remote.error || store.remote.notice || (ids.length ? t('remote.help') : t('remote.empty')), ariaLive: 'polite' });
   remoteStatusNode = status;
   const root = section(t('remote.title'), [
@@ -2247,13 +2296,16 @@ function remoteView(refresh) {
     el('div', { className: 'remote-toolbar' }, [
       field(t('remote.sync'), sync),
       field(t('remote.fps'), fps),
+      field(t('remote.layout'), layout),
       button(t('remote.selectAll'), () => { store.remote.selectedDeviceIds = ids.slice(0, 8); refresh(); }, { className: 'button compact', disabled: !ids.length }),
       button(t('remote.clear'), () => { store.remote.selectedDeviceIds = []; refresh(); }, { className: 'button compact', disabled: !selected.size }),
       live,
+      button(t('remote.openActive'), () => openRemoteWindow([store.remote.activeDeviceId].filter(Boolean), 'single'), { className: 'button compact', disabled: !store.remote.activeDeviceId }),
+      button(t('remote.openAll'), () => openRemoteWindow([...selected], 'all'), { className: 'button compact', disabled: !selected.size }),
     ]),
     status,
     ids.length ? el('div', { className: 'remote-target-list' }, targets.map((device) => remoteTargetCheckbox(device, selected, refresh))) : null,
-    ids.length ? el('div', { className: 'remote-grid' }, targets.filter((device) => selected.has(device.id || device.deviceId)).map((device) => remoteTile(device, refresh))) : el('p', { className: 'empty-state', text: t('remote.empty') }),
+    ids.length ? remoteGrid(targets.filter((device) => selected.has(device.id || device.deviceId)), refresh) : el('p', { className: 'empty-state', text: t('remote.empty') }),
     el('p', { className: 'remote-key-help', text: t('remote.keyHelp') }),
   ]);
   if (store.remote.live && ids.length && typeof window.warController?.remote?.capture === 'function') {
@@ -2264,7 +2316,7 @@ function remoteView(refresh) {
 
 function remoteTargetCheckbox(device, selected, refresh) {
   const id = device.id || device.deviceId;
-  const checkbox = el('input', { type: 'checkbox', checked: selected.has(id), ariaLabel: device.displayName || device.name || id });
+  const checkbox = el('input', { type: 'checkbox', checked: selected.has(id), ariaLabel: remoteDisplayName(device) });
   checkbox.addEventListener('change', () => {
     const next = new Set(store.remote.selectedDeviceIds);
     if (checkbox.checked) next.add(id);
@@ -2273,15 +2325,22 @@ function remoteTargetCheckbox(device, selected, refresh) {
     if (!store.remote.activeDeviceId || checkbox.checked) store.remote.activeDeviceId = id;
     refresh();
   });
-  return el('label', { className: 'remote-target-chip' }, [checkbox, el('span', { text: device.displayName || device.name || id })]);
+  return el('label', { className: 'remote-target-chip' }, [checkbox, el('span', { text: remoteDisplayName(device) })]);
+}
+
+function remoteGrid(devices, refresh) {
+  const grid = el('div', { className: 'remote-grid' }, devices.map((device) => remoteTile(device, refresh)));
+  if (['1', '2', '3', '4'].includes(store.remote.layout)) grid.style.setProperty('--remote-columns', store.remote.layout);
+  return grid;
 }
 
 function remoteTile(device, refresh) {
   const id = device.id || device.deviceId;
   const frame = store.remote.frames?.[id];
-  const image = el('img', { className: 'remote-screen', tabIndex: 0, ariaLabel: t('remote.screen', { name: device.displayName || device.name || id }) });
+  const name = remoteDisplayName(device);
+  const image = el('img', { className: 'remote-screen', tabIndex: 0, ariaLabel: t('remote.screen', { name }) });
   const placeholder = frame ? null : el('span', { className: 'remote-screen-placeholder', text: store.remote.updating?.[id] ? t('remote.updating') : (store.remote.errors?.[id] || t('remote.waiting')) });
-  image.setAttribute('alt', t('remote.screen', { name: device.displayName || device.name || id }));
+  image.setAttribute('alt', t('remote.screen', { name }));
   image.setAttribute('draggable', 'false');
   if (frame?.data) image.setAttribute('src', `data:${frame.mimeType || 'image/jpeg'};base64,${frame.data}`);
   remoteScreens.set(id, { image, placeholder });
@@ -2323,16 +2382,31 @@ function remoteTile(device, refresh) {
   });
   return el('article', { className: `remote-tile${store.remote.activeDeviceId === id ? ' active' : ''}` }, [
     el('div', { className: 'remote-tile-heading' }, [
-      el('strong', { text: device.displayName || device.name || id }),
+      el('strong', { text: name }),
       el('span', { className: 'status-pill online', text: t('status.online') }),
     ]),
     el('div', { className: 'remote-screen-wrap' }, [image, placeholder]),
     el('div', { className: 'toolbar tight' }, [
       button(t('remote.focus'), () => { store.remote.activeDeviceId = id; refresh(); }, { className: 'button compact' }),
+      button(t('remote.openActive'), () => openRemoteWindow([id], 'single'), { className: 'button compact' }),
       button(t('remote.stopInput'), () => sendRemoteCommand('input.stopAll', {}), { className: 'button compact danger' }),
     ]),
     frame ? el('span', { className: 'device-meta', text: `${frame.width}x${frame.height} · ${Math.round((frame.data?.length || 0) * 0.75 / 1024)} KB` }) : null,
   ]);
+}
+
+function remoteDisplayName(device) {
+  return device.containerName || device.displayName || device.name || device.id || device.deviceId || 'Chromium';
+}
+
+async function openRemoteWindow(deviceIds, mode) {
+  const ids = [...new Set(deviceIds || [])].filter(Boolean).slice(0, 8);
+  if (!ids.length || typeof window.warController?.remote?.openWindow !== 'function') return;
+  const result = await window.warController.remote.openWindow({ mode, deviceIds: ids, layout: store.remote.layout || 'auto' });
+  if (result?.ok === false) {
+    store.remote.error = safeError(result, 'REMOTE_WINDOW_FAILED');
+    updateRemoteStatus();
+  }
 }
 
 function startRemotePolling() {
