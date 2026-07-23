@@ -5,6 +5,7 @@ import { createMemoryStore } from '../../../companion/store.js';
 import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
 import { ControllerApplicationService, DISPATCH_DEADLINE_SECONDS } from '../src/controllerApplication.js';
 import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
+import { normalizeIpv6Eui64Suffix } from '../../controller-core/src/networkConfig.js';
 
 test('application dispatch persists a command and delivers it through WSS without leaking main-owned fields', async () => {
   const core = await connectedCore();
@@ -217,7 +218,7 @@ test('application manages container lifecycle through a bounded adapter', async 
   assert.notEqual(duplicate.data.container.runtime.dockerName, added.data.container.runtime.dockerName);
   assert.equal(network.data.container.runtime.ipv6Address, '2001:db8:1:2:a8bb:ccff:fedd:eeff');
   assert.notEqual(duplicate.data.container.runtime.ipv6Suffix, network.data.container.runtime.ipv6Suffix);
-  assert.match(duplicate.data.container.runtime.ipv6Suffix, /^[0-9a-f]{1,4}:[0-9a-f]{1,2}ff:fe[0-9a-f]{1,2}:[0-9a-f]{1,4}$/);
+  assert.doesNotThrow(() => normalizeIpv6Eui64Suffix(duplicate.data.container.runtime.ipv6Suffix));
   assert.equal(trashed.data.operation.ok, true);
   const restored = await app.restoreContainer({ containerId });
   assert.equal(restored.data.container.status, 'stopped');
