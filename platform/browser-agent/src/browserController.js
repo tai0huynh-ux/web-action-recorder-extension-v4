@@ -96,7 +96,7 @@ export class BrowserController {
       args
     });
     for (const page of this.context.pages()) this.registerPage(page);
-    this.context.on('page', (page) => this.registerPage(page));
+    this.context.on('page', (page) => this.registerPage(page, { activate: true }));
     await this.refreshExtensionStatus();
     if (this.pendingNativeBridgeRestartFor && !this.nativeBridgeRestartedFor.has(this.pendingNativeBridgeRestartFor)) {
       const extensionId = this.pendingNativeBridgeRestartFor;
@@ -421,12 +421,17 @@ export class BrowserController {
     return true;
   }
 
-  registerPage(page) {
-    if (this.targetIdByPage.has(page)) return this.targetIdByPage.get(page);
+  registerPage(page, { activate = false } = {}) {
+    if (this.targetIdByPage.has(page)) {
+      const existingTargetId = this.targetIdByPage.get(page);
+      if (activate) this.activeTargetId = existingTargetId;
+      return existingTargetId;
+    }
     const targetId = `tab-${crypto.randomUUID()}`;
     this.targetIdByPage.set(page, targetId);
     this.pageByTargetId.set(targetId, page);
     this.createdAtByPage.set(page, new Date().toISOString());
+    if (activate) this.activeTargetId = targetId;
     page.once?.('close', () => {
       this.pageByTargetId.delete(targetId);
       if (this.activeTargetId === targetId) this.activeTargetId = this.firstOpenTargetId();

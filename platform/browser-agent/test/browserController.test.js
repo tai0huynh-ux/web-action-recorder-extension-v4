@@ -119,6 +119,21 @@ test('closing last tab keeps a real Chromium new-tab page', async () => {
   assert.equal(page._setContentCalls, 0);
 });
 
+test('a Chromium-created tab becomes the active remote-control target', async () => {
+  const controller = fakeController();
+  const first = fakePage('https://fixture.local/a');
+  const second = fakePage('chrome://new-tab-page/');
+  controller.context._pages.push(first, second);
+  const firstId = controller.registerPage(first);
+  controller.activeTargetId = firstId;
+
+  const secondId = controller.registerPage(second, { activate: true });
+  const tabs = await controller.listTabs();
+
+  assert.equal(tabs.find((tab) => tab.active)?.targetId, secondId);
+  assert.equal(tabs.filter((tab) => tab.active).length, 1);
+});
+
 test('blank Chromium page is promoted to a real new-tab page', async () => {
   const controller = fakeController();
   const page = fakePage('about:blank');
