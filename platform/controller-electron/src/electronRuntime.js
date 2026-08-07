@@ -8,7 +8,8 @@ import { ControllerWssRuntimeServer } from '../../controller-wss/src/wssServer.j
 import { ControllerApplicationService } from './controllerApplication.js';
 import { resolveRendererAsset, CSP } from './appProtocol.js';
 import { registerControllerIpcHandlers } from './ipcHandlers.js';
-import { resolveElectronRuntimeConfig } from './runtimeConfig.js';
+import { resolveElectronRuntimeConfig, runtimeProfileFromConfig, withBoundWssPort } from './runtimeConfig.js';
+import { createControllerRuntimeProfileStore } from './runtimeProfileStore.js';
 import { createControllerSettingsStore } from './settingsStore.js';
 import { secureWindowOptions } from './secureWindow.js';
 import { createDockerContainerAdapter } from './containerAdapter.js';
@@ -33,11 +34,13 @@ export function createElectronControllerRuntime(dependencies = {}) {
     ControllerWssRuntimeServer: dependencies.ControllerWssRuntimeServer || ControllerWssRuntimeServer,
     createDockerContainerAdapter: dependencies.createDockerContainerAdapter || createDockerContainerAdapter,
     SshContainerHostManager: dependencies.SshContainerHostManager || SshContainerHostManager,
+    createControllerRuntimeProfileStore: dependencies.createControllerRuntimeProfileStore || createControllerRuntimeProfileStore,
     rendererRoot: dependencies.rendererRoot || path.join(import.meta.dirname, '..', 'renderer'),
     preloadPath: dependencies.preloadPath || path.join(import.meta.dirname, 'preload.cjs'),
     version: dependencies.version || dependencies.app?.getVersion?.() || '0.1.0',
     env: dependencies.env || process.env,
     config: null,
+    runtimeProfileStore: dependencies.runtimeProfileStore || null,
     store: null,
     settingsStore: null,
     containerHostManager: null,
@@ -49,6 +52,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     ipcRegistration: null,
     wssRuntime: null,
     httpsServer: null,
+    startupReconciliation: null,
     started: false,
     shuttingDown: false,
   };
@@ -58,10 +62,12 @@ export function createElectronControllerRuntime(dependencies = {}) {
     get core() { return state.core; },
     get application() { return state.application; },
     get mainWindow() { return state.mainWindow; },
+    get startupReconciliation() { return state.startupReconciliation; },
     async start() {
       if (state.started) return this;
       state.shuttingDown = false;
       requireDependencies(state);
+      state.app.setName?.('WAR Controller');
       if (!state.app.isReady?.()) {
         state.app.enableSandbox();
         state.protocol.registerSchemesAsPrivileged?.([{ scheme: 'war-controller', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -84,12 +90,27 @@ export function createElectronControllerRuntime(dependencies = {}) {
         }
       });
       await state.app.whenReady();
-      state.config = resolveElectronRuntimeConfig({ app: state.app, env: state.env, fs: state.fs, path: state.path });
+      const initialConfig = resolveElectronRuntimeConfig({ app: state.app, env: state.env, fs: state.fs, path: state.path });
+      if (!state.runtimeProfileStore && supportsRuntimeProfileStore(state.fs)) {
+        state.runtimeProfileStore = state.createControllerRuntimeProfileStore({ fs: state.fs, path: state.path, filePath: initialConfig.runtimeProfilePath });
+      }
+      const loadedRuntimeProfile = state.runtimeProfileStore
+        ? await state.runtimeProfileStore.load()
+        : { status: 'missing', profile: null };
+      state.config = resolveElectronRuntimeConfig({
+        app: state.app,
+        env: state.env,
+        fs: state.fs,
+        path: state.path,
+        runtimeProfile: loadedRuntimeProfile.profile,
+        runtimeProfileStatus: loadedRuntimeProfile.status,
+      });
       registerProtocolHandler(state);
       state.store = new state.JsonStore(state.config.storePath);
       state.settingsStore = state.createControllerSettingsStore({ fs: state.fs, path: state.path, filePath: state.config.settingsPath });
       state.core = new state.ControllerCore({ store: state.store });
       await state.core.load();
+      await maybeStartWss(state);
       state.containerHostManager = new state.SshContainerHostManager({
         config: state.config,
         settingsStore: state.settingsStore,
@@ -97,7 +118,6 @@ export function createElectronControllerRuntime(dependencies = {}) {
         fsImpl: state.fs,
       });
       await state.containerHostManager.load();
-      await maybeStartWss(state);
       state.application = new state.ControllerApplicationService({
         core: state.core,
         wssRuntime: state.wssRuntime,
@@ -108,8 +128,6 @@ export function createElectronControllerRuntime(dependencies = {}) {
         settingsStore: state.settingsStore,
         fs: state.fs,
       });
-      // Reconnect saved Linux hosts and reconcile each container's persisted desired state after startup.
-      Promise.resolve().then(() => state.application?.reconcileManagedState?.()).catch(() => {});
       state.wssRuntime?.adapter?.on?.('execution', (event) => {
         state.application?.invalidate?.('jobs', { jobId: event.jobId, deviceId: event.deviceId });
       });
@@ -138,6 +156,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
         if (!state.shuttingDown) state.app.quit?.();
       });
       state.started = true;
+      startStartupReconciliation(state);
       return this;
     },
     async shutdown() {
@@ -157,7 +176,9 @@ export function createElectronControllerRuntime(dependencies = {}) {
       state.core = null;
       state.store = null;
       state.settingsStore = null;
+      state.runtimeProfileStore = null;
       state.containerHostManager = null;
+      state.startupReconciliation = null;
       state.started = false;
     },
   };
@@ -255,4 +276,19 @@ async function maybeStartWss(state) {
   });
   const adapter = new state.ControllerWssServerAdapter({ sessionManager: state.core.sessions });
   state.wssRuntime = new state.ControllerWssRuntimeServer({ server: state.httpsServer, adapter });
+  const address = state.httpsServer.address?.();
+  state.config = withBoundWssPort(state.config, typeof address === 'object' ? address?.port : null);
+  if (state.config.wss.source === 'environment') await state.runtimeProfileStore?.save(runtimeProfileFromConfig(state.config));
+}
+
+function supportsRuntimeProfileStore(fsImpl) {
+  return ['readFile', 'writeFile', 'mkdir', 'rename'].every((method) => typeof fsImpl?.promises?.[method] === 'function');
+}
+
+function startStartupReconciliation(state) {
+  if (!state.application?.reconcileManagedState) return;
+  state.startupReconciliation = Promise.resolve()
+    .then(() => state.application.reconcileManagedState())
+    // The application records and publishes the bounded failure before rethrowing.
+    .catch(() => null);
 }

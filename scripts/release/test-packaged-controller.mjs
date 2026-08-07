@@ -44,27 +44,59 @@ async function runInstalledSmoke() {
 async function runControllerSmoke(exe, label) {
   const smokeRoot = path.join(temp, label);
   await fsp.mkdir(smokeRoot, { recursive: true });
-  const smokeOutput = path.join(smokeRoot, 'packaged-smoke.json');
+  const smokeUserDataPath = path.join(smokeRoot, 'electron-user-data');
+  const statePath = path.join(smokeRoot, 'state');
   const certs = await createCertificates(smokeRoot);
-  const env = {
-    ...process.env,
-    WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT: smokeOutput,
-    WAR_CONTROLLER_PACKAGED_SMOKE_USER_DATA_PATH: path.join(smokeRoot, 'electron-user-data'),
-    WAR_CONTROLLER_ELECTRON_DATA_PATH: path.join(smokeRoot, 'state'),
+  const control = {
+    WAR_CONTROLLER_PACKAGED_SMOKE_USER_DATA_PATH: smokeUserDataPath,
+    WAR_CONTROLLER_ELECTRON_DATA_PATH: statePath,
+    WAR_CONTROLLER_PACKAGED_SMOKE_EXPECT_WSS_ENABLED: '1',
+  };
+  const bootstrap = await runSmokePhase(exe, label, 'bootstrap', {
+    ...control,
     WAR_CONTROLLER_WSS_ENABLED: '1',
     WAR_CONTROLLER_WSS_HOST: '127.0.0.1',
     WAR_CONTROLLER_TLS_CERT_PATH: certs.cert,
-    WAR_CONTROLLER_TLS_KEY_PATH: certs.key
-  };
-  await runProcess(exe, [], packagedSmokeTimeoutMs(), env);
-  const smoke = JSON.parse(await fsp.readFile(smokeOutput, 'utf8'));
-  const failed = smoke.results.filter((item) => !item.pass);
-  if (failed.length) throw new Error(`${label} packaged smoke failed: ${failed.map((item) => item.name).join(', ')}`);
+    WAR_CONTROLLER_TLS_KEY_PATH: certs.key,
+  });
+  const reopen = await runSmokePhase(exe, label, 'reopen', control, { requireWss: true });
   return {
     label,
     executable: path.basename(exe),
-    tests: smoke.results.map(({ name, pass, durationMs, data, error }) => ({ name, pass, durationMs, data, error }))
+    // Keep the original field for consumers that only knew the bootstrap run.
+    tests: bootstrap.tests,
+    bootstrap,
+    reopen,
   };
+}
+
+async function runSmokePhase(exe, label, phase, control, { requireWss = false } = {}) {
+  const smokeOutput = path.join(path.dirname(control.WAR_CONTROLLER_ELECTRON_DATA_PATH), `packaged-smoke-${phase}.json`);
+  const env = { ...smokeEnvironmentWithoutBootstrap(), ...control, WAR_CONTROLLER_PACKAGED_SMOKE_OUTPUT: smokeOutput };
+  await runProcess(exe, [], packagedSmokeTimeoutMs(), env);
+  const smoke = JSON.parse(await fsp.readFile(smokeOutput, 'utf8'));
+  const failed = smoke.results.filter((item) => !item.pass);
+  if (failed.length) throw new Error(`${label} ${phase} packaged smoke failed: ${failed.map((item) => item.name).join(', ')}`);
+  const tests = smoke.results.map(({ name, pass, durationMs, data, error }) => ({ name, pass, durationMs, data, error }));
+  const wss = tests.find((item) => item.name === 'packaged WSS status');
+  if (requireWss && (!wss?.pass || wss.data?.enabled !== true || !Number.isInteger(wss.data?.port) || wss.data.port < 1)) {
+    throw new Error(`${label} ${phase} packaged smoke did not restore persisted WSS`);
+  }
+  return { phase, output: path.basename(smokeOutput), tests, ...(requireWss ? { wss: wss.data } : {}) };
+}
+
+function smokeEnvironmentWithoutBootstrap() {
+  const env = { ...process.env };
+  for (const key of [
+    'WAR_CONTROLLER_WSS_ENABLED',
+    'WAR_CONTROLLER_WSS_HOST',
+    'WAR_CONTROLLER_WSS_PORT',
+    'WAR_CONTROLLER_ALLOW_LAN',
+    'WAR_CONTROLLER_TLS_CERT_PATH',
+    'WAR_CONTROLLER_TLS_KEY_PATH',
+  ]) delete env[key];
+  for (const key of Object.keys(env)) if (key.startsWith('WAR_CONTAINER_')) delete env[key];
+  return env;
 }
 
 function findInstaller() {

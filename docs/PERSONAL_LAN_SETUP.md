@@ -6,13 +6,13 @@ This guide prepares the Controller and one managed Browser Agent for a trusted p
 
 - Use the reviewed release SHA and verify `release-manifest.json` plus `SHA256SUMS.txt`.
 - Use a Linux Docker host that passes `npm run probe:chromium-sandbox-host` with `USERNS_SANDBOX_CAPABLE`.
-- Install `platform/container/security/war-browser-agent.apparmor` as root-owned mode `0644` and load it with `apparmor_parser -r -W`.
+- Install `platform/container/security/war-browser-agent.apparmor` as root-owned mode `0644` at `/etc/apparmor.d/war-browser-agent` and load it with `apparmor_parser -r -W /etc/apparmor.d/war-browser-agent`. Keep the profile at this top-level path so `apparmor.service` reloads it after reboot; do not place the persistent copy only in an ignored subdirectory.
 - Keep `platform/container/security/chromium-userns-seccomp.json` unchanged; the repository validator locks its reviewed hash.
 - Use TLS certificates whose private keys stay outside the repository and release bundle.
 
 ## Controller
 
-Configure the packaged Controller with external environment/configuration:
+For the first launch, or when intentionally rotating the WSS endpoint or TLS files, bootstrap the packaged Controller with external environment/configuration:
 
 ```powershell
 $env:WAR_CONTROLLER_WSS_ENABLED="1"
@@ -29,6 +29,8 @@ $env:WAR_CONTAINER_CONTROLLER_CA_PATH="<controller-ca-path>"
 $env:WAR_CONTAINER_SECCOMP_PROFILE_PATH="/etc/war/security/chromium-userns-seccomp.json"
 $env:WAR_CONTAINER_IPV6_INTERFACE="<linux-interface-with-global-ipv6-64>"
 ```
+
+After the first successful WSS bind, close the bootstrap shell and open WAR Controller normally. The main process restores the validated WSS host, actual port, LAN approval, and TLS file paths from `controller-runtime.json`; it does not persist certificate/private-key contents or Agent credentials there. The approved Linux SSH host remains in the backend settings store and is re-probed on every startup. Use the environment again only for an intentional WSS/TLS rotation or to bootstrap a new Windows profile.
 
 `WAR_CONTAINER_HOST_LABEL` is the safe display name shown in the **Máy chạy container** selector. The Controller never exposes the SSH target or identity path to the renderer. Opening **Thêm container** probes Docker first; only a successful configured host can be selected. Creating a container re-runs the probe, chooses the approved image and a unique Docker name, provisions the managed Agent credential and data volume, applies WSS, resource, AppArmor/seccomp, and sandbox settings, then adds the result to the application list.
 
@@ -50,6 +52,8 @@ For an address such as `2001:db8:1234:5678:a8bb:ccff:fedd:eeff`:
 - Refresh reports prefix drift without silently changing a running container.
 
 When `WAR_CONTAINER_IPV6_INTERFACE` is configured, the adapter creates a labeled IPv6 `macvlan` on that interface, enables IPv6, and assigns the exact static address plus its EUI-64 MAC. This is the correct mode for an on-link ISP `/64`; the upstream router supplies reachability through normal neighbor discovery. If the host has a separately routed/delegated `/64`, set `WAR_CONTAINER_IPV6_DRIVER=bridge` and the adapter uses an IPv6-only bridge instead. IPv4, when enabled, uses a separate labeled private bridge. Neither mode uses host networking. A routed deployment still requires the upstream router to route the delegated `/64` to the Docker host.
+
+Existing installations may have pre-versioned WAR network labels. Startup and **Sửa an toàn** preserve such a network only when it is already attached exclusively to the immutable, ownership-verified canonical container and its legacy labels, driver, address family, prefix/interface, and endpoint all match the persisted runtime. New containers always use the current versioned network schema. Repair fails closed instead of silently migrating, deleting, or sharing an unverified network.
 
 ## Managed container policy
 

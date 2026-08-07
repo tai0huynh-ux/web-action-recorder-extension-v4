@@ -2,6 +2,7 @@ import { t } from './i18n.js';
 import { clampWorkspaceLayout, createWorkspaceSelection, WORKSPACE_SAMPLE_NODES } from './workspaceState.js';
 
 const api = window.warController;
+const INITIAL_HOST_DIAGNOSTICS_TIMEOUT_MS = 4_000;
 
 export const views = Object.freeze(['workspace', 'remote', 'overview', 'pairing', 'devices', 'groups', 'workflows', 'jobs', 'diagnostics', 'trash']);
 
@@ -28,6 +29,7 @@ export const store = {
     trashPending: {},
     trashError: '',
     containerHostStatus: 'idle',
+    initialHostDiagnosticsProbed: false,
     containerNotice: '',
     hostSetupOpen: false,
     hostEditorId: '',
@@ -159,6 +161,7 @@ export async function refreshAll() {
   store.settings = unwrap(settings) || store.settings;
   store.settings.workspace = clampWorkspaceLayout(store.settings.workspace);
   store.workspace.containerHosts = mergeConfiguredContainerHosts(store.workspace.containerHosts, store.settings.containerHosts);
+  await probeInitialContainerHostDiagnostics();
   store.pairings = unwrap(pairings) || { pending: [], paired: [] };
   store.devices = unwrap(devices)?.devices || [];
   store.sessions = unwrap(sessions)?.sessions || [];
@@ -168,6 +171,36 @@ export async function refreshAll() {
   store.workflows = unwrap(workflows)?.workflows || [];
   store.jobs = unwrap(jobs)?.jobs || [];
   store.lastRefresh = new Date().toISOString();
+}
+
+async function probeInitialContainerHostDiagnostics() {
+  if (store.workspace.initialHostDiagnosticsProbed) return;
+  store.workspace.initialHostDiagnosticsProbed = true;
+  if (!(store.settings?.containerHosts || []).some((host) => host?.id)) return;
+
+  try {
+    const result = await withTimeout(api.containers.hosts(), INITIAL_HOST_DIAGNOSTICS_TIMEOUT_MS);
+    if (result?.ok === false) throw new Error('SSH_HOST_LIST_FAILED');
+    const data = unwrap(result) || {};
+    store.workspace.containerHosts = mergeConfiguredContainerHosts(data.hosts, store.settings?.containerHosts);
+    store.workspace.containerHostStatus = data.status || (store.workspace.containerHosts.length ? 'connected' : 'unavailable');
+    const connectedHosts = store.workspace.containerHosts.filter((host) => host.connected);
+    if (!connectedHosts.some((host) => host.id === store.workspace.containerHostId)) {
+      store.workspace.containerHostId = connectedHosts[0]?.id || '';
+    }
+  } catch {
+    // A startup probe is advisory; explicit host loading remains available to retry it.
+    store.workspace.containerHosts = mergeConfiguredContainerHosts([], store.settings?.containerHosts);
+    store.workspace.containerHostStatus = 'unavailable';
+  }
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error('SSH_HOST_LIST_TIMEOUT')), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 export function mergeConfiguredContainerHosts(runtimeHosts = [], configuredHosts = []) {

@@ -1,3 +1,5 @@
+import { normalizeControllerHost } from './controllerHost.js';
+
 export const DEFAULT_CONTROLLER_SETTINGS = Object.freeze({
   locale: 'vi',
   theme: 'light',
@@ -81,7 +83,9 @@ function normalizeContainerHost(value) {
   if (!id || !name || !target || !identityFile || !isSshTarget(target)) return null;
   const image = normalizeHostText(value.image, 1, 256) || 'war-browser-agent:phase1';
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(image)) return null;
-  const controllerHost = normalizeHostText(value.controllerHost, 1, 255);
+  const rawControllerHost = normalizeHostText(value.controllerHost, 1, 255);
+  const controllerHost = rawControllerHost ? normalizeControllerHost(rawControllerHost) : null;
+  if (rawControllerHost && !controllerHost) return null;
   const controllerCaPath = normalizeRemotePath(value.controllerCaPath, '/etc/war/controller-ca.pem');
   const seccompProfilePath = normalizeRemotePath(value.seccompProfilePath, '/etc/war/security/chromium-userns-seccomp.json');
   const ipv6Interface = normalizeHostText(value.ipv6Interface, 1, 32);

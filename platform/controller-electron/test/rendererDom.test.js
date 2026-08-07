@@ -542,6 +542,53 @@ test('workspace adds, checks, and repairs an SSH Linux host', async () => {
   assert.equal(state.store.workspace.containerHosts[0].connected, true);
 });
 
+test('initial workspace refresh loads live diagnostics for persisted Linux hosts before opening Add Container', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  const persistedHost = {
+    id: 'ssh-host-live',
+    name: 'Linux da luu',
+    target: 'root@192.168.1.201',
+    identityFile: 'C:/Users/test/.ssh/id_ed25519',
+    controllerHost: '192.168.1.20',
+    controllerCaPath: '/opt/war/controller-ca.crt',
+    image: 'war-browser-agent:phase1',
+  };
+  const liveHost = {
+    id: persistedHost.id,
+    name: persistedHost.name,
+    label: persistedHost.name,
+    target: persistedHost.target,
+    connected: true,
+    status: 'ready',
+    diagnostics: { ready: true, docker: true, image: true, source: true, apparmor: true, seccomp: true, ca: true },
+  };
+  const originalSettingsGet = window.warController.settings.get;
+  const originalHosts = window.warController.containers.hosts;
+  let hostCalls = 0;
+  window.warController.settings.get = async () => ({ ok: true, data: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false }, containerHosts: [persistedHost] } });
+  window.warController.containers.hosts = async () => {
+    hostCalls += 1;
+    return { ok: true, data: { status: 'connected', hosts: [liveHost] } };
+  };
+
+  try {
+    await state.refreshAll();
+    const rendered = views.renderView(() => {});
+    const hostCard = all(rendered, (node) => node.className === 'host-card')[0];
+
+    assert.equal(hostCalls, 1, 'initial refresh must query live host diagnostics for saved hosts');
+    assert.equal(state.store.workspace.containerHosts[0].connected, true);
+    assert.equal(state.store.workspace.containerHosts[0].diagnostics.ready, true);
+    assert.ok(hostCard.textContent.includes(i18n.t('workspace.containers.hostReady')));
+    assert.equal(hostCard.textContent.includes(i18n.t('workspace.containers.hostRepairRequired')), false);
+    assert.equal(hostCard.textContent.includes('--'), false);
+  } finally {
+    window.warController.settings.get = originalSettingsGet;
+    window.warController.containers.hosts = originalHosts;
+  }
+});
+
 test('selecting a Linux host restores saved fields and updates it in place', async () => {
   resetStore();
   state.store.view = 'workspace';

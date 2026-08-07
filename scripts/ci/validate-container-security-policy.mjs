@@ -11,15 +11,18 @@ const probePath = path.join(root, 'scripts', 'ci', 'probe-chromium-sandbox-host.
 const dockerfilePath = path.join(root, 'platform', 'browser-agent', 'Dockerfile');
 const seccompPath = path.join(root, 'platform', 'container', 'security', 'chromium-userns-seccomp.json');
 const browserControllerPath = path.join(root, 'platform', 'browser-agent', 'src', 'browserController.js');
+const sshHostManagerPath = path.join(root, 'platform', 'controller-electron', 'src', 'sshHostManager.js');
 const findings = [];
 
 const profile = fs.readFileSync(profilePath, 'utf8');
 const workflow = fs.readFileSync(workflowPath, 'utf8');
 const runtimes = [adapterPath, gatePath, probePath].map((file) => fs.readFileSync(file, 'utf8'));
+const [adapterRuntime, gateRuntime, probeRuntime] = runtimes;
 const dockerfile = fs.readFileSync(dockerfilePath, 'utf8');
 const seccompText = fs.readFileSync(seccompPath, 'utf8');
 const seccomp = JSON.parse(seccompText);
 const browserController = fs.readFileSync(browserControllerPath, 'utf8');
+const sshHostManager = fs.readFileSync(sshHostManagerPath, 'utf8');
 
 assert((profile.match(/^\s*userns,\s*$/gm) || []).length === 1, 'AppArmor profile must contain exactly one userns rule');
 assert(profile.includes('/usr/lib/chromium/chromium cx -> chromium,'), 'AppArmor userns transition must target the exact Chromium binary');
@@ -36,8 +39,13 @@ for (const runtime of runtimes) {
   assert(runtime.includes("'--cpus', '2'"), 'runtime must bound container CPU');
   assert(runtime.includes("'--pids-limit', '512'"), 'runtime must bound container PIDs');
   assert(!runtime.includes('apparmor=unconfined'), 'runtime must not disable AppArmor');
+}
+const chromiumLaunchRuntime = functionSource(adapterRuntime, '\n  async launchContainer(', '\n  controllerWssUrl()');
+const helperRuntime = functionSource(adapterRuntime, '\n  helperContainerArgs() {', '\n  async resolveDesiredNetwork(');
+for (const runtime of [chromiumLaunchRuntime, gateRuntime, probeRuntime]) {
   assert(!runtime.includes('no-new-privileges:true'), 'exact AppArmor userns transition must not be blocked by no-new-privileges');
 }
+assert(helperRuntime.includes('no-new-privileges:true'), 'credential helper containers must enforce no-new-privileges');
 assert(!/^\s*chromium-sandbox\s*\\?\s*$/m.test(dockerfile), 'userns-only image must not install the Chromium SUID helper package');
 assert(dockerfile.includes('test ! -e /usr/lib/chromium/chrome-sandbox'), 'image build must verify the Chromium SUID helper is absent');
 assert(dockerfile.includes('-exec chmod a-s {} +'), 'userns-only image must strip all SUID and SGID file bits');
@@ -56,6 +64,9 @@ assert(browserController.includes("document.querySelector('#evaluation')"), 'Bro
 assert(runtimes[2].includes('if (!report.classification.supported) process.exitCode = 1'), 'sandbox capability probe must fail CI when authoritative proof is unavailable');
 assert(runtimes[2].includes("import playwright from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must use the CommonJS-compatible Playwright import');
 assert(!runtimes[2].includes("import { chromium } from '/app/node_modules/playwright-core/index.js'"), 'sandbox probe must not use an unsupported named import from Playwright CommonJS');
+assert(sshHostManager.includes("const DEFAULT_APPARMOR_PATH = '/etc/apparmor.d/war-browser-agent'"), 'Linux repair must use the AppArmor boot-persistent top-level profile path');
+assert(sshHostManager.includes('apparmor_parser -r -W ${DEFAULT_APPARMOR_PATH}'), 'Linux repair must load the boot-persistent AppArmor profile');
+assert(!sshHostManager.includes('/etc/apparmor.d/containers/war-browser-agent'), 'Linux repair must not rely on an AppArmor subdirectory ignored at reboot');
 assert(runtimes[0].includes('matchesApprovedSeccompSecurityOption(securityOptions)'), 'managed runtime must verify Docker measured seccomp policy content');
 assert(runtimes[0].includes(canonicalSeccompHash), 'managed runtime canonical seccomp hash must match the reviewed policy');
 assert(runtimes[1].includes('seccompPolicyMatched'), 'real-world evidence must record only the sanitized seccomp policy match');
@@ -69,4 +80,11 @@ console.log(JSON.stringify({ result: 'PASS', profile: 'war-browser-agent', chrom
 
 function assert(condition, message) {
   if (!condition) findings.push(message);
+}
+
+function functionSource(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert(start >= 0 && end > start, `runtime source markers are missing: ${startMarker}`);
+  return start >= 0 && end > start ? source.slice(start, end) : source;
 }

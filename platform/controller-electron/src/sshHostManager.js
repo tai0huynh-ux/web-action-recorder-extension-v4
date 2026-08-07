@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createDockerContainerAdapter } from './containerAdapter.js';
+import { normalizeControllerHost, requireControllerHost } from './controllerHost.js';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_IMAGE = 'war-browser-agent:phase1';
 const DEFAULT_CA_PATH = '/etc/war/controller-ca.pem';
 const DEFAULT_SECCOMP_PATH = '/etc/war/security/chromium-userns-seccomp.json';
+const DEFAULT_APPARMOR_PATH = '/etc/apparmor.d/war-browser-agent';
 const DEFAULT_SOURCE_ROOT = '/opt/war/web-action-recorder-extension-v4';
 const SOURCE_REPOSITORY = 'https://github.com/tai0huynh-ux/web-action-recorder-extension-v4.git';
 const APPROVED_APPARMOR_SHA256 = '0d28cf5e412992d3cb1bc8759bb6cf9cf1602e9aee54ebef52046f3f9b9b710d';
@@ -25,7 +27,7 @@ const PROBE_SCRIPT = [
   'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
   `if test -n "$SOURCE_REVISION" && test "$IMAGE_REVISION" = "$SOURCE_REVISION" && test "$IMAGE_REMOTE_CONTROL" = "${REMOTE_CONTROL_IMAGE_LABEL}"; then printf "imageCurrent=1\\n"; else printf "imageCurrent=0\\n"; fi`,
   `if test -f ${DEFAULT_SECCOMP_PATH} && test ! -L ${DEFAULT_SECCOMP_PATH} && test "$(stat -c %U:%G ${DEFAULT_SECCOMP_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_SECCOMP_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_SECCOMP_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_SECCOMP_SHA256} && python3 -m json.tool ${DEFAULT_SECCOMP_PATH} >/dev/null 2>&1; then printf "seccomp=1\\n"; else printf "seccomp=0\\n"; fi`,
-  `if aa-enabled >/dev/null 2>&1 && test -f /etc/apparmor.d/containers/war-browser-agent && test ! -L /etc/apparmor.d/containers/war-browser-agent && test "$(stat -c %U:%G /etc/apparmor.d/containers/war-browser-agent 2>/dev/null)" = root:root && test -z "$(find /etc/apparmor.d/containers/war-browser-agent -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum /etc/apparmor.d/containers/war-browser-agent 2>/dev/null | awk '{print $1}')" = ${APPROVED_APPARMOR_SHA256} && grep -Fxq "war-browser-agent (enforce)" /sys/kernel/security/apparmor/profiles 2>/dev/null; then printf "apparmor=1\\n"; else printf "apparmor=0\\n"; fi`,
+  `if aa-enabled >/dev/null 2>&1 && test -f ${DEFAULT_APPARMOR_PATH} && test ! -L ${DEFAULT_APPARMOR_PATH} && test "$(stat -c %U:%G ${DEFAULT_APPARMOR_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_APPARMOR_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_APPARMOR_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_APPARMOR_SHA256} && grep -Fxq "war-browser-agent (enforce)" /sys/kernel/security/apparmor/profiles 2>/dev/null; then printf "apparmor=1\\n"; else printf "apparmor=0\\n"; fi`,
   'if test -f "$WAR_CA_PATH" && test ! -L "$WAR_CA_PATH" && test "$(stat -c %U:%G "$WAR_CA_PATH" 2>/dev/null)" = root:root && test -z "$(find "$WAR_CA_PATH" -perm /022 -print -quit 2>/dev/null)"; then printf "ca=1\\n"; else printf "ca=0\\n"; fi',
   'printf "done=1\\n"',
 ].join('; ');
@@ -37,10 +39,11 @@ const REPAIR_SCRIPT = [
   '$SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true',
   '$SUDO mkdir -p /opt/war',
   `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then if test "$(git -C ${DEFAULT_SOURCE_ROOT} rev-parse --is-shallow-repository 2>/dev/null || true)" = true; then git -C ${DEFAULT_SOURCE_ROOT} fetch --unshallow origin main >/dev/null 2>&1; else git -C ${DEFAULT_SOURCE_ROOT} fetch origin main >/dev/null 2>&1; fi; git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD >/dev/null 2>&1; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
-  `$SUDO mkdir -p /etc/apparmor.d/containers ${DEFAULT_SECCOMP_PATH.substring(0, DEFAULT_SECCOMP_PATH.lastIndexOf('/'))}`,
-  `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor /etc/apparmor.d/containers/war-browser-agent`,
+  `APPARMOR_SOURCE=${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor; SECCOMP_SOURCE=${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json; if ! test -f "$APPARMOR_SOURCE" || test -L "$APPARMOR_SOURCE" || test "$(sha256sum "$APPARMOR_SOURCE" 2>/dev/null | awk '{print $1}')" != ${APPROVED_APPARMOR_SHA256} || ! test -f "$SECCOMP_SOURCE" || test -L "$SECCOMP_SOURCE" || test "$(sha256sum "$SECCOMP_SOURCE" 2>/dev/null | awk '{print $1}')" != ${APPROVED_SECCOMP_SHA256} || ! python3 -m json.tool "$SECCOMP_SOURCE" >/dev/null 2>&1; then printf "APPROVED_SECURITY_PROFILE_SOURCE_REQUIRED\\n" >&2; exit 21; fi`,
+  `$SUDO mkdir -p /etc/apparmor.d ${DEFAULT_SECCOMP_PATH.substring(0, DEFAULT_SECCOMP_PATH.lastIndexOf('/'))}`,
+  `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor ${DEFAULT_APPARMOR_PATH}`,
   `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json ${DEFAULT_SECCOMP_PATH}`,
-  `$SUDO apparmor_parser -r -W /etc/apparmor.d/containers/war-browser-agent`,
+  `$SUDO apparmor_parser -r -W ${DEFAULT_APPARMOR_PATH}`,
   'SOURCE_REVISION=$(git -C "$WAR_SOURCE" rev-parse --verify HEAD)',
   'IMAGE_REVISION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}" 2>/dev/null || true)',
   'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
@@ -59,7 +62,8 @@ export class SshContainerHostManager {
     this.hosts = new Map();
     this.trashedHosts = new Map();
     this.purgedHostIds = new Set();
-    this.readinessRepairs = new Map();
+    this.readinessChecks = new Map();
+    this.repairOperations = new Map();
   }
 
   async load() {
@@ -174,21 +178,30 @@ export class SshContainerHostManager {
   }
 
   async ensureReady(hostId) {
-    const existing = this.readinessRepairs.get(hostId);
+    const existing = this.readinessChecks.get(hostId);
     if (existing) return existing;
-    const repair = (async () => {
-      const checked = await this.checkHost(hostId);
-      return checked.connected ? checked : this.repairHost(hostId);
-    })();
-    this.readinessRepairs.set(hostId, repair);
+    const readiness = this.checkHost(hostId);
+    this.readinessChecks.set(hostId, readiness);
     try {
-      return await repair;
+      return await readiness;
     } finally {
-      if (this.readinessRepairs.get(hostId) === repair) this.readinessRepairs.delete(hostId);
+      if (this.readinessChecks.get(hostId) === readiness) this.readinessChecks.delete(hostId);
     }
   }
 
   async repairHost(hostId) {
+    const existing = this.repairOperations.get(hostId);
+    if (existing) return existing;
+    const repair = this.performRepairHost(hostId);
+    this.repairOperations.set(hostId, repair);
+    try {
+      return await repair;
+    } finally {
+      if (this.repairOperations.get(hostId) === repair) this.repairOperations.delete(hostId);
+    }
+  }
+
+  async performRepairHost(hostId) {
     const host = this.requireHost(hostId);
     this.assertIdentity(host.identityFile);
     await this.remote(host, withEnvironment(REPAIR_SCRIPT, host.image, host.controllerCaPath), 'repair');
@@ -313,7 +326,7 @@ function normalizeHostPayload(payload, fixedId = null) {
     target,
     identityFile,
     image,
-    controllerHost: requiredText(payload.controllerHost, 3, 255),
+    controllerHost: requireControllerHost(payload.controllerHost),
     controllerCaPath: remotePath(payload.controllerCaPath, DEFAULT_CA_PATH),
     seccompProfilePath: remotePath(payload.seccompProfilePath, DEFAULT_SECCOMP_PATH),
     ipv6Interface: optionalText(payload.ipv6Interface, 32),
@@ -325,13 +338,14 @@ function normalizeHostPayload(payload, fixedId = null) {
 function legacyHost(config) {
   const containers = config.containers;
   if (!containers?.enabled || containers.runtime !== 'ssh-docker' || !containers.sshTarget || !containers.sshIdentityFile) return null;
+  const controllerHost = normalizeControllerHost(containers.controllerHost);
   return {
     id: containers.hostId || 'configured-docker-host',
     name: containers.hostDisplayName || 'Configured Linux host',
     target: containers.sshTarget,
     identityFile: containers.sshIdentityFile,
     image: containers.image || DEFAULT_IMAGE,
-    controllerHost: containers.controllerHost || null,
+    controllerHost,
     controllerCaPath: containers.controllerCaPath || DEFAULT_CA_PATH,
     seccompProfilePath: containers.seccompProfilePath || DEFAULT_SECCOMP_PATH,
     ipv6Interface: containers.ipv6Interface || null,

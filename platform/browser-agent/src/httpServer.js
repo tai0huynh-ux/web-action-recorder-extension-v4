@@ -1,9 +1,8 @@
 import http from 'node:http';
-import { AgentError, toPublicError } from './errors.js';
+import { AgentError, redact, toPublicError } from './errors.js';
 import { isLoopbackHost } from './config.js';
 
 export function createHttpServer({ config, identity, supervisor, dispatcher, version, startedAt = Date.now(), log = () => {} }) {
-  const production = config.nodeEnv === 'production';
   const server = http.createServer(async (req, res) => {
     try {
       setCommonHeaders(res);
@@ -37,21 +36,24 @@ export function createHttpServer({ config, identity, supervisor, dispatcher, ver
       return sendJson(res, 404, { error: { code: 'not_found', message: 'Route not found' } });
     } catch (error) {
       const status = error instanceof AgentError ? error.status : 500;
-      log('error', 'httpServer', 'request_failed', { message: error.message, status });
-      return sendJson(res, status, toPublicError(error, production));
+      log('error', 'httpServer', 'request_failed', { error: redact(error), status });
+      return sendJson(res, status, toPublicError(error));
     }
   });
   return server;
 }
 
 function redactStateForClient(value, remoteMode) {
-  if (!remoteMode) return value;
-  if (Array.isArray(value)) return value.map((item) => redactStateForClient(item, remoteMode));
+  return omitRemoteOnlyFields(redact(value), remoteMode);
+}
+
+function omitRemoteOnlyFields(value, remoteMode) {
+  if (Array.isArray(value)) return value.map((item) => omitRemoteOnlyFields(item, remoteMode));
   if (!value || typeof value !== 'object') return value;
   const output = {};
   for (const [key, child] of Object.entries(value)) {
-    if (key === 'profileDir') continue;
-    output[key] = redactStateForClient(child, remoteMode);
+    if (remoteMode && key === 'profileDir') continue;
+    output[key] = omitRemoteOnlyFields(child, remoteMode);
   }
   return output;
 }

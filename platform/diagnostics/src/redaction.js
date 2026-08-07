@@ -1,8 +1,9 @@
 const REDACTED = '<redacted>';
 const MAX_DEPTH = 6;
 const MAX_ARRAY = 100;
-const SECRET_KEY_RE = /authorization|bearer|credential|token|secret|password|passwd|cookie|private.?key|tls.?key|pairing.?code|bootstrap|session/i;
-const SECRET_ARG_RE = /^--?(?:[^=\s]*)(?:authorization|credential|token|secret|password|passwd|cookie|private-?key|tls-?key|pairing-?code|bootstrap|session)(?:[^=\s]*)$/i;
+const SECRET_NAME_SOURCE = String.raw`authorization|bearer|credential|token|secret|password|passwd|cookie|api[-_.]?key|access[-_.]?key|private.?key|tls.?key|pairing.?code|bootstrap|session`;
+const SECRET_KEY_RE = new RegExp(SECRET_NAME_SOURCE, 'i');
+const SECRET_ARG_RE = new RegExp(`^(?:--?|/)(?:[^=\\s]*)(?:${SECRET_NAME_SOURCE})(?:[^=\\s]*)$`, 'i');
 
 export function redactDiagnostic(value, options = {}) {
   return redactValue(value, { seen: new WeakSet(), depth: 0, options });
@@ -25,6 +26,7 @@ export function redactUrl(raw) {
     for (const key of [...parsed.searchParams.keys()]) {
       if (isSecretKey(key)) parsed.searchParams.set(key, REDACTED);
     }
+    parsed.hash = '';
     return parsed.toString();
   } catch {
     return redactString(raw);
@@ -36,9 +38,9 @@ export function redactCommandLine(commandLine) {
   const redacted = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    const [name, value] = splitAssignmentArg(arg);
+    const [name, value, separator = '='] = splitAssignmentArg(arg);
     if (SECRET_ARG_RE.test(name)) {
-      redacted.push(value === undefined ? arg : `${name}=${REDACTED}`);
+      redacted.push(value === undefined ? arg : `${name}${separator}${REDACTED}`);
       if (value === undefined && index + 1 < args.length) {
         redacted.push(REDACTED);
         index += 1;
@@ -107,7 +109,7 @@ function redactValue(value, context) {
   const output = {};
   for (const [key, child] of Object.entries(value)) {
     if (isSecretKey(key)) output[key] = REDACTED;
-    else if (key.toLowerCase() === 'url') output[key] = redactUrl(child);
+    else if (/url$/i.test(key)) output[key] = redactUrl(child);
     else if (/command.?line|cmdline|argv|args/i.test(key)) output[key] = redactCommandLine(child);
     else output[key] = redactValue(child, { ...context, depth: context.depth + 1 });
   }
@@ -119,11 +121,85 @@ export function isSecretKey(key) {
 }
 
 function redactString(value) {
-  return String(value)
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED}`)
-    .replace(/\b(Authorization:\s*)(?:Bearer\s+)?[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
-    .replace(/((?:credential|token|secret|password|passwd|cookie|private.?key|tls.?key|pairing.?code|bootstrap|session)[\w.-]*\s*[=:]\s*)[^\s"'<>&]+/gi, `$1${REDACTED}`)
+  const bounded = redactBearerSecrets(redactAuthorizationSecrets(String(value)));
+  return redactInlineSecrets(bounded)
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+)/gi, (match) => redactUrl(match));
+}
+
+function redactAuthorizationSecrets(value) {
+  const source = String(value);
+  const pattern = /\b(?:Proxy-)?Authorization\s*[=:]\s*/gi;
+  let result = '';
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(source))) {
+    let valueEnd = pattern.lastIndex;
+    while (valueEnd < source.length && source[valueEnd] !== '\r' && source[valueEnd] !== '\n') valueEnd += 1;
+    result += `${source.slice(cursor, match.index)}${match[0]}${REDACTED}`;
+    cursor = valueEnd;
+    pattern.lastIndex = valueEnd;
+  }
+  return `${result}${source.slice(cursor)}`;
+}
+
+function redactBearerSecrets(value) {
+  const source = String(value);
+  const pattern = /\bBearer\s+/gi;
+  let result = '';
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(source))) {
+    const valueStart = pattern.lastIndex;
+    const valueEnd = inlineSecretValueEnd(source, valueStart);
+    result += `${source.slice(cursor, match.index)}${match[0]}${REDACTED}`;
+    cursor = valueEnd;
+    pattern.lastIndex = valueEnd;
+  }
+  return `${result}${source.slice(cursor)}`;
+}
+
+function redactInlineSecrets(value) {
+  const source = String(value);
+  const pattern = new RegExp(`(?:identity|${SECRET_NAME_SOURCE})[\\w.-]*\\s*[=:]\\s*`, 'gi');
+  let result = '';
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(source))) {
+    const valueStart = pattern.lastIndex;
+    const valueEnd = inlineSecretValueEnd(source, valueStart);
+    result += `${source.slice(cursor, match.index)}${match[0]}${REDACTED}`;
+    cursor = valueEnd;
+    pattern.lastIndex = valueEnd;
+  }
+  return `${result}${source.slice(cursor)}`;
+}
+
+function inlineSecretValueEnd(source, start) {
+  if (start >= source.length) return start;
+  const delimiter = source[start];
+  if (delimiter === '"' || delimiter === "'") {
+    for (let index = start + 1; index < source.length; index += 1) {
+      if (source[index] === '\r' || source[index] === '\n') return index;
+      if (source[index] === delimiter && !isEscapedDelimiter(source, index)) return index + 1;
+    }
+    return source.length;
+  }
+  if (delimiter === '<') {
+    for (let index = start + 1; index < source.length; index += 1) {
+      if (source[index] === '\r' || source[index] === '\n') return index;
+      if (source[index] === '>' && !isEscapedDelimiter(source, index)) return index + 1;
+    }
+    return source.length;
+  }
+  let index = start;
+  while (index < source.length && !/\s/.test(source[index])) index += 1;
+  return index;
+}
+
+function isEscapedDelimiter(source, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
 }
 
 function splitCommandLine(commandLine) {
@@ -131,9 +207,12 @@ function splitCommandLine(commandLine) {
 }
 
 function splitAssignmentArg(arg) {
-  const index = arg.indexOf('=');
-  if (index === -1) return [arg, undefined];
-  return [arg.slice(0, index), arg.slice(index + 1)];
+  const equalsIndex = arg.indexOf('=');
+  const colonIndex = arg.startsWith('/') ? arg.indexOf(':', 1) : -1;
+  const indices = [equalsIndex, colonIndex].filter((index) => index >= 0);
+  if (!indices.length) return [arg, undefined, undefined];
+  const index = Math.min(...indices);
+  return [arg.slice(0, index), arg.slice(index + 1), arg[index]];
 }
 
 function redactMount(mount) {

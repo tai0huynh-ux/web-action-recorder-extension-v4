@@ -92,7 +92,7 @@ try {
     assert(shape.api.exists, 'warController missing');
     assert(shape.api.frozen, 'warController is mutable');
     assert(shape.api.nestedFrozen, 'warController nested object is mutable');
-    assert(JSON.stringify(shape.api.keys) === JSON.stringify(['apiVersion', 'containers', 'devices', 'dialogs', 'groups', 'jobs', 'pairings', 'sessions', 'settings', 'system', 'workflows']), 'API shape mismatch');
+    assert(JSON.stringify(shape.api.keys) === JSON.stringify(['apiVersion', 'containers', 'devices', 'diagnostics', 'dialogs', 'groups', 'jobs', 'pairings', 'remote', 'sessions', 'settings', 'system', 'workflows']), 'API shape mismatch');
   });
 
   await run('CSP blocks inline code, eval, and remote connect', async () => {
@@ -280,8 +280,8 @@ try {
     });
     schedulePostExitCleanup();
   }
-  app.quit();
-  if (failed || results.some((item) => !item.pass)) process.exitCode = 1;
+  const exitCode = failed || results.some((item) => !item.pass) ? 1 : 0;
+  app.exit(exitCode);
 }
 
 async function run(name, fn) {

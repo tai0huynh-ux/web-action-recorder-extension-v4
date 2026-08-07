@@ -160,6 +160,238 @@ test('startup reconciliation honors each container persisted desired state', asy
   assert.equal(core.containers.getContainer(created.id).desiredState, 'running');
 });
 
+test('startup reconciliation repairs managed definition drift before restoring a desired-running container', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const adapter = {
+    async repair(container) {
+      calls.push(['repair', container.id]);
+      assert.equal(container.image, 'war-browser-agent:stale');
+      return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } };
+    },
+    async status(container) {
+      calls.push(['status', container.id]);
+      return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } };
+    },
+    async start(container) {
+      calls.push(['start', container.id]);
+      return { status: 'running', runtime: { dockerName: container.runtime.dockerName } };
+    },
+  };
+  const created = await core.containers.createContainer({ name: 'Definition drift', image: 'war-browser-agent:stale', deviceId: 'dev-a', runtime: { dockerName: 'definition-drift' } });
+  await core.containers.updateStatus(created.id, 'running', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+
+  const result = await app.reconcileManagedState();
+
+  const repairIndex = calls.findIndex(([action]) => action === 'repair');
+  const statusIndex = calls.findIndex(([action]) => action === 'status');
+  assert.equal(result.containers[0].ok, true);
+  assert.equal(repairIndex >= 0, true, 'reconciliation must repair managed definition drift');
+  assert.equal(statusIndex < 0 || repairIndex < statusIndex, true, 'reconciliation must not status-check before repairing definition drift');
+  assert.equal(calls.filter(([action]) => action === 'start').length, 1);
+  assert.equal(core.containers.getContainer(created.id).status, 'running');
+  assert.equal(core.containers.getContainer(created.id).desiredState, 'running');
+});
+
+test('startup reconciliation marks a desired-running container failed when its saved host is unavailable', async () => {
+  const core = await connectedCore();
+  const hostId = 'ssh-unavailable';
+  const secret = 'top-secret-session-token';
+  const container = await core.containers.createContainer({ name: 'Unavailable host', host: hostId, deviceId: 'dev-a', runtime: { dockerName: 'unavailable-host' } });
+  await core.containers.updateStatus(container.id, 'running', { desiredState: 'running' });
+  const app = new ControllerApplicationService({
+    core,
+    containerHostManager: {
+      configuredHostIds: () => [hostId],
+      ensureReady: async () => ({ connected: false, diagnostics: { error: `credential=${secret} ${'x'.repeat(600)}` } }),
+    },
+  });
+  const invalidations = [];
+  app.on('invalidation', (event) => invalidations.push(event));
+
+  const result = await app.reconcileManagedState();
+  const persisted = core.containers.getContainer(container.id);
+
+  assert.equal(result.containers[0].ok, false);
+  assert.equal(persisted.status, 'failed');
+  assert.equal(persisted.desiredState, 'running');
+  assert.equal(persisted.lastError.length <= 500, true);
+  assert.equal(persisted.lastError.includes(secret), false);
+  assert.ok(invalidations.some((event) => event.domain === 'containers' && event.containerId === container.id));
+});
+
+test('startup reconciliation keeps a remotely running container intact when local WSS prerequisites are absent', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const container = await core.containers.createContainer({ name: 'Remote Browser Agent', deviceId: 'dev-a', runtime: { dockerName: 'remote-browser-agent' } });
+  await core.containers.updateStatus(container.id, 'running', { desiredState: 'running' });
+  const app = new ControllerApplicationService({
+    core,
+    config: {
+      degraded: true,
+      errors: ['WSS TLS certificate is required'],
+      wss: { enabled: false, requested: true, status: 'degraded', host: '192.168.1.20', port: 47651, tls: {} },
+      containers: { enabled: true, runtime: 'ssh-docker' },
+    },
+    containerAdapter: {
+      async repair() {
+        calls.push('repair');
+        throw new Error('CONTROLLER_WSS_NOT_CONFIGURED');
+      },
+    },
+  });
+
+  await app.reconcileManagedState();
+  const persisted = core.containers.getContainer(container.id);
+
+  assert.equal(persisted.status, 'running');
+  assert.equal(persisted.desiredState, 'running');
+  assert.deepEqual(calls, [], 'startup must defer remote reconciliation until local WSS is available instead of changing persisted container state');
+});
+
+test('startup reconciliation defers legacy remote containers when both effective WSS and container runtime are disabled', async () => {
+  const result = await reconcileRemoteContainerWithUnavailableLocalWss({
+    degraded: false,
+    wss: { enabled: false, requested: false, status: 'disabled', host: '127.0.0.1', port: 0, tls: {} },
+    containers: { enabled: false, runtime: 'disabled' },
+  });
+
+  assert.equal(result.persisted.status, 'running');
+  assert.equal(result.persisted.desiredState, 'running');
+  assert.deepEqual(result.calls, [], 'disabled local prerequisites must not probe or mutate an existing remote container');
+});
+
+test('startup reconciliation defers remote containers when the persisted runtime profile is invalid', async () => {
+  const result = await reconcileRemoteContainerWithUnavailableLocalWss({
+    degraded: true,
+    runtimeProfileStatus: 'invalid',
+    errors: ['Controller runtime profile is corrupt'],
+    wss: { enabled: false, requested: false, status: 'disabled', host: '127.0.0.1', port: 0, tls: {} },
+    containers: { enabled: false, runtime: 'disabled' },
+  });
+
+  assert.equal(result.persisted.status, 'running');
+  assert.equal(result.persisted.desiredState, 'running');
+  assert.deepEqual(result.calls, [], 'an invalid persisted profile must block host probes and Docker reconciliation');
+});
+
+test('reconciliation redacts sensitive persisted and runtime-visible errors without stack or cause leakage', async () => {
+  const sensitiveMessage = 'secret=secret-equals secret:secret-colon authorization=authorization-equals authorization:authorization-colon identity=identity-equals identity:identity-colon Bearer bearer-token';
+  const rawSecrets = ['secret-equals', 'secret-colon', 'authorization-equals', 'authorization-colon', 'identity-equals', 'identity-colon', 'bearer-token', 'stack-secret', 'cause-secret'];
+  const persistedCore = await connectedCore();
+  const persistedContainer = await persistedCore.containers.createContainer({ name: 'Sensitive error', deviceId: 'dev-a', runtime: { dockerName: 'sensitive-error' } });
+  const persistedError = new Error(sensitiveMessage);
+  persistedError.stack = `Error: ${sensitiveMessage}\nstack-secret`;
+  persistedError.cause = new Error('cause-secret');
+  const persistedApp = new ControllerApplicationService({
+    core: persistedCore,
+    containerAdapter: { async repair() { throw persistedError; } },
+  });
+
+  await persistedApp.reconcileManagedState();
+
+  const persisted = persistedCore.containers.getContainer(persistedContainer.id);
+  const diagnostics = await persistedApp.getDiagnostics();
+  const diagnosticContainer = diagnostics.data.containers.find((item) => item.id === persistedContainer.id);
+  assertRedactedContainerError(persisted.lastError, rawSecrets);
+  assertRedactedContainerError(diagnosticContainer.lastError, rawSecrets);
+
+  const runtimeCore = await connectedCore();
+  const runtimeError = new Error(sensitiveMessage);
+  runtimeError.stack = `Error: ${sensitiveMessage}\nstack-secret`;
+  runtimeError.cause = new Error('cause-secret');
+  runtimeCore.containers.listContainers = () => { throw runtimeError; };
+  const runtimeApp = new ControllerApplicationService({ core: runtimeCore });
+
+  await assert.rejects(() => runtimeApp.reconcileManagedState(), /secret=/);
+
+  const runtimeErrorStatus = runtimeApp.getRuntimeStatus().data.reconciliation;
+  assert.equal(runtimeErrorStatus.status, 'failed');
+  assertRedactedContainerError(runtimeErrorStatus.error, rawSecrets);
+});
+
+test('repairing a managed host reconciles a persisted desired-running container that Docker reports stopped', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const hostId = 'ssh-repaired';
+  const adapter = {
+    async status(container) { calls.push(['status', container.id]); return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } }; },
+    async start(container) { calls.push(['start', container.id]); return { status: 'running', runtime: { dockerName: container.runtime.dockerName } }; },
+  };
+  const containerHostManager = {
+    async repairHost(id) { calls.push(['repairHost', id]); return { id, connected: true }; },
+    async ensureReady(id) { calls.push(['ensureReady', id]); return { id, connected: true }; },
+    getAdapter: (id) => id === hostId ? adapter : null,
+    configuredHostIds: () => [hostId],
+  };
+  const created = await core.containers.createContainer({ name: 'Recovered running', host: hostId, deviceId: 'dev-a', runtime: { dockerName: 'recovered-running' } });
+  await core.containers.updateStatus(created.id, 'stopped', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerHostManager });
+
+  await app.repairContainerHost({ hostId });
+
+  assert.deepEqual(calls, [['repairHost', hostId], ['ensureReady', hostId], ['status', created.id], ['start', created.id]]);
+  assert.equal(core.containers.getContainer(created.id).status, 'running');
+  assert.equal(core.containers.getContainer(created.id).desiredState, 'running');
+});
+
+test('repairing a desired-running container starts it when runtime repair leaves it stopped', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const adapter = {
+    async repair(container) { calls.push(['repair', container.id]); return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } }; },
+    async start(container) { calls.push(['start', container.id]); return { status: 'running', runtime: { dockerName: container.runtime.dockerName } }; },
+  };
+  const container = await core.containers.createContainer({ name: 'Repair start', deviceId: 'dev-a', runtime: { dockerName: 'repair-start' } });
+  await core.containers.updateStatus(container.id, 'stopped', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+
+  const result = await app.repairContainer({ containerId: container.id });
+
+  assert.deepEqual(calls, [['repair', container.id], ['start', container.id]]);
+  assert.equal(result.data.container.status, 'running');
+  assert.equal(result.data.container.desiredState, 'running');
+});
+
+test('container adapter failure results are redacted before persistence and response', async () => {
+  const core = await connectedCore();
+  const secret = 'synthetic-adapter-result-secret';
+  const adapter = {
+    async repair() {
+      return { ok: false, error: `credential=${secret}` };
+    },
+  };
+  const container = await core.containers.createContainer({ name: 'Unsafe adapter error', deviceId: 'dev-a', runtime: { dockerName: 'unsafe-adapter-error' } });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+
+  const result = await app.repairContainer({ containerId: container.id });
+  const encoded = JSON.stringify(result);
+
+  assert.equal(result.data.container.status, 'failed');
+  assert.equal(encoded.includes(secret), false);
+  assert.match(result.data.container.lastError, /<redacted>/);
+});
+
+test('diagnostics and global repair restore a desired-running container reported as stopped', async () => {
+  const core = await connectedCore();
+  const calls = [];
+  const adapter = {
+    async start(container) { calls.push(['start', container.id]); return { status: 'running', runtime: { dockerName: container.runtime.dockerName } }; },
+  };
+  const container = await core.containers.createContainer({ name: 'Diagnostic start', deviceId: 'dev-a', runtime: { dockerName: 'diagnostic-start' } });
+  await core.containers.updateStatus(container.id, 'stopped', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+
+  const diagnostics = await app.getDiagnostics();
+  const repaired = await app.repairDiagnostics();
+
+  assert.ok(diagnostics.data.checks.some((check) => check.targetId === `container:${container.id}` && check.fixable === true && check.action === 'reconnect-container'));
+  assert.deepEqual(calls, [['start', container.id]]);
+  assert.equal(core.containers.getContainer(container.id).status, 'running');
+  assert.ok(repaired.data.repairs.some((repair) => repair.targetId === `container:${container.id}`));
+});
+
 test('scan imports only validated managed containers and reuses their credential without returning it', async () => {
   const core = await connectedCore();
   const adapter = {
@@ -612,6 +844,33 @@ test('application fans synchronized remote input to selected online Agents and c
   assert.equal(capture.data.frame.width, 800);
 });
 
+test('remote control does not forward Agent-provided error text or codes', async () => {
+  const core = await connectedCore();
+  const secret = 'synthetic-remote-agent-secret';
+  const transport = fakeTransport();
+  transport.requestRemoteControl = async () => ({
+    payload: {
+      ok: false,
+      error: { code: `SECRET_${secret}`, message: `credential=${secret}` },
+    },
+  });
+  const app = application(core, transport);
+
+  const result = await app.remoteControl({
+    deviceIds: ['dev-a'],
+    command: 'input.stopAll',
+    payload: {},
+    synchronized: false,
+  });
+  const target = result.data.targets[0];
+  const encoded = JSON.stringify(target);
+
+  assert.equal(target.ok, false);
+  assert.equal(target.error.code, 'REMOTE_CONTROL_FAILED');
+  assert.equal(target.error.message, 'Remote command failed');
+  assert.equal(encoded.includes(secret), false);
+});
+
 test('remote capture starts one automatic managed Agent upgrade and succeeds after reconnect', async () => {
   const core = await connectedCore();
   await core.devices.registerDevice('dev-a', { capabilities: { ...core.devices.getDevice('dev-a').capabilities, remoteVideo: false } });
@@ -727,6 +986,12 @@ function fakeContainerAdapter() {
   };
 }
 
+function assertRedactedContainerError(value, rawSecrets) {
+  assert.equal(typeof value, 'string');
+  assert.equal(value.length <= 500, true);
+  for (const secret of rawSecrets) assert.equal(value.includes(secret), false, `error leaks ${secret}`);
+}
+
 function managedRuntimeConfig() {
   return {
     dataPath: 'data',
@@ -757,6 +1022,31 @@ async function connectedCore() {
   });
   await core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' });
   return core;
+}
+
+async function reconcileRemoteContainerWithUnavailableLocalWss(config) {
+  const core = await connectedCore();
+  const calls = [];
+  const hostId = 'ssh-legacy-remote';
+  const container = await core.containers.createContainer({ name: 'Legacy remote browser', host: hostId, deviceId: 'dev-a', runtime: { dockerName: 'legacy-remote-browser' } });
+  await core.containers.updateStatus(container.id, 'running', { desiredState: 'running' });
+  const app = new ControllerApplicationService({
+    core,
+    config,
+    containerHostManager: {
+      configuredHostIds: () => [hostId],
+      async ensureReady() { calls.push('ensureReady'); return { connected: true }; },
+      getAdapter: () => ({
+        async repair() {
+          calls.push('repair');
+          throw new Error('CONTROLLER_WSS_NOT_CONFIGURED');
+        },
+      }),
+    },
+  });
+
+  await app.reconcileManagedState();
+  return { calls, persisted: core.containers.getContainer(container.id) };
 }
 
 function revision(overrides = {}) {

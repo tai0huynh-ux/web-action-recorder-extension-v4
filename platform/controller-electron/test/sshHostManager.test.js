@@ -61,6 +61,27 @@ test('SSH host manager stores only host metadata and probes bounded prerequisite
   assert.equal(store.snapshot().containerHosts.length, 1);
 });
 
+test('SSH host manager rejects unsafe Controller destinations before probing', async () => {
+  let calls = 0;
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore(),
+    fsImpl: fakeFs(),
+    execFileImpl: async () => { calls += 1; return { stdout: '', stderr: '' }; },
+  });
+  await manager.load();
+
+  for (const controllerHost of ['127.0.0.1@attacker.example', 'controller.example/path', 'controller.example?token=x', '2001:db8::20']) {
+    await assert.rejects(() => manager.addHost({
+      name: 'Reviewed Linux',
+      target: 'root@192.168.1.201',
+      identityFile: 'C:/Users/test/.ssh/id_ed25519',
+      controllerHost,
+    }), /Controller host is invalid/);
+  }
+  assert.equal(calls, 0);
+});
+
 test('SSH host manager repair uses a fixed bounded script and rechecks readiness', async () => {
   const calls = [];
   const manager = new SshContainerHostManager({
@@ -79,12 +100,18 @@ test('SSH host manager repair uses a fixed bounded script and rechecks readiness
   const result = await manager.repairHost('ssh-existing');
 
   assert.equal(result.connected, true);
-  assert.match(calls[0].args.at(-1), /apparmor_parser -r -W/);
-  assert.match(calls[0].args.at(-1), /docker build/);
-  assert.equal(calls[0].args.at(-1).includes('id_ed25519'), false);
+  const repairScript = calls[0].args.at(-1);
+  const verificationProbe = calls[1].args.at(-1);
+  assert.match(repairScript, /install -o root -g root -m 0644 .* \/etc\/apparmor\.d\/war-browser-agent/);
+  assert.match(repairScript, /apparmor_parser -r -W \/etc\/apparmor\.d\/war-browser-agent/);
+  assert.match(verificationProbe, /test -f \/etc\/apparmor\.d\/war-browser-agent/);
+  assert.equal(repairScript.includes('/etc/apparmor.d/containers/war-browser-agent'), false, 'repair must install the profile where apparmor.service reloads it after reboot');
+  assert.equal(verificationProbe.includes('/etc/apparmor.d/containers/war-browser-agent'), false, 'readiness must verify the boot-persistent profile path');
+  assert.match(repairScript, /docker build/);
+  assert.equal(repairScript.includes('id_ed25519'), false);
 });
 
-test('SSH host manager automatically rebuilds an existing stale Browser Agent image', async () => {
+test('SSH host readiness reports a stale Browser Agent image without rebuilding it', async () => {
   const calls = [];
   const manager = new SshContainerHostManager({
     config: config(),
@@ -92,21 +119,40 @@ test('SSH host manager automatically rebuilds an existing stale Browser Agent im
     fsImpl: fakeFs(),
     execFileImpl: async (_file, args) => {
       calls.push(args.at(-1));
-      if (calls.length === 1) return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=0\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
-      if (calls.length === 2) return { stdout: 'repair=1\n', stderr: '' };
-      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=0\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
     },
   });
   await manager.load();
 
   const result = await manager.ensureReady('ssh-existing');
 
-  assert.equal(result.connected, true);
-  assert.equal(calls.length, 3);
+  assert.equal(result.connected, false);
+  assert.equal(result.status, 'repair-required');
+  assert.equal(result.diagnostics.imageCurrent, false);
+  assert.equal(calls.length, 1);
   assert.match(calls[0], /org\.opencontainers\.image\.revision/);
   assert.match(calls[0], /com\.web-action-recorder\.remote-control/);
-  assert.match(calls[1], /--build-arg WAR_SOURCE_REVISION=/);
-  assert.match(calls[1], /--unshallow/);
+  assert.equal(/docker build|--build-arg|--unshallow|apt-get|apparmor_parser/.test(calls[0]), false);
+});
+
+test('SSH host readiness failure performs only the bounded probe; explicit repair owns mutation', async () => {
+  const calls = [];
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    execFileImpl: async (_file, args) => {
+      calls.push(args.at(-1));
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=0\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+    },
+  });
+  await manager.load();
+
+  const result = await manager.ensureReady('ssh-existing');
+
+  assert.equal(result.connected, false);
+  assert.equal(calls.length, 1, 'ensureReady must perform exactly one probe');
+  assert.equal(/docker build|apt-get|git (?:clone|fetch|pull)|apparmor_parser/.test(calls[0]), false, 'ensureReady must not mutate the Linux host');
 });
 
 test('SSH host readiness repairs are deduplicated per host', async () => {
@@ -133,6 +179,83 @@ test('SSH host readiness repairs are deduplicated per host', async () => {
   assert.equal(probes, 1);
   assert.equal(results[0].connected, true);
   assert.deepEqual(results[0], results[1]);
+});
+
+test('explicit SSH host repairs are deduplicated while readiness remains a separate probe', async () => {
+  let releaseRepair;
+  let markRepairStarted;
+  const repairGate = new Promise((resolve) => { releaseRepair = resolve; });
+  const repairStarted = new Promise((resolve) => { markRepairStarted = resolve; });
+  let repairCalls = 0;
+  let probeCalls = 0;
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    now: () => '2026-08-06T00:00:00.000Z',
+    execFileImpl: async (_file, args) => {
+      if (args.at(-1).includes('docker build')) {
+        repairCalls += 1;
+        markRepairStarted();
+        await repairGate;
+        return { stdout: 'repair=1\n', stderr: '' };
+      }
+      probeCalls += 1;
+      return {
+        stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n',
+        stderr: '',
+      };
+    },
+  });
+  await manager.load();
+
+  const firstRepair = manager.repairHost('ssh-existing');
+  await repairStarted;
+  const secondRepair = manager.repairHost('ssh-existing');
+  const ensured = manager.ensureReady('ssh-existing');
+  releaseRepair();
+  const [firstRepairedHost, secondRepairedHost, ensuredHost] = await Promise.all([firstRepair, secondRepair, ensured]);
+
+  assert.equal(repairCalls, 1);
+  assert.equal(probeCalls, 2, 'readiness must not join the repair operation; repair still performs its verification probe');
+  assert.deepEqual(firstRepairedHost, secondRepairedHost);
+  assert.equal(firstRepairedHost.connected, true);
+  assert.equal(ensuredHost.connected, true);
+  assert.equal(ensuredHost.id, 'ssh-existing');
+});
+
+test('an explicit SSH host repair still runs when an in-flight readiness probe succeeds', async () => {
+  let releaseProbe;
+  let markProbeStarted;
+  const probeGate = new Promise((resolve) => { releaseProbe = resolve; });
+  const probeStarted = new Promise((resolve) => { markProbeStarted = resolve; });
+  let repairCalls = 0;
+  const manager = new SshContainerHostManager({
+    config: config(),
+    settingsStore: settingsStore({ containerHosts: [{ id: 'ssh-existing', name: 'Linux', target: 'root@192.168.1.201', identityFile: 'C:/key' }] }),
+    fsImpl: fakeFs(),
+    now: () => '2026-08-06T00:00:00.000Z',
+    execFileImpl: async (_file, args) => {
+      if (args.at(-1).includes('docker build')) {
+        repairCalls += 1;
+        return { stdout: 'repair=1\n', stderr: '' };
+      }
+      markProbeStarted();
+      await probeGate;
+      return { stdout: 'ssh=1\ndocker=1\nimage=1\nimageCurrent=1\nsource=1\napparmor=1\nseccomp=1\nca=1\ndone=1\n', stderr: '' };
+    },
+  });
+  await manager.load();
+
+  const ensured = manager.ensureReady('ssh-existing');
+  await probeStarted;
+  const repaired = manager.repairHost('ssh-existing');
+  releaseProbe();
+  const [ensuredHost, repairedHost] = await Promise.all([ensured, repaired]);
+
+  assert.equal(repairCalls, 1);
+  assert.deepEqual(ensuredHost, repairedHost);
+  assert.equal(repairedHost.connected, true);
 });
 
 test('SSH host manager reports unreadable key without invoking SSH', async () => {

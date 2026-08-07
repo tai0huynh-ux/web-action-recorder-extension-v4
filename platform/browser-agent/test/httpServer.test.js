@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHttpServer } from '../src/httpServer.js';
 import { loadConfig } from '../src/config.js';
+import { AgentError } from '../src/errors.js';
 
 test('/health does not expose secret', async () => {
   const fixture = await startFixture({ WAR_AGENT_TOKEN: '123456789012345678901234' });
@@ -69,17 +70,115 @@ test('production internal errors do not expose stack', async () => {
   assert.doesNotMatch(text, /stack-secret|at /);
 });
 
-async function startFixture(env = {}, dispatcher = { dispatch: async () => ({ ok: true }) }) {
+test('development Agent errors use the same fixed secret-free public envelope', async () => {
+  const secret = 'synthetic-http-error-secret';
+  const logs = [];
+  const dispatcher = {
+    dispatch: async () => {
+      throw new AgentError('invalid_payload', `credential=${secret}`, 400, {
+        callbackUrl: `https://controller.example/#access_token=${secret}`,
+      });
+    },
+  };
+  const fixture = await startFixture({}, dispatcher, undefined, (...args) => logs.push(args));
+  const productionFixture = await startFixture({ NODE_ENV: 'production' }, dispatcher);
+  const response = await fetch(`${fixture.baseUrl}/v1/control`, { method: 'POST', body: '{}' });
+  const productionResponse = await fetch(`${productionFixture.baseUrl}/v1/control`, { method: 'POST', body: '{}' });
+  const body = await response.json();
+  const productionBody = await productionResponse.json();
+  fixture.server.close();
+  productionFixture.server.close();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.error.code, 'invalid_payload');
+  assert.equal(body.error.message, 'Invalid request');
+  assert.equal(Object.hasOwn(body.error, 'details'), false);
+  assert.deepEqual(productionBody, body);
+  assert.equal(JSON.stringify(body).includes(secret), false);
+  assert.equal(JSON.stringify(logs).includes(secret), false);
+});
+
+test('loopback state responses redact URL fragments', async () => {
+  const secret = 'synthetic-state-fragment-secret';
+  const fixture = await startFixture({}, undefined, {
+    getState: () => ({ browserState: 'running', extensionLoaded: true }),
+    getBrowserState: async () => ({
+      browserState: 'running',
+      extensionLoaded: true,
+      browser: { tabs: [{ id: 'tab-1', url: `https://example.test/?safe=1#access_token=${secret}` }] },
+    }),
+  });
+  const response = await fetch(`${fixture.baseUrl}/v1/state`);
+  const body = await response.json();
+  fixture.server.close();
+
+  const encoded = JSON.stringify(body);
+  assert.equal(encoded.includes(secret), false);
+  assert.equal(body.browser.tabs[0].url.includes('#'), false);
+  assert.match(body.browser.tabs[0].url, /safe=1/);
+});
+
+test('loopback control responses redact URL fragments', async () => {
+  const secret = 'synthetic-control-fragment-secret';
+  const fixture = await startFixture({}, {
+    dispatch: async () => ({ ok: true, url: `https://example.test/?safe=1#id_token=${secret}` }),
+  });
+  const response = await fetch(`${fixture.baseUrl}/v1/control`, { method: 'POST', body: '{}' });
+  const body = await response.json();
+  fixture.server.close();
+
+  assert.equal(JSON.stringify(body).includes(secret), false);
+  assert.equal(body.url.includes('#'), false);
+  assert.match(body.url, /safe=1/);
+});
+
+test('remote state responses redact fragments and omit local profile paths', async () => {
+  const secret = 'synthetic-remote-state-secret';
+  const token = '123456789012345678901234';
+  const fixture = await startFixture({
+    WAR_AGENT_HOST: '0.0.0.0',
+    WAR_AGENT_ALLOW_REMOTE: '1',
+    WAR_AGENT_TOKEN: token,
+    WAR_AGENT_ALLOW: '127.0.0.1',
+  }, undefined, {
+    getState: () => ({ browserState: 'running', extensionLoaded: true }),
+    getBrowserState: async () => ({
+      browserState: 'running',
+      extensionLoaded: true,
+      profileDir: '/private/chromium-profile',
+      browser: { tabs: [{ id: 'tab-1', url: `https://example.test/#access_token=${secret}` }] },
+    }),
+  });
+  const response = await fetch(`${fixture.baseUrl}/v1/state`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await response.json();
+  fixture.server.close();
+
+  const encoded = JSON.stringify(body);
+  assert.equal(response.status, 200);
+  assert.equal(encoded.includes(secret), false);
+  assert.equal(encoded.includes('chromium-profile'), false);
+  assert.equal(body.browser.tabs[0].url.includes('#'), false);
+});
+
+async function startFixture(
+  env = {},
+  dispatcher = { dispatch: async () => ({ ok: true }) },
+  supervisor = {
+    getState: () => ({ browserState: 'running', extensionLoaded: true }),
+    getBrowserState: async () => ({ browserState: 'running', extensionLoaded: true, browser: { tabs: [] } }),
+  },
+  log = () => {},
+) {
   const config = loadConfig({ WAR_AUTO_START_BROWSER: '0', ...env }, process.cwd());
   const server = createHttpServer({
     config,
     identity: { deviceId: 'device-1' },
     version: '0.1.0',
     dispatcher,
-    supervisor: {
-      getState: () => ({ browserState: 'running', extensionLoaded: true }),
-      getBrowserState: async () => ({ browserState: 'running', extensionLoaded: true, browser: { tabs: [] } })
-    }
+    supervisor,
+    log,
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

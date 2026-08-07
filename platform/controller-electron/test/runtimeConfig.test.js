@@ -38,6 +38,41 @@ test('runtime config accepts valid loopback WSS TLS settings', () => {
   assert.equal(config.wss.port, 9443);
 });
 
+test('runtime config restores a validated WSS profile when reopening without WSS environment', () => {
+  const profile = runtimeProfile();
+  const config = resolveElectronRuntimeConfig({
+    app: fakeApp('C:/Users/a/AppData/Roaming/WAR Controller'),
+    env: {},
+    runtimeProfile: profile,
+    fs: readableFs(),
+  });
+
+  assert.equal(config.wss.enabled, true);
+  assert.equal(config.wss.host, profile.wss.host);
+  assert.equal(config.wss.port, profile.wss.port);
+  assert.equal(config.wss.tls.certPath, profile.wss.certificatePath);
+  assert.equal(config.wss.tls.keyPath, profile.wss.privateKeyPath);
+});
+
+test('invalid explicit WSS environment fails closed and cannot replace a last-good runtime profile', () => {
+  const profile = runtimeProfile();
+  const config = resolveElectronRuntimeConfig({
+    app: fakeApp('C:/Users/a/AppData/Roaming/WAR Controller'),
+    env: {
+      WAR_CONTROLLER_WSS_ENABLED: '1',
+      WAR_CONTROLLER_WSS_HOST: '192.168.1.99',
+      WAR_CONTROLLER_ALLOW_LAN: '1',
+      WAR_CONTROLLER_TLS_CERT_PATH: 'C:/tls/new-controller.crt',
+    },
+    runtimeProfile: profile,
+    fs: readableFs(),
+  });
+
+  assert.equal(config.degraded, true);
+  assert.equal(config.wss.enabled, false);
+  assert.deepEqual(config.runtimeProfile, profile, 'a malformed explicit override must retain the last-good profile for a later valid launch');
+});
+
 test('runtime config degrades invalid WSS options safely', () => {
   const invalidPort = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTROLLER_WSS_PORT: 'abc' } });
   assert.equal(invalidPort.degraded, true);
@@ -67,6 +102,18 @@ test('public runtime config redacts filesystem and TLS details', () => {
   assert.equal(dto.wss.certificate, 'cert.pem');
   assert.equal(JSON.stringify(dto).includes('key.pem'), false);
   assert.equal(JSON.stringify(dto).includes('C:/secret'), false);
+});
+
+test('public runtime config never exposes persisted runtime profile metadata', () => {
+  const profile = runtimeProfile();
+  const config = resolveElectronRuntimeConfig({ app: fakeApp('C:/data'), env: {}, runtimeProfile: profile, fs: readableFs() });
+  const dto = toPublicRuntimeConfig(config);
+
+  assert.equal(JSON.stringify(dto).includes('controller-runtime'), false);
+  assert.equal(JSON.stringify(dto).includes('certificatePath'), false);
+  assert.equal(JSON.stringify(dto).includes('privateKeyPath'), false);
+  assert.equal(JSON.stringify(dto).includes(profile.wss.certificatePath), false);
+  assert.equal(JSON.stringify(dto).includes(profile.wss.privateKeyPath), false);
 });
 
 test('managed container runtime requires explicit supported Docker configuration', () => {
@@ -123,6 +170,17 @@ test('runtime config rejects unsafe managed host labels', () => {
   assert.match(invalid.errors.join(' '), /host label is invalid/);
 });
 
+test('runtime config rejects unsafe managed Controller destinations', () => {
+  const invalid = resolveElectronRuntimeConfig({
+    app: fakeApp('/data'),
+    env: { WAR_CONTAINER_CONTROLLER_HOST: '127.0.0.1@attacker.example' },
+  });
+
+  assert.equal(invalid.degraded, true);
+  assert.equal(invalid.containers.controllerHost, null);
+  assert.match(invalid.errors.join(' '), /Controller host is invalid/);
+});
+
 test('runtime config validates an optional static managed IPv6 /64 prefix', () => {
   const valid = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_CONTAINER_IPV6_PREFIX: '2001:0db8:1234:5678::/64' } });
   assert.equal(valid.containers.ipv6Prefix, '2001:db8:1234:5678::/64');
@@ -143,4 +201,22 @@ test('runtime config selects macvlan for on-link IPv6 and rejects invalid driver
 
 function fakeApp(userData) {
   return { getPath: () => userData };
+}
+
+function readableFs() {
+  return { constants: { R_OK: 4 }, accessSync() {} };
+}
+
+function runtimeProfile() {
+  return {
+    schemaVersion: 1,
+    wss: {
+      enabled: true,
+      host: '192.168.1.20',
+      port: 47651,
+      lanBindingApproved: true,
+      certificatePath: 'C:/tls/controller.crt',
+      privateKeyPath: 'C:/tls/controller.key',
+    },
+  };
 }

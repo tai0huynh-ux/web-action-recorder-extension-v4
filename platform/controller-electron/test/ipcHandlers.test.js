@@ -62,6 +62,29 @@ test('IPC handlers validate payloads and call the exact application method', asy
   assert.equal(rejected.error.code, 'ERR_IPC_UNKNOWN_PROPERTY');
 });
 
+test('IPC handlers return a fixed public error envelope for coded application failures', async () => {
+  const ipcMain = fakeIpcMain();
+  const application = fakeApplication();
+  const secret = 'synthetic-handler-secret';
+  application.getDevice = () => {
+    const error = new Error(`credential=${secret}`);
+    error.code = 'DEVICE_NOT_FOUND';
+    error.details = { url: `https://controller.example/#access_token=${secret}` };
+    throw error;
+  };
+  const window = trustedWindow();
+  registerControllerIpcHandlers({ ipcMain, mainWindow: window, application, dialog: {}, fs: {}, path: {} });
+
+  const result = await ipcMain.handlers.get(IPC_CHANNELS.devices.get)(trustedEvent(window), { deviceId: 'device-1' });
+  const encoded = JSON.stringify(result);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'DEVICE_NOT_FOUND');
+  assert.equal(result.error.message, 'Requested resource was not found');
+  assert.equal(Object.hasOwn(result.error, 'details'), false);
+  assert.equal(encoded.includes(secret), false);
+});
+
 test('IPC handlers support import dialog cancellation without filesystem access', async () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();

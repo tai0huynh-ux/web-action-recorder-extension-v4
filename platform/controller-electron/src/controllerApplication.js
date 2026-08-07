@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import nodeFs from 'node:fs';
 import { ERROR_CODES } from '../../controller-core/src/errors.js';
+import { redactDiagnostic } from '../../diagnostics/src/redaction.js';
 import { ipv6Eui64SuffixFromMacAddress } from '../../controller-core/src/networkConfig.js';
 import { mapFieldsToNamedInputs, mapRowsToDevices, parseInputText } from '../../input-parser/src/inputParser.js';
 import { createWorkflowContentHash, createWorkflowRevisionFromExtensionProfile, extensionProfileFromWorkflowRevision } from '../../workflow-core/src/workflowMetadata.js';
@@ -43,7 +44,7 @@ const REMOTE_AGENT_READY_TIMEOUT_MS = 60000;
 const REMOTE_AGENT_READY_POLL_MS = 250;
 
 export class ControllerApplicationService extends EventEmitter {
-  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); this.reconciliation = null; }
+  constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); this.reconciliation = null; this.lastReconciliation = { status: 'idle', error: null }; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
   getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
@@ -57,6 +58,7 @@ export class ControllerApplicationService extends EventEmitter {
       storeStatus: publicConfig?.storeStatus || 'loaded',
       degraded: Boolean(publicConfig?.degraded),
       containers: publicConfig?.containers || { enabled: false, runtime: 'disabled', hostId: null, hostLabel: null },
+      reconciliation: structuredClone(this.lastReconciliation),
       applicationVersion: this.version,
       protocolVersion: 'v1'
     });
@@ -95,7 +97,9 @@ export class ControllerApplicationService extends EventEmitter {
     }
     const containers = this.core.containers.listContainers().containers || [];
     for (const container of containers.filter((item) => item.status !== 'deleted')) {
-      if (container.status === 'failed' || container.status === 'unavailable') addCheck({ id: `container:${container.id}`, area: 'container', severity: 'error', code: 'CONTAINER_FAILED', message: container.lastError || `${container.name || container.id} is not running`, targetId: `container:${container.id}`, fixable: true, action: 'reconnect-container' });
+      const needsReconnect = ['failed', 'unavailable'].includes(container.status)
+        || (container.desiredState === 'running' && container.status === 'stopped');
+      if (needsReconnect) addCheck({ id: `container:${container.id}`, area: 'container', severity: 'error', code: container.status === 'stopped' ? 'CONTAINER_STOPPED_UNEXPECTEDLY' : 'CONTAINER_FAILED', message: container.lastError || `${container.name || container.id} is not running`, targetId: `container:${container.id}`, fixable: true, action: 'reconnect-container' });
       if (container.deviceId) {
         try {
           const device = this.core.devices.getDevice(container.deviceId);
@@ -138,7 +142,7 @@ export class ControllerApplicationService extends EventEmitter {
       for (const agent of this.core.pairing.listPairedAgents().filter((item) => !item.revokedAt && this.core.sessions.getPublicSession(item.deviceId)?.status !== 'online')) {
         await attempt(`device:${agent.deviceId}`, () => this.reconnectAgent({ deviceId: agent.deviceId }));
       }
-      for (const container of this.core.containers.listContainers().containers.filter((item) => ['failed', 'unavailable'].includes(item.status))) {
+      for (const container of this.core.containers.listContainers().containers.filter((item) => ['failed', 'unavailable'].includes(item.status) || (item.desiredState === 'running' && item.status === 'stopped'))) {
         await attempt(`container:${container.id}`, () => this.reconnectContainer({ containerId: container.id }));
       }
     }
@@ -195,7 +199,7 @@ export class ControllerApplicationService extends EventEmitter {
       deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
     });
     if (response?.payload?.ok !== true) {
-      throw codedError(response?.payload?.error?.code || 'REMOTE_CAPTURE_FAILED', response?.payload?.error?.message || 'Remote frame capture failed');
+      throw codedError('REMOTE_CAPTURE_FAILED', 'Remote frame capture failed');
     }
     return this.result({ deviceId, frame: response.payload.frame || response.payload.result });
   }
@@ -220,10 +224,10 @@ export class ControllerApplicationService extends EventEmitter {
           ...(syncAt ? { syncAt } : {}),
           deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
         });
-        if (response?.payload?.ok !== true) return { deviceId, ok: false, error: response?.payload?.error || { code: 'REMOTE_CONTROL_FAILED', message: 'Remote command failed' } };
+        if (response?.payload?.ok !== true) return { deviceId, ok: false, error: { code: 'REMOTE_CONTROL_FAILED', message: 'Remote command failed' } };
         return { deviceId, ok: true, result: response.payload.result };
       } catch (error) {
-        return { deviceId, ok: false, error: { code: error.code || 'REMOTE_CONTROL_FAILED', message: String(error.message || 'Remote command failed').slice(0, 300) } };
+        return { deviceId, ok: false, error: { code: 'REMOTE_CONTROL_FAILED', message: 'Remote command failed' } };
       }
     }));
     return this.result({ command, synchronized: Boolean(syncAt), targets: results });
@@ -278,9 +282,11 @@ export class ControllerApplicationService extends EventEmitter {
   }
   async repairContainerHost({ hostId }) {
     if (!this.containerHostManager) throw codedError('CONTAINER_HOST_MANAGER_UNAVAILABLE', 'SSH host manager is unavailable');
+    if (this.reconciliation) await this.reconciliation.catch(() => {});
     const data = await this.containerHostManager.repairHost(hostId);
+    const reconciliation = await this.reconcileManagedState({ hostIds: [hostId] });
     this.invalidate('containers', { hostId });
-    return this.result(data);
+    return this.result({ ...data, reconciliation });
   }
 
   async scanContainerHost({ hostId }) {
@@ -327,23 +333,51 @@ export class ControllerApplicationService extends EventEmitter {
     const container = this.core.containers.getContainer(containerId);
     if (container.status === 'deleted') throw codedError('CONTAINER_NOT_REPAIRABLE', 'Deleted container cannot be repaired');
     await this.ensureManagedHostReady(container.host);
-    const operation = await this.safeContainerOperation('repair', container);
-    const next = operation.ok
-      ? await this.core.containers.updateStatus(containerId, operation.status || container.status, { runtime: operation.runtime, lastError: null })
-      : await this.core.containers.updateStatus(containerId, 'failed', { lastError: operation.error });
+    const repairOperation = await this.safeContainerOperation('repair', container);
+    let operation = repairOperation;
+    let next = repairOperation.ok
+      ? await this.core.containers.updateStatus(containerId, repairOperation.status || container.status, { runtime: repairOperation.runtime, lastError: null })
+      : await this.core.containers.updateStatus(containerId, 'failed', { lastError: repairOperation.error });
+    if (repairOperation.ok && next.desiredState === 'running' && next.status !== 'running') {
+      operation = await this.safeContainerOperation('start', next);
+      next = operation.ok
+        ? await this.core.containers.updateStatus(containerId, operation.status || 'running', { desiredState: 'running', runtime: operation.runtime, lastError: null })
+        : await this.core.containers.updateStatus(containerId, 'failed', { desiredState: 'running', lastError: operation.error });
+    }
     this.invalidate('containers', { containerId });
-    return this.result({ container: next, operation });
+    return this.result({ container: next, operation, repairOperation });
   }
 
-  async reconcileManagedState() {
+  async reconcileManagedState({ hostIds = null } = {}) {
     if (this.reconciliation) return this.reconciliation;
-    this.reconciliation = this._reconcileManagedState().finally(() => { this.reconciliation = null; });
+    this.lastReconciliation = { status: 'running', error: null, startedAt: this.now() };
+    this.invalidate('runtime', { reconciliation: 'running' });
+    this.reconciliation = this._reconcileManagedState(hostIds)
+      .then((result) => {
+        const failed = result.containers.filter((item) => !item.ok).length;
+        this.lastReconciliation = { status: failed ? 'degraded' : 'completed', error: null, failedContainers: failed, completedAt: this.now() };
+        this.emit('reconciliation', Object.freeze(structuredClone(this.lastReconciliation)));
+        this.invalidate('runtime', { reconciliation: this.lastReconciliation.status });
+        return result;
+      })
+      .catch((error) => {
+        this.lastReconciliation = { status: 'failed', error: sanitizeContainerError(error), completedAt: this.now() };
+        this.emit('reconciliation', Object.freeze(structuredClone(this.lastReconciliation)));
+        this.invalidate('runtime', { reconciliation: 'failed' });
+        throw error;
+      })
+      .finally(() => { this.reconciliation = null; });
     return this.reconciliation;
   }
 
-  async _reconcileManagedState() {
-    const containers = this.core.containers.listContainers().containers.filter((item) => !['deleted', 'deleting'].includes(item.status));
-    const hostIds = this.containerHostManager?.configuredHostIds?.() || [...new Set(containers.map((item) => item.host).filter(Boolean))];
+  async _reconcileManagedState(requestedHostIds = null) {
+    // A disabled local WSS endpoint cannot safely observe or repair remote state.
+    if (this.config && !this.config.wss?.enabled) {
+      return { hosts: [], containers: [] };
+    }
+    const scope = Array.isArray(requestedHostIds) ? new Set(requestedHostIds) : null;
+    const containers = this.core.containers.listContainers().containers.filter((item) => !['deleted', 'deleting'].includes(item.status) && (!scope || scope.has(item.host)));
+    const hostIds = scope ? [...scope] : (this.containerHostManager?.configuredHostIds?.() || [...new Set(containers.map((item) => item.host).filter(Boolean))]);
     const hostResults = new Map();
     for (const hostId of hostIds) {
       try { hostResults.set(hostId, await this.ensureManagedHostReady(hostId)); }
@@ -352,10 +386,14 @@ export class ControllerApplicationService extends EventEmitter {
     const results = [];
     for (const container of containers) {
       if (container.host && hostResults.get(container.host)?.connected !== true) {
-        results.push({ containerId: container.id, ok: false, error: hostResults.get(container.host)?.error || 'CONTAINER_HOST_UNAVAILABLE' });
+        const error = hostResults.get(container.host)?.error || 'CONTAINER_HOST_UNAVAILABLE';
+        const failed = await this.core.containers.updateStatus(container.id, 'failed', { desiredState: container.desiredState, lastError: error });
+        results.push({ containerId: container.id, ok: false, container: failed, error });
+        this.invalidate('containers', { containerId: container.id });
         continue;
       }
-      const operation = await this.safeContainerOperation('status', container);
+      const adapter = this.containerAdapterForHost(container.host);
+      const operation = await this.safeContainerOperation(adapter?.repair ? 'repair' : 'status', container);
       if (!operation.ok) {
         const failed = await this.core.containers.updateStatus(container.id, 'failed', { desiredState: container.desiredState, lastError: operation.error });
         results.push({ containerId: container.id, ok: false, container: failed, error: operation.error });
@@ -593,7 +631,7 @@ export class ControllerApplicationService extends EventEmitter {
         continue;
       }
       const response = await this.wssTransport.requestOriginWorkflow(deviceId, session.generation, { workflowId: item.workflowId, revision: item.revision });
-      if (response.payload?.error) throw codedError(response.payload.error.code || 'ORIGIN_WORKFLOW_GET_FAILED', response.payload.error.message || 'Origin workflow pull failed');
+      if (response.payload?.error) throw codedError('ORIGIN_WORKFLOW_GET_FAILED', 'Origin workflow pull failed');
       const workflow = sanitizeOriginWorkflow(response.payload?.workflow);
       const result = await this.core.workflows.putRevision(workflow);
       imported.push({ workflowId: result.revision.workflowId, revision: result.revision.revision, created: result.created, contentHash: result.revision.contentHash });
@@ -850,6 +888,7 @@ export class ControllerApplicationService extends EventEmitter {
     if (!adapter?.[action]) return { ok: false, error: 'CONTAINER_ADAPTER_UNAVAILABLE' };
     try {
       const result = await adapter[action](structuredClone(container));
+      if (result?.ok === false) return { ...result, ok: false, error: sanitizeContainerError(result.error) };
       return { ok: true, ...(result || {}) };
     } catch (error) {
       return { ok: false, error: sanitizeContainerError(error) };
@@ -1204,10 +1243,7 @@ function isPlainObject(value) {
 }
 
 function sanitizeContainerError(error) {
-  return String(error?.message || error || 'Container operation failed')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/(credential|token|password)=\S+/gi, '$1=[REDACTED]')
-    .slice(0, 500);
+  return sanitizedErrorMessage(error, 'Container operation failed', 500);
 }
 
 function unwrapApplicationResult(result) {
@@ -1216,10 +1252,13 @@ function unwrapApplicationResult(result) {
 }
 
 function sanitizeDiagnosticMessage(error) {
-  return String(error?.message || error || 'Diagnostic check failed')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/(password|token|secret|credential|authorization|identity)=\S+/gi, '$1=[REDACTED]')
-    .slice(0, 300);
+  return sanitizedErrorMessage(error, 'Diagnostic check failed', 300);
+}
+
+function sanitizedErrorMessage(error, fallback, limit) {
+  const redacted = redactDiagnostic(error instanceof Error ? error : String(error || fallback));
+  const message = typeof redacted === 'string' ? redacted : redacted?.message;
+  return String(message || fallback).slice(0, limit);
 }
 
 function sanitizeDiagnosticContainer(container) {

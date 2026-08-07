@@ -81,7 +81,8 @@ export async function maybeRunPackagedSmoke({ app, runtime }) {
 
     await run('packaged WSS status', async () => {
       const status = runtime.application.getRuntimeStatus().data;
-      const expectedEnabled = process.env.WAR_CONTROLLER_WSS_ENABLED === '1';
+      const expectedEnabled = process.env.WAR_CONTROLLER_PACKAGED_SMOKE_EXPECT_WSS_ENABLED === '1'
+        || process.env.WAR_CONTROLLER_WSS_ENABLED === '1';
       assert(Boolean(status.enabled) === expectedEnabled, 'WSS enabled state mismatch');
       if (expectedEnabled) assert(status.port > 0, 'WSS enabled without bound port');
       return {

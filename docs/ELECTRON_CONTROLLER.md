@@ -23,6 +23,10 @@ Optional environment variables:
 - `WAR_CONTAINER_HOST_LABEL`: safe display name for the configured Docker host.
 - `WAR_CONTAINER_SSH_TARGET` and `WAR_CONTAINER_SSH_IDENTITY_FILE`: backend-only SSH Docker connection settings.
 
+The WSS environment is a first-launch bootstrap or an explicit rotation override. After a successful WSS bind, the main process writes a validated `controller-runtime.json` under the Electron user-data directory with only the enabled flag, safe bind host, actual bound port, LAN approval, and TLS certificate/key paths. A later direct launch restores that profile when the WSS environment is absent. The profile never stores PEM contents, Agent credentials, tokens, or SSH connection settings, and it is never exposed to the renderer. An invalid explicit override fails closed and does not replace the last-good profile.
+
+An approved SSH Docker host remains in the backend settings store and is probed again on startup. Reopening the app therefore restores the saved Linux host and managed-container records, starts the persisted WSS endpoint, and reconciles live Docker and Agent state without requiring the original bootstrap shell to remain open.
+
 The renderer only receives safe metadata such as WSS status, safe bind host, port, store loaded/degraded state, and the configured Docker host ID/display label. It never receives the SSH target, identity path, private key, or credentials. Managed Agent credentials are generated with cryptographically secure random bytes only when missing; repair and repeated provisioning preserve an existing credential hash and never rotate it implicitly. TLS certificate and key files are preserved and are not silently regenerated.
 
 ## Managed Containers
@@ -30,6 +34,10 @@ The renderer only receives safe metadata such as WSS status, safe bind host, por
 Open **Thêm container** in Workspace to probe the configured Docker host. The machine selector lists only a host whose Docker server probe succeeds. The Controller re-probes the selected allowlisted host when **Tạo** is pressed and rejects renderer-supplied host IDs that are not configured.
 
 The user chooses the display-name prefix, sequence number, and IPv4/IPv6 settings. The main process owns the approved image, unique Docker name, managed Agent identity and credential, isolated data volume, WSS settings, resource limits, and AppArmor/seccomp/browser-sandbox policy. After provisioning succeeds, the new container is refreshed into the managed application list where Start, Stop, Restart, Refresh, network settings, Duplicate, and Delete remain available.
+
+New provisioning always requires the current versioned managed-network labels. Repair and startup may preserve an older network only when it is already attached to the immutable, ownership-verified canonical container and its exact legacy identity and topology pass the compatibility policy. Repair never performs an implicit topology migration and never removes or reuses a shared or foreign network.
+
+Linux host repair installs the reviewed AppArmor profile at `/etc/apparmor.d/war-browser-agent`, verifies its pinned hash and root-only ownership, and loads it in enforce mode. The top-level path is intentional: Ubuntu's AppArmor boot loader reloads it after a host restart. The Controller fails the host readiness probe instead of starting a managed container when that profile, the reviewed seccomp policy, or the Controller CA is unavailable.
 
 ## Pairing Workflow
 

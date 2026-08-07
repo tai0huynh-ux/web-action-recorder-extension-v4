@@ -52,6 +52,25 @@ test('settings retain validated SSH host metadata without accepting unsafe field
   assert.equal(Object.hasOwn(value.containerHosts[0], 'extra'), false);
 });
 
+test('settings discard persisted hosts with unsafe Controller destinations', () => {
+  const base = {
+    id: 'ssh-host-1',
+    name: 'Reviewed Linux',
+    target: 'root@192.168.1.201',
+    identityFile: 'C:/Users/test/.ssh/id_ed25519',
+  };
+  const value = normalizeSettings({
+    containerHosts: [
+      { ...base, controllerHost: '127.0.0.1@attacker.example' },
+      { ...base, id: 'ssh-host-2', controllerHost: 'controller.example/path' },
+      { ...base, id: 'ssh-host-3', controllerHost: '[2001:db8::20]' },
+    ],
+  });
+
+  assert.deepEqual(value.containerHosts.map((host) => host.id), ['ssh-host-3']);
+  assert.equal(value.containerHosts[0].controllerHost, '[2001:db8::20]');
+});
+
 test('settings retain a bounded persistent host trash and purge tombstones', () => {
   const value = normalizeSettings({
     trashedContainerHosts: [{
