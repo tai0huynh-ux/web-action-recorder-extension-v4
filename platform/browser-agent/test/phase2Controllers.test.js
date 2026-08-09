@@ -346,6 +346,26 @@ test('phase2 X11 protocol serializes a WAR2 64-bit absolute-deadline envelope fo
   assert.equal(Number.isSafeInteger(packet.deadlineAt), true);
 });
 
+test('phase2 X11 shortcut parser resolves the shortcut member when type has the same value', () => {
+  const deadlineAt = 1_726_796_800_123;
+  const currentCopyWire = encodeX11Command(
+    'shortcut',
+    { id: 'clipboard-copy', type: 'shortcut', deadlineAt, shortcut: 'Control_L+c' },
+    'clipboard-copy',
+    { deadlineAt }
+  );
+  const packet = JSON.parse(currentCopyWire.match(/^WAR2 \d+ (.+)\n$/)?.[1] ?? 'null');
+  assert.deepEqual(packet, { id: 'clipboard-copy', type: 'shortcut', deadlineAt, shortcut: 'Control_L+c' });
+
+  const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
+  const memberLocator = nativeHelper.slice(nativeHelper.indexOf('static const char *find_json_member_value('), nativeHelper.indexOf('static bool get_json_string('));
+  assert.match(
+    memberLocator,
+    /const char \*value\s*=\s*member\s*\+\s*pattern_len\s*;\s*while\s*\(\s*isspace\s*\(\s*\(unsigned char\)\*value\s*\)\s*\)\s*value\+\+\s*;\s*if\s*\(\s*\*value\s*==\s*':'\s*\)\s*return\s+value\s*\+\s*1\s*;/,
+    'member-key lookup must require optional whitespace followed immediately by a colon, so type:"shortcut" cannot match the shortcut key'
+  );
+});
+
 test('phase2 native X11 source requires the WAR2 handshake and checks 64-bit expiry inside every X11 guard', () => {
   const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
   assert.match(nativeHelper, /#include <stdint\.h>/, 'native deadline arithmetic must use a fixed-width 64-bit integer');

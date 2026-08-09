@@ -78,14 +78,24 @@ static void respond(FILE *out, const char *id, bool ok, const char *error, int h
   fflush(out);
 }
 
-static bool get_json_string(const char *line, const char *key, char *out, size_t out_len) {
+static const char *find_json_member_value(const char *line, const char *key) {
   char pattern[64];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-  const char *p = strstr(line, pattern);
+  int pattern_len = snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+  if (pattern_len < 0 || (size_t)pattern_len >= sizeof(pattern)) return NULL;
+
+  const char *member = line;
+  while ((member = strstr(member, pattern)) != NULL) {
+    const char *value = member + pattern_len;
+    while (isspace((unsigned char)*value)) value++;
+    if (*value == ':') return value + 1;
+    member = value;
+  }
+  return NULL;
+}
+
+static bool get_json_string(const char *line, const char *key, char *out, size_t out_len) {
+  const char *p = find_json_member_value(line, key);
   if (!p) return false;
-  p = strchr(p + strlen(pattern), ':');
-  if (!p) return false;
-  p++;
   while (isspace((unsigned char)*p)) p++;
   if (*p != '"') return false;
   p++;
@@ -99,13 +109,8 @@ static bool get_json_string(const char *line, const char *key, char *out, size_t
 }
 
 static bool get_json_int(const char *line, const char *key, int *out) {
-  char pattern[64];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-  const char *p = strstr(line, pattern);
+  const char *p = find_json_member_value(line, key);
   if (!p) return false;
-  p = strchr(p + strlen(pattern), ':');
-  if (!p) return false;
-  p++;
   while (isspace((unsigned char)*p)) p++;
   if (!isdigit((unsigned char)*p) && *p != '-') return false;
   char *end = NULL;
@@ -259,13 +264,8 @@ static void release_all(void) {
 }
 
 static bool get_json_int64(const char *line, const char *key, int64_t *out) {
-  char pattern[64];
-  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-  const char *p = strstr(line, pattern);
+  const char *p = find_json_member_value(line, key);
   if (!p) return false;
-  p = strchr(p + strlen(pattern), ':');
-  if (!p) return false;
-  p++;
   while (isspace((unsigned char)*p)) p++;
   if (!isdigit((unsigned char)*p)) return false;
   errno = 0;
