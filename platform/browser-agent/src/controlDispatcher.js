@@ -232,7 +232,12 @@ export class ControlDispatcher {
       // its post-SelectionRequest wait before Playwright returns control.
       const pasteCompletion = session.waitForPaste();
       try {
-        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'viewport' });
+        // Clicking the Controller paste button can steal X11 focus while the
+        // target lease remains cached. Reassert the browser window before Ctrl+V.
+        await raw.execute('browser.focusWindow', { targetId });
+        // Browser chrome (including the omnibox) is outside the page viewport.
+        // Use the native X11 browser space so paste reaches either browser chrome or page focus.
+        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'browser' });
         await pasteCompletion;
         if (commandDeadlineAt <= this.now()) {
           throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);

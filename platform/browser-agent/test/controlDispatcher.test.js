@@ -130,7 +130,7 @@ test('clipboard copy bounds the reader by remaining deadline and never returns p
   assert.equal(JSON.stringify({ outcome, logs }).includes(secret), false);
 });
 
-test('clipboard paste runs guard and sends Ctrl+V through the exact target viewport before selection completion', async () => {
+test('clipboard paste runs guard and sends Ctrl+V through the exact browser target before selection completion', async () => {
   const fake = makeFake();
   const secret = 'one-time secret';
   const events = [];
@@ -140,9 +140,11 @@ test('clipboard paste runs guard and sends Ctrl+V through the exact target viewp
     executeCompound: async (task) => task({
       execute: async (type, payload) => {
         shortcutCalls.push({ type, payload });
-        events.push(`shortcut:${type}:${payload.keys}`);
-        completion.resolve({ written: true, bytes: Buffer.byteLength(secret, 'utf8') });
-        events.push('selection:completed');
+        events.push(type === 'browser.focusWindow' ? 'focusWindow' : `shortcut:${type}:${payload.keys}`);
+        if (type === 'input.shortcut') {
+          completion.resolve({ written: true, bytes: Buffer.byteLength(secret, 'utf8') });
+          events.push('selection:completed');
+        }
         return { executed: true };
       }
     })
@@ -165,15 +167,45 @@ test('clipboard paste runs guard and sends Ctrl+V through the exact target viewp
     'guard',
     'helper:ready',
     'selection:armed',
+    'focusWindow',
     'shortcut:input.shortcut:CTRL+V',
     'selection:completed'
   ]);
   assert.deepEqual(shortcutCalls, [
-    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'viewport' } }
-  ], 'clipboard paste must use the selected Playwright target viewport, never the browser-wide X11 shortcut');
+    { type: 'browser.focusWindow', payload: { targetId: 't1' } },
+    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' } }
+  ], 'clipboard paste must refocus the browser and use the native input space');
   assert.deepEqual(helperCalls, [secret], 'the one-shot owner must not immediately rewrite the clipboard');
   assert.deepEqual(result.result, { pasted: true, bytes: Buffer.byteLength(secret, 'utf8') });
   assert.equal(JSON.stringify({ result, logs, events }).includes(secret), false);
+});
+
+test('clipboard paste uses browser-space Ctrl+V when the omnibox owns focus', async () => {
+  const fake = makeFake();
+  const calls = [];
+  let omniboxFocused = true;
+  const rawInput = {
+    executeCompound: async (task) => task({
+      execute: async (type, payload) => {
+        calls.push({ type, payload });
+        if (type === 'input.shortcut' && omniboxFocused && payload.space !== 'browser') {
+          throw new Error('CDP viewport input cannot reach a focused browser omnibox');
+        }
+        return { executed: true };
+      }
+    })
+  };
+  const dispatcher = makeDispatcher(fake, undefined, undefined, rawInput, undefined, async () => ({
+    waitForPaste: async () => ({ written: true }),
+    abort: async () => {}
+  }));
+
+  await dispatcher.dispatch(envelope('clipboard.pasteText', { text: 'omnibox paste' }));
+
+  assert.deepEqual(calls, [
+    { type: 'browser.focusWindow', payload: { targetId: 't1' } },
+    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' } }
+  ], 'focused omnibox paste must refocus Chrome and use the native browser input space');
 });
 
 test('rejects a clipboard command that expires while waiting in the raw-input queue before it causes effects', async () => {

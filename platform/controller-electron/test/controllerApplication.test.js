@@ -515,6 +515,40 @@ test('application manages container lifecycle through a bounded adapter', async 
   assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'updateNetwork', 'create', 'delete']);
 });
 
+test('network update passes persisted IPv6 identity through while changing preferences and suffix', async () => {
+  const core = await connectedCore();
+  let received;
+  const adapter = {
+    async updateNetwork(container) {
+      received = structuredClone(container);
+      return { status: container.status, runtime: { ...container.runtime } };
+    },
+  };
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter });
+  const container = await core.containers.createContainer({
+    name: 'Legacy IPv6',
+    deviceId: 'dev-a',
+    runtime: {
+      dockerName: 'legacy-ipv6',
+      ipv4Enabled: true,
+      ipv6Enabled: true,
+      ipv6Suffix: 'abcd:ef01:2345:6789',
+      ipv6Network: 'war-managed-ipv6-123456789abc',
+      ipv6Prefix: '2001:db8:1:2::/64',
+      ipv6Address: '2001:db8:1:2:abcd:ef01:2345:6789',
+    },
+  });
+
+  await app.updateContainerNetwork({ containerId: container.id, ipv4Enabled: false, ipv6Enabled: true, ipv6Suffix: '1234:5678:9abc:def0' });
+
+  assert.equal(received.runtime.ipv4Enabled, false);
+  assert.equal(received.runtime.ipv6Enabled, true);
+  assert.equal(received.runtime.ipv6Suffix, '1234:5678:9abc:def0');
+  assert.equal(received.runtime.ipv6Network, 'war-managed-ipv6-123456789abc');
+  assert.equal(received.runtime.ipv6Prefix, '2001:db8:1:2::/64');
+  assert.equal(received.runtime.ipv6Address, '2001:db8:1:2:abcd:ef01:2345:6789');
+});
+
 test('managed container restart makes its prior Agent session non-actionable until a fresh hello', async () => {
   const core = await connectedCore();
   const transport = fakeTransport();
@@ -971,6 +1005,7 @@ test('remote control allowlist forwards Chrome-like tab and internal-page comman
   const transport = fakeTransport();
   const app = application(core, transport);
   const commands = [
+    ['browser.restart', {}],
     ['tab.new', { url: 'https://example.test/new' }],
     ['tab.back', { targetId: 'tab-1' }],
     ['tab.forward', { targetId: 'tab-1' }],
@@ -978,6 +1013,8 @@ test('remote control allowlist forwards Chrome-like tab and internal-page comman
     ['tab.home', { targetId: 'tab-1' }],
     ['browser.openInternalPage', { page: 'settings' }],
     ['browser.openInternalPage', { page: 'extensions' }],
+    ['page.focus', { targetId: 'tab-1', target: { selectorType: 'css', selector: '#search', strict: true } }],
+    ['page.press', { targetId: 'tab-1', target: { selectorType: 'css', selector: '#search', strict: true }, key: 'Enter' }],
   ];
 
   for (const [command, payload] of commands) {

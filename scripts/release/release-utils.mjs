@@ -55,10 +55,13 @@ export async function sha256(file) {
 }
 
 export function execFileP(file, args, options = {}) {
+  if (typeof file === 'string' && file.toLowerCase().endsWith('.cmd')) {
+    const error = new Error('Refusing to execute command shims; invoke a trusted Node entry point instead.');
+    error.code = 'ERR_RELEASE_COMMAND_SHIM';
+    return Promise.reject(error);
+  }
   return new Promise((resolve, reject) => {
-    const command = process.platform === 'win32' && file.toLowerCase().endsWith('.cmd') ? 'cmd.exe' : file;
-    const commandArgs = command === 'cmd.exe' ? ['/d', '/s', '/c', file, ...args] : args;
-    execFile(command, commandArgs, { cwd: ROOT, windowsHide: true, ...options }, (error, stdout, stderr) => {
+    execFile(file, args, { cwd: ROOT, windowsHide: true, ...options }, (error, stdout, stderr) => {
       if (error) reject(Object.assign(error, { stdout, stderr }));
       else resolve({ stdout, stderr });
     });

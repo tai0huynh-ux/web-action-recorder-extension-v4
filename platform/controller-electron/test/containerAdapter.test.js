@@ -76,6 +76,7 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(run.args.includes('apparmor=war-browser-agent'), true);
   assert.equal(run.args.includes('seccomp=C:/war/security/chromium-userns-seccomp.json'), true);
   assert.equal(run.args.includes('--memory') && run.args.includes('2g'), true);
+  assert.equal(run.args.includes('--shm-size') && run.args.includes('1g'), true);
   assert.equal(run.args.includes('--cpus') && run.args.includes('2'), true);
   assert.equal(run.args.includes('--pids-limit') && run.args.includes('512'), true);
   assert.equal(run.args.some((arg) => String(arg).includes('/var/run/docker.sock')), false);
@@ -145,6 +146,42 @@ test('managed Docker attestation rejects a legacy runtime with a published Agent
         HostConfig: { PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] } },
       }))}\n`, stderr: '' };
       if (args[0] === 'stats') return { stdout: '', stderr: '' };
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  await assert.rejects(
+    () => adapter.status(container({ runtime: { ipv4Network: ipv4NetworkName() } })),
+    /runtime security policy failed/
+  );
+});
+
+test('managed Docker status attests and reports the 1 GiB shared-memory capacity', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'running\n', stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection())}\n`, stderr: '' };
+      if (args[0] === 'stats') return { stdout: '', stderr: '' };
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  const result = await adapter.status(container({ runtime: { ipv4Network: ipv4NetworkName() } }));
+
+  assert.equal(result.runtime.shmSizeBytes, 1024 * 1024 * 1024);
+});
+
+test('managed Docker attestation rejects a 64 MiB shared-memory downgrade', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'running\n', stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection({
+        HostConfig: { ShmSize: 64 * 1024 * 1024 },
+      }))}\n`, stderr: '' };
       return { stdout: 'ok\n', stderr: '' };
     },
   });
@@ -815,6 +852,171 @@ test('managed Docker repair recreates a running container whose Controller WSS e
   assert.ok(run.args.includes('war-agent-one-data:/data'), 'recreate must retain the named credential volume');
   assert.equal(run.options.env.WAR_CONTROLLER_WSS_URL, expectedWssUrl);
   assert.equal(calls.some((call) => call.args[0] === 'volume' && call.args[1] === 'rm'), false);
+});
+
+test('managed Docker IPv4-off rejects an IPv4-only Controller endpoint before replacing the Browser Agent', async () => {
+  const calls = [];
+  const ipv6Prefix = '2001:db8:1:2::/64';
+  const adapter = createDockerContainerAdapter({
+    config: {
+      ...managedConfig('local-docker'),
+      wss: { enabled: true, host: '192.168.1.206', port: 47651 },
+      containers: { ...managedConfig('local-docker').containers, ipv6Driver: 'bridge', ipv6Prefix },
+    },
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'ps') return { stdout: '', stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') {
+        return { stdout: `${JSON.stringify(managedNetworkInspection(args.at(-1), { family: 'ipv6', prefix: ipv6Prefix }))}\n`, stderr: '' };
+      }
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'true\n', stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection())}\n`, stderr: '' };
+      if (['stop', 'rename', 'run'].includes(args[0]) || (args[0] === 'network' && ['create', 'rm', 'connect', 'disconnect'].includes(args[1]))) {
+        throw new Error(`unexpected mutation: ${args.join(' ')}`);
+      }
+      throw new Error(`Unexpected Docker command: ${args.join(' ')}`);
+    },
+  });
+
+  const error = await adapter.repair(container({ runtime: {
+    ipv4Enabled: false,
+    ipv6Enabled: true,
+    ipv6Suffix: 'a8bb:ccff:fedd:eeff',
+  } })).then(() => null, (reason) => reason);
+  const mutations = calls
+    .filter((args) => ['stop', 'rename', 'run'].includes(args[0]) || (args[0] === 'network' && ['create', 'rm', 'connect', 'disconnect'].includes(args[1])))
+    .map((args) => args.slice(0, 3));
+
+  assert.deepEqual(
+    { message: error?.message, mutations },
+    { message: 'Controller WSS endpoint requires IPv4 while managed IPv4 is disabled', mutations: [] },
+    'an IPv4-only Controller would strand an IPv6-only replacement, so reject before destructive reconciliation'
+  );
+});
+
+test('managed Docker create rejects an IPv4-only Controller before Docker or helper mutation when IPv4 is disabled', async () => {
+  const execCalls = [];
+  const spawnCalls = [];
+  let volumeExists = false;
+  const adapter = createDockerContainerAdapter({
+    config: {
+      ...managedConfig('local-docker'),
+      wss: { enabled: true, host: '192.168.1.206', port: 47651 },
+    },
+    execFileImpl: async (file, args, options) => {
+      execCalls.push({ file, args, options });
+      if (args[0] === 'volume' && args[1] === 'inspect') {
+        if (!volumeExists) {
+          const error = new Error('No such volume: war-agent-one-data');
+          error.stderr = error.message;
+          throw error;
+        }
+        return { stdout: `${JSON.stringify(managedVolumeInspection())}\n`, stderr: '' };
+      }
+      if (args[0] === 'volume' && args[1] === 'create') {
+        volumeExists = true;
+        return { stdout: 'war-agent-one-data\n', stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    },
+    spawnImpl: fakeSpawn(spawnCalls),
+  });
+
+  await assert.rejects(
+    () => adapter.create(container({ runtime: {
+      ipv4Enabled: false,
+      ipv6Enabled: true,
+      ipv6Suffix: 'a8bb:ccff:fedd:eeff',
+    } })),
+    { message: 'Controller WSS endpoint requires IPv4 while managed IPv4 is disabled' }
+  );
+
+  assert.deepEqual(execCalls, []);
+  assert.deepEqual(spawnCalls, []);
+});
+
+test('managed Docker IPv6-only accepts only a bracketed global-unicast Controller IPv6 endpoint', () => {
+  const adapterForHost = (host) => createDockerContainerAdapter({
+    config: {
+      ...managedConfig('local-docker'),
+      wss: { enabled: true, host, port: 47651 },
+    },
+    execFileImpl: async () => ({ stdout: '', stderr: '' }),
+  });
+  const ipv6Only = { ipv4Enabled: false, ipv6Enabled: true };
+  const invalidHosts = [
+    '[::ffff:192.168.1.206]',
+    '[fc00::1]',
+    '[fe80::1]',
+    '[::1]',
+  ];
+
+  assert.doesNotThrow(() => adapterForHost('[2001:db8:1:206::1]').assertControllerWssNetworkCompatibility(ipv6Only));
+  const acceptedInvalidHosts = invalidHosts.filter((host) => {
+    try {
+      adapterForHost(host).assertControllerWssNetworkCompatibility(ipv6Only);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  assert.deepEqual(
+    acceptedInvalidHosts,
+    [],
+    'an IPv6-only managed container must reject IPv4-mapped, unique-local, link-local, and loopback Controller literals'
+  );
+});
+
+test('managed Docker IPv6-only launch uses the bracketed IPv6 Controller endpoint without an IPv4 attachment', async () => {
+  const calls = [];
+  const ipv6Prefix = '2001:db8:1:2::/64';
+  const ipv6Address = '2001:db8:1:2:a8bb:ccff:fedd:eeff';
+  const ipv6Network = ipv6NetworkName(ipv6Prefix);
+  const controllerWssUrl = 'wss://[2001:db8:1:206::1]:47651/v1/agent-session';
+  const createdId = dockerIdFor('ipv6-only-controller-endpoint');
+  let launchOptions = null;
+  const adapter = createDockerContainerAdapter({
+    config: {
+      ...managedConfig('local-docker'),
+      wss: { enabled: true, host: '[2001:db8:1:206::1]', port: 47651 },
+      containers: { ...managedConfig('local-docker').containers, ipv6Driver: 'bridge', ipv6Prefix },
+    },
+    execFileImpl: async (_file, args, options) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'volume' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedVolumeInspection())}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+      if (args[0] === 'network' && args[1] === 'create') return { stdout: `${ipv6Network}\n`, stderr: '' };
+      if (args[0] === 'run') {
+        launchOptions = options;
+        return { stdout: `${createdId}\n`, stderr: '' };
+      }
+      if (args[0] === 'inspect') {
+        return { stdout: `${JSON.stringify(safeInspection({
+          Id: createdId,
+          Config: { Env: [...APPROVED_IMAGE_ENV, 'WAR_MANAGED_DEVICE_ID=managed-device-1', 'WAR_CONTROLLER_SESSION_CREDENTIAL_FILE=/data/device/controller-session.credential', `WAR_CONTROLLER_WSS_URL=${controllerWssUrl}`] },
+          HostConfig: { NetworkMode: ipv6Network },
+          NetworkSettings: { Networks: { [ipv6Network]: { GlobalIPv6Address: ipv6Address, GlobalIPv6PrefixLen: 64 } } },
+        }))}\n`, stderr: '' };
+      }
+      throw new Error(`Unexpected Docker command: ${args.join(' ')}`);
+    },
+    spawnImpl: fakeSpawn([]),
+  });
+
+  const result = await adapter.create(container({ runtime: {
+    ipv4Enabled: false,
+    ipv6Enabled: true,
+    ipv6Suffix: 'a8bb:ccff:fedd:eeff',
+  } }));
+  const launch = calls.find((args) => args[0] === 'run' && args.includes('--name'));
+  const networkArgs = launch.filter((arg, index) => launch[index - 1] === '--network');
+
+  assert.equal(result.runtime.ipv4Enabled, false);
+  assert.deepEqual(networkArgs, [`name=${ipv6Network},ip6=${ipv6Address}`]);
+  assert.equal(launch.includes(ipv4NetworkName()), false);
+  assert.equal(launchOptions.env.WAR_CONTROLLER_WSS_URL, controllerWssUrl);
 });
 
 test('managed Docker repair recovers a deterministic interrupted network backup without deleting its data volume', async () => {
@@ -1880,6 +2082,7 @@ function safeInspection(overrides = {}) {
       UsernsMode: '',
       NetworkMode: 'bridge',
       Memory: 2 * 1024 * 1024 * 1024,
+      ShmSize: 1024 * 1024 * 1024,
       NanoCpus: 2_000_000_000,
       PidsLimit: 512,
       SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION],
@@ -1910,6 +2113,10 @@ function isImageEnvironmentInspection(args) {
 
 function ipv4NetworkName() {
   return `war-managed-ipv4-${crypto.createHash('sha256').update('war-agent-one').digest('hex').slice(0, 12)}`;
+}
+
+function ipv6NetworkName(prefix, driver = 'bridge') {
+  return `war-managed-ipv6-${crypto.createHash('sha256').update(`1:${driver}:${prefix}`).digest('hex').slice(0, 12)}`;
 }
 
 function managedIpv4Inspection(overrides = {}) {

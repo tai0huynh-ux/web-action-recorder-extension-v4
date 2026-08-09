@@ -851,8 +851,14 @@ async function updateContainerNetwork(container, network, refresh) {
   refresh();
   try {
     const result = await window.warController.containers.updateNetwork({ containerId, ...network });
-    if (result?.ok === false || result?.data?.operation?.ok === false) {
-      const failure = result?.ok === false ? result : { code: 'CONTAINER_NETWORK_FAILED', message: result.data.operation.error };
+    const data = unwrap(result) || {};
+    const operation = data?.operation;
+    if (result?.ok === false || operation?.ok === false) {
+      const failure = result?.ok === false
+        ? result
+        : (operation?.error && typeof operation.error === 'object'
+          ? operation.error
+          : { code: 'CONTAINER_NETWORK_FAILED', message: String(operation?.error || 'Container network update failed') });
       store.workspace.containerErrors = { ...store.workspace.containerErrors, [containerId]: safeError(failure) };
     } else {
       const { [containerId]: _clearedError, ...remainingErrors } = store.workspace.containerErrors || {};

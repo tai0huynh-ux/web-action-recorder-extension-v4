@@ -153,7 +153,17 @@ function sanitizeRuntime(runtime = {}) {
     ipv6Driver: ['bridge', 'macvlan'].includes(runtime.ipv6Driver) ? runtime.ipv6Driver : null,
     ipv6MacAddress: normalizeOptionalMacAddress(runtime.ipv6MacAddress),
     ipv6PrefixChanged: runtime.ipv6PrefixChanged === true,
+    shmSizeBytes: normalizeOptionalShmSizeBytes(runtime.shmSizeBytes),
   };
+}
+
+function normalizeOptionalShmSizeBytes(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw domainError(ERROR_CODES.INVALID_TARGET, 'Container shared memory size is invalid', 400);
+  }
+  return number;
 }
 
 function normalizeOptionalIpv6Prefix(value) {

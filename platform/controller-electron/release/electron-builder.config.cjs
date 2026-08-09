@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const channel = process.env.WAR_RELEASE_CHANNEL || 'development';
+const rootWsPath = path.resolve(__dirname, '../../../node_modules/ws');
 const signed = Boolean(process.env.WAR_WINDOWS_SIGN_CERT_PATH || process.env.CSC_LINK || process.env.WIN_CSC_LINK);
 if (process.env.WAR_WINDOWS_SIGN_CERT_PATH && !process.env.CSC_LINK) {
   process.env.CSC_LINK = process.env.WAR_WINDOWS_SIGN_CERT_PATH;
@@ -18,12 +19,18 @@ module.exports = {
   },
   asar: true,
   compression: 'normal',
-  npmRebuild: false,
+  npmRebuild: true,
+  beforeBuild: () => false,
   buildDependenciesFromSource: false,
   electronVersion: '43.1.1',
   artifactName: `WAR-Controller-${channel}-${'${version}'}-windows-x64.${'${ext}'}`,
   files: [
     'package.json',
+    {
+      from: rootWsPath,
+      to: 'node_modules/ws',
+      filter: ['**/*'],
+    },
     'companion/store.js',
     'platform/controller-electron/src/**/*',
     'platform/controller-electron/renderer/**/*',

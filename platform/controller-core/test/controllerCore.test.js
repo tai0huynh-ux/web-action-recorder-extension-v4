@@ -89,6 +89,7 @@ test('container registry creates, updates status, duplicates, trashes, restores,
       ipv4MacAddress: 'AA:68:A4:33:03:CE',
       ipv6Enabled: true,
       ipv6Suffix: 'abcd:ef01:2345:6789',
+      shmSizeBytes: 1024 * 1024 * 1024,
     },
   });
   assert.equal(created.id, 'container-1');
@@ -97,6 +98,8 @@ test('container registry creates, updates status, duplicates, trashes, restores,
   assert.equal(created.runtime.ipv4MacAddress, 'aa:68:a4:33:03:ce');
   assert.equal(store.snapshot().managedContainers[0].runtime.ipv4MacAddress, 'aa:68:a4:33:03:ce');
   assert.equal(created.runtime.ipv6Suffix, 'abcd:ef01:2345:6789');
+  assert.equal(created.runtime.shmSizeBytes, 1024 * 1024 * 1024);
+  assert.equal(store.snapshot().managedContainers[0].runtime.shmSizeBytes, 1024 * 1024 * 1024);
   const running = await core.containers.updateStatus(created.id, 'running', {
     desiredState: 'running',
     resourceUsage: { cpuPercent: 1.5, memoryBytes: 1024, memoryLimitBytes: 2048 }
@@ -136,6 +139,20 @@ test('container registry rejects malformed and unsafe IPv4 endpoint MAC addresse
         /Managed container MAC address is invalid/,
       );
     });
+  }
+});
+
+test('container registry rejects invalid shared memory size attestations', async () => {
+  const core = await fixtureCore();
+  for (const value of [-1, 1.5, Number.POSITIVE_INFINITY, 'not-a-number']) {
+    assert.throws(
+      () => core.containers.createContainer({
+        name: 'Invalid shared memory',
+        image: 'war-browser-agent:test',
+        runtime: { shmSizeBytes: value },
+      }),
+      /Container shared memory size is invalid/,
+    );
   }
 });
 

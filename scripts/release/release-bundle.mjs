@@ -4,10 +4,10 @@ import { DIST, RELEASE_CHANNEL, ensureDir, execFileP, gitCommit, listFiles, pack
 
 const skipBuild = process.argv.includes('--manifest-only');
 if (!skipBuild) {
-  await execFileP('npm.cmd', ['run', 'package:controller-electron']);
-  await execFileP('npm.cmd', ['run', 'dist:controller-electron']);
-  await execFileP('npm.cmd', ['run', 'package:browser-agent']);
-  await execFileP('npm.cmd', ['run', 'package:extension']);
+  await execFileP(process.execPath, [rootPath('scripts', 'release', 'package-controller-electron.mjs'), '--dir']);
+  await execFileP(process.execPath, [rootPath('scripts', 'release', 'package-controller-electron.mjs'), '--dist']);
+  await execFileP(process.execPath, [rootPath('scripts', 'release', 'package-browser-agent.mjs')]);
+  await execFileP(process.execPath, [rootPath('scripts', 'release', 'package-extension.mjs')]);
 }
 
 const version = await packageVersion();

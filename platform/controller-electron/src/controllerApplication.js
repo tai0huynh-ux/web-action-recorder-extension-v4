@@ -20,6 +20,7 @@ const MAX_GROUPED_INPUT_ROWS = 200;
 const GROUPED_INPUT_MODES = new Set(['text', 'table', 'cell']);
 const REMOTE_CONTROL_COMMANDS = new Set([
   'browser.getState',
+  'browser.restart',
   'browser.focusWindow',
   'tab.list',
   'tab.new',
@@ -32,6 +33,23 @@ const REMOTE_CONTROL_COMMANDS = new Set([
   'tab.reload',
   'tab.home',
   'browser.openInternalPage',
+  'page.click',
+  'page.doubleClick',
+  'page.hover',
+  'page.focus',
+  'page.fill',
+  'page.type',
+  'page.press',
+  'page.selectOption',
+  'page.check',
+  'page.uncheck',
+  'page.scroll',
+  'page.waitFor',
+  'page.getElementState',
+  'page.listInteractiveElements',
+  'page.uploadFile',
+  'page.handleDialog',
+  'page.screenshot',
   'input.mouseMove',
   'input.mouseDown',
   'input.mouseUp',
@@ -561,9 +579,8 @@ export class ControllerApplicationService extends EventEmitter {
         ipv4Enabled,
         ipv6Enabled,
         ipv6Suffix: ipv6Enabled ? ipv6Suffix : null,
-        ipv6Prefix: null,
-        ipv6Address: null,
-        ipv6Network: null,
+        // Preserve the persisted endpoint identity so the adapter can prove a
+        // legacy IPv6 network is attached before migrating it when necessary.
         ipv6PrefixChanged: false,
       },
     };

@@ -1,13 +1,13 @@
 import { execFileP, rootPath, writeJson } from './release-utils.mjs';
 
 const results = [];
-for (const [name, args] of [
-  ['release integrity', ['run', 'test:release:integrity']],
-  ['packaged controller', ['run', 'test:controller-electron:packaged']]
+for (const [name, script] of [
+  ['release integrity', rootPath('scripts', 'release', 'test-release-integrity.mjs')],
+  ['packaged controller', rootPath('scripts', 'release', 'test-packaged-controller.mjs')]
 ]) {
   const start = Date.now();
   try {
-    await execFileP('npm.cmd', args);
+    await execFileP(process.execPath, [script]);
     results.push({ name, pass: true, durationMs: Date.now() - start });
   } catch (error) {
     results.push({ name, pass: false, durationMs: Date.now() - start, error: String(error?.message || error) });

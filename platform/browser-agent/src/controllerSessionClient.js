@@ -1,5 +1,8 @@
 import { EventEmitter } from 'node:events';
+import { X509Certificate } from 'node:crypto';
+import { isIP } from 'node:net';
 import os from 'node:os';
+import tls from 'node:tls';
 import WebSocket from 'ws';
 import { PROTOCOL_VERSION, MESSAGE_TYPES, validateEnvelope } from '../../protocol/src/protocolV2.js';
 
@@ -440,7 +443,8 @@ export function createWebSocketConnector(url, options = {}) {
   if (typeof WebSocketImpl !== 'function') throw new Error('Runtime WebSocket client is unavailable');
   const wsOptions = {
     headers: options.headers || {},
-    ...(options.ca ? { ca: options.ca } : {})
+    ...(options.ca ? { ca: options.ca } : {}),
+    checkServerIdentity: checkServerIdentity
   };
   const socket = new WebSocketImpl(url, [], wsOptions);
   return {
@@ -459,6 +463,24 @@ export function createWebSocketConnector(url, options = {}) {
       if (event === 'message') socket.addEventListener('message', (message) => handler(normalizeMessage(message.data)));
     }
   };
+}
+
+function checkServerIdentity(host, cert) {
+  const bareHost = unbracketHost(host);
+  if (isIP(bareHost) !== 6) return tls.checkServerIdentity(host, cert);
+
+  try {
+    // Node #64144: use X509Certificate for affected IPv6 IP-SAN matching.
+    if (new X509Certificate(cert.raw).checkIP(bareHost)) return undefined;
+  } catch {
+    // Fall through to Node's standard verifier when the certificate is unusable.
+  }
+  return tls.checkServerIdentity(bareHost, cert);
+}
+
+function unbracketHost(host) {
+  const value = String(host);
+  return value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
 }
 
 function normalizeMessage(message) {

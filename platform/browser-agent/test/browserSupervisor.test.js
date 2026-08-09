@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { BrowserSupervisor } from '../src/browserSupervisor.js';
 
 test('start is idempotent', async () => {
@@ -52,8 +53,35 @@ test('SIGTERM cleanup can call stop handler path', async () => {
   assert.equal(supervisor.state, 'stopped');
 });
 
+test('an unexpected controller context close causes one bounded restart', async () => {
+  const controller = fakeController();
+  const supervisor = new BrowserSupervisor({ controller });
+  await supervisor.start();
+
+  controller.emit('context_closed', { reason: 'playwright_context_closed' });
+  await waitFor(() => controller.starts === 2);
+
+  assert.equal(controller.starts, 2);
+  assert.equal(controller.stops, 1);
+  assert.equal(supervisor.state, 'running');
+});
+
+test('a controller context close after manual stop does not restart', async () => {
+  const controller = fakeController();
+  const supervisor = new BrowserSupervisor({ controller });
+  await supervisor.start();
+  await supervisor.stop();
+
+  controller.emit('context_closed', { reason: 'playwright_context_closed' });
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+
+  assert.equal(controller.starts, 1);
+  assert.equal(controller.stops, 1);
+  assert.equal(supervisor.state, 'stopped');
+});
+
 function fakeController() {
-  return {
+  return Object.assign(new EventEmitter(), {
     starts: 0,
     stops: 0,
     extensionStatus: { loaded: true },
@@ -66,5 +94,13 @@ function fakeController() {
     async getState() {
       return { tabs: [], extension: this.extensionStatus };
     }
-  };
+  });
+}
+
+async function waitFor(predicate, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('timed out waiting for BrowserSupervisor restart');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

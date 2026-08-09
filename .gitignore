@@ -1,6 +1,10 @@
 artifacts/
 dist/
 release/
+!scripts/release/
+scripts/release/*
+!scripts/release/trusted-windows-tar.mjs
+!scripts/release/trusted-windows-release-env.mjs
 node_modules/
 **/node_modules/
 *.blockmap

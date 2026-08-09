@@ -209,6 +209,20 @@ test('normal navigation still works after the default new-tab page', async () =>
   assert.equal(page._setContentCalls, 0);
 });
 
+test('an unexpected BrowserContext close emits one context_closed signal and clears its stale handle', () => {
+  const controller = fakeController();
+  const context = new EventEmitter();
+  const signals = [];
+  controller.context = context;
+  controller.on('context_closed', (signal) => signals.push(signal));
+
+  context.emit('close');
+  context.emit('close');
+
+  assert.equal(controller.context, null);
+  assert.equal(signals.length, 1);
+});
+
 test('extension detection works when service worker is asleep but extension page loads', async () => {
   const extensionDir = tempExtension();
   const controller = fakeController({ extensionDir });

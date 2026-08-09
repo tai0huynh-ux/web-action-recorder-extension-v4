@@ -13,8 +13,20 @@ export class BrowserSupervisor extends EventEmitter {
     this.startPromise = null;
     this.stopPromise = null;
     this.restartPromise = null;
+    this.crashPromise = null;
     this.restartTimes = [];
     this.manualStop = false;
+    this.onContextClosed = (event = {}) => {
+      const reason = typeof event?.reason === 'string' ? event.reason : 'browser_context_closed';
+      void this.handleCrash(reason).catch((error) => {
+        try {
+          this.log('error', 'browserSupervisor', 'browser_crash_recovery_failed', { message: error.message, reason });
+        } catch {
+          // Logging must not turn an observed crash into an unhandled rejection.
+        }
+      });
+    };
+    this.controller?.on?.('context_closed', this.onContextClosed);
   }
 
   async start() {
@@ -69,7 +81,15 @@ export class BrowserSupervisor extends EventEmitter {
     return this.restartPromise;
   }
 
-  async handleCrash(reason = 'browser_crashed') {
+  handleCrash(reason = 'browser_crashed') {
+    if (this.crashPromise) return this.crashPromise;
+    this.crashPromise = this.recoverFromCrash(reason).finally(() => {
+      this.crashPromise = null;
+    });
+    return this.crashPromise;
+  }
+
+  async recoverFromCrash(reason) {
     if (this.manualStop) return this.getState();
     this.state = 'crashed';
     const now = Date.now();
@@ -82,6 +102,7 @@ export class BrowserSupervisor extends EventEmitter {
     const attempt = this.restartTimes.length;
     this.restartTimes.push(now);
     await sleep(RESTART_BACKOFF_MS[Math.min(attempt, RESTART_BACKOFF_MS.length - 1)]);
+    if (this.manualStop) return this.getState();
     return this.restart();
   }
 

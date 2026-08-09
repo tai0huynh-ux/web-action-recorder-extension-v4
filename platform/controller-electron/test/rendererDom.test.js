@@ -812,6 +812,44 @@ test('managed container network settings toggle IPv4 and apply a stable IPv6 suf
   assert.equal(apiState.containers[0].runtime.ipv6Suffix, 'a8bb:ccff:fedd:eeff');
 });
 
+test('managed container nested network failure renders an error without claiming success', async () => {
+  resetStore();
+  state.store.view = 'workspace';
+  apiState.containers = [containerFixture({
+    id: 'container-1',
+    name: 'Agent One',
+    runtime: { dockerName: 'war-agent-one', ipv4Enabled: true, ipv6Enabled: false },
+  })];
+  state.store.containers = apiState.containers;
+  const originalUpdateNetwork = window.warController.containers.updateNetwork;
+  window.warController.containers.updateNetwork = async () => ({
+    ok: true,
+    data: {
+      ok: true,
+      data: {
+        operation: {
+          ok: false,
+          error: { code: 'CONTAINER_ADAPTER_UNAVAILABLE', message: 'Adapter unavailable' },
+        },
+      },
+    },
+  });
+
+  try {
+    let current;
+    const refresh = () => { current = views.renderView(refresh); };
+    current = views.renderView(refresh);
+    await clickButton(current, i18n.t('workspace.containers.networkSettings'));
+    await clickButton(current, i18n.t('workspace.containers.applyNetwork'));
+
+    assert.equal(state.store.workspace.containerErrors['container-1'], 'CONTAINER_ADAPTER_UNAVAILABLE: Adapter unavailable');
+    assert.ok(current.textContent.includes('CONTAINER_ADAPTER_UNAVAILABLE: Adapter unavailable'));
+    assert.equal(current.textContent.includes(i18n.t('workspace.containers.networkUpdated')), false);
+  } finally {
+    window.warController.containers.updateNetwork = originalUpdateNetwork;
+  }
+});
+
 test('managed container delete requires exact confirmation', async () => {
   resetStore();
   state.store.view = 'workspace';

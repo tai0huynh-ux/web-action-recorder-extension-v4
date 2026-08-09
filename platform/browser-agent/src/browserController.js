@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { EventEmitter } from 'node:events';
 import { AgentError, redactUrl } from './errors.js';
 import { BrowserEngine } from './browserEngine.js';
 
@@ -45,8 +46,9 @@ export function parseSandboxStatusSnapshot(snapshot) {
   return status;
 }
 
-export class BrowserController {
+export class BrowserController extends EventEmitter {
   constructor(config, log = () => {}) {
+    super();
     this.config = config;
     this.log = log;
     this.context = null;
@@ -63,6 +65,28 @@ export class BrowserController {
       version: readManifestVersion(config.extensionDir),
       lastError: undefined
     };
+  }
+
+  get context() {
+    return this._context;
+  }
+
+  set context(context) {
+    if (this._context === context) return;
+    this._context?.off?.('close', this.contextCloseListener);
+    this._context?.removeListener?.('close', this.contextCloseListener);
+    this._context = context || null;
+    this.contextCloseListener = null;
+    if (!this._context?.once) return;
+
+    const closedContext = this._context;
+    this.contextCloseListener = () => {
+      if (this._context !== closedContext) return;
+      this.context = null;
+      this.clearTrackedPages();
+      this.emit('context_closed', { reason: 'playwright_context_closed' });
+    };
+    this._context.once('close', this.contextCloseListener);
   }
 
   async start() {
@@ -106,9 +130,7 @@ export class BrowserController {
     if (!this.context) return;
     const context = this.context;
     this.context = null;
-    this.targetIdByPage = new WeakMap();
-    this.pageByTargetId.clear();
-    this.activeTargetId = undefined;
+    this.clearTrackedPages();
     await Promise.race([
       context.close(),
       new Promise((_, reject) => setTimeout(() => reject(new AgentError('browser_stop_timeout', 'Chromium close timed out', 500)), timeoutMs))
@@ -390,6 +412,13 @@ export class BrowserController {
 
   assertRunning() {
     if (!this.context) throw new AgentError('browser_not_running', 'Browser is not running', 409);
+  }
+
+  clearTrackedPages() {
+    this.createdAtByPage = new WeakMap();
+    this.targetIdByPage = new WeakMap();
+    this.pageByTargetId.clear();
+    this.activeTargetId = undefined;
   }
 
   async ensureDefaultNewTab(page) {

@@ -27,6 +27,7 @@ const MANAGED_NETWORK_DRIVER_LABEL = 'war-network-driver';
 const MANAGED_NETWORK_VERSION = '1';
 const MANAGED_NETWORK_KIND = 'container-network';
 const CREDENTIAL_PATH = '/data/device/controller-session.credential';
+const MANAGED_SHM_SIZE_BYTES = 1024 * 1024 * 1024;
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 const VOLUME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MANAGED_IPV4_NETWORK_PREFIX = 'war-managed-ipv4-';
@@ -72,6 +73,7 @@ export class DockerContainerAdapter {
     const name = dockerName(container);
     const volume = dataVolume(name);
     const approvedImage = this.approvedImage(container);
+    this.assertControllerWssNetworkCompatibility(normalizeManagedNetwork(container.runtime));
     let approvedImageId = null;
     let managedVolume = null;
     let network = null;
@@ -238,6 +240,7 @@ export class DockerContainerAdapter {
       ...(container.deviceId ? ['--label', `war-device-id=${safeLabel(container.deviceId)}`] : []),
       '--restart', 'unless-stopped',
       '--memory', '2g',
+      '--shm-size', '1g',
       '--cpus', '2',
       '--pids-limit', '512',
       '--cap-drop', 'ALL',
@@ -349,6 +352,7 @@ export class DockerContainerAdapter {
 
   async resolveDesiredNetwork(name, runtime = {}, { legacyAttachedNetworks = new Set(), legacyCanonicalDockerId = null, legacyCanonicalRunning = null, measuredIpv4MacAddress = null } = {}) {
     const preferences = normalizeManagedNetwork(runtime);
+    this.assertControllerWssNetworkCompatibility(preferences);
     const canonicalIpv4Network = managedIpv4NetworkName(name);
     const legacyIpv4Network = attachedLegacyIpv4Network({
       runtime,
@@ -408,6 +412,24 @@ export class DockerContainerAdapter {
       ipv6Address,
       ipv6Network,
     };
+  }
+
+  assertControllerWssNetworkCompatibility(preferences) {
+    if (preferences.ipv4Enabled || !this.wss?.enabled) return;
+    const host = this.config.controllerHost || this.wss.host;
+    const normalizedHost = normalizeControllerHost(host);
+    if (!normalizedHost || !String(host).trim().startsWith('[') || !String(host).trim().endsWith(']')) {
+      throw new Error('Controller WSS endpoint requires IPv4 while managed IPv4 is disabled');
+    }
+    try {
+      const normalizedIpv6 = normalizeIpv6Address(normalizedHost.slice(1, -1));
+      const firstGroup = Number.parseInt(normalizedIpv6.split(':', 1)[0], 16);
+      if (firstGroup < 0x2000 || firstGroup > 0x3fff) {
+        throw new Error('Controller WSS endpoint requires IPv4 while managed IPv4 is disabled');
+      }
+    } catch {
+      throw new Error('Controller WSS endpoint requires IPv4 while managed IPv4 is disabled');
+    }
   }
 
   networkFromRuntime(runtime = {}) {
@@ -1078,6 +1100,7 @@ export class DockerContainerAdapter {
       && (!network.ipv6Enabled || actualNetworks[network.ipv6Network]?.GlobalIPv6PrefixLen === 64 || stopped)
       && hasApprovedSecurityOptions(securityOptions)
       && host.Memory === 2 * 1024 * 1024 * 1024
+      && host.ShmSize === MANAGED_SHM_SIZE_BYTES
       && host.NanoCpus === 2_000_000_000
       && host.PidsLimit === 512
       && binds.some((bind) => bind === `${volume}:/data`)
@@ -1099,6 +1122,7 @@ export class DockerContainerAdapter {
       nonRootUser: config.User,
       privileged: host.Privileged,
       memoryBytes: host.Memory,
+      shmSizeBytes: host.ShmSize,
       nanoCpus: host.NanoCpus,
       pidsLimit: host.PidsLimit,
       host: this.config.hostLabel,

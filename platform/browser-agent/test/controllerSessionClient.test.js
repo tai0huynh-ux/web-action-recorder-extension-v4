@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import tls from 'node:tls';
 import { ControllerSessionClient, buildDeviceDescriptor, createWebSocketConnector } from '../src/controllerSessionClient.js';
+
+const IPV6_IP_SAN_CERT_DER = Buffer.from(
+  'MIICzjCCAbagAwIBAgIBATANBgkqhkiG9w0BAQsFADAYMRYwFAYDVQQDDA13YXItaXB2Ni10ZXN0MCIYDzIwMjYwMTAxMDAwMDAwWhgPMjAzNjAxMDEwMDAwMDBaMBgxFjAUBgNVBAMMDXdhci1pcHY2LXRlc3QwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCIMuSQOe9rnbJv/eCs6EA1ltc/rVR6nVGCZc3alp8BSmgcfKjZXeWnDpmUu+gKuOVXyVJwzcc2H/Ff0VMElXDioFIgHTmTdvokY1ZxhY814k4WL3GLzDCrOc/+UeHGHWVkvI3K2i6jajm8tFxtOQy84LuS0ET+IuWkqr6oiwdW1+fCcSVgUeBbMyUvKzdILaILA78QsAArsJsbhz0Lq0XfcnbkGMqSXuzK9gqr+fG84VLfzksUki24MdewhpOd5yf/Ldqtz9vcfg46xe7J4440nZ3kgU8ubkMWT+f7JEYZIScst35TJB5h3j4zHbPI/jUYhjxieLGNBsUIUmveCRCTAgMBAAGjHzAdMBsGA1UdEQQUMBKHECABDbgAAQIGAAAAAAAAAAEwDQYJKoZIhvcNAQELBQADggEBABR+JLKUXC9Pl7TrNUDHO5OQMjGK6bADjj+P6dm1e/Jpt5njk+LyS3hbgQq7Q2hvxqy8LrzIMz+TS+SqgXrQ6NPAsT7nYxi7ofGfWfSdxNnVFrNHUncI7YYwAZ3OBB8n15jw0OhxMGiu7bKod27WdM0suHJD0H2fEYQzq2R+dqONQcyMnfa3r/O0qXnXsXee24MoGau0a6gp+uyRwXDmCbhg7NgQtZGLJOJwR8m/dJFJ4o++ukZhCxnHQM8i4ARCPjbSK+941thKV3paoIquZmJx9kpHLzKENoyErEMWTMPBrSgHeJ0CELE+GKCRHdi0LtvapfGVPZh+MoSJDkGflKM=',
+  'base64'
+);
 
 test('real WebSocket connector sends Authorization header during opening handshake', async () => {
   let authorization;
@@ -40,6 +46,48 @@ test('real WebSocket connector sends Authorization header during opening handsha
   } finally {
     for (const socket of sockets) socket.destroy();
     await close(server);
+  }
+});
+
+test('WebSocket connector preserves TLS verification while working around IPv6 IP-SAN identity matching', () => {
+  let opened;
+  class CapturingWebSocket {
+    constructor(url, protocols, options) {
+      opened = { url, protocols, options };
+    }
+
+    send() {}
+    close() {}
+  }
+
+  const matchingIpv6 = '2001:db8:1:206::1';
+  const certificate = { raw: IPV6_IP_SAN_CERT_DER };
+  const ca = Buffer.from('controller-ca');
+  assert.equal(new crypto.X509Certificate(certificate.raw).checkIP(matchingIpv6), matchingIpv6);
+
+  createWebSocketConnector(`wss://[${matchingIpv6}]:47651/v1/agent-session`, {
+    WebSocketImpl: CapturingWebSocket,
+    ca,
+  });
+
+  assert.equal(opened.options.ca, ca, 'the configured CA must be forwarded unchanged');
+  assert.notEqual(opened.options.rejectUnauthorized, false, 'the IPv6 workaround must not disable TLS verification');
+  assert.equal(typeof opened.options.checkServerIdentity, 'function');
+
+  const checkServerIdentity = opened.options.checkServerIdentity;
+  assert.equal(checkServerIdentity(matchingIpv6, certificate), undefined, 'the raw certificate IPv6 IP SAN must match');
+  const mismatch = checkServerIdentity('2001:db8:1:206::2', certificate);
+  assert.ok(mismatch instanceof Error, 'a different IPv6 literal must produce an identity error');
+  assert.match(mismatch.message, /IP|altname/i);
+
+  for (const [host, cert] of [
+    ['controller.example', { subjectaltname: 'DNS:controller.example' }],
+    ['127.0.0.1', { subjectaltname: 'IP Address:127.0.0.1' }],
+  ]) {
+    const expected = tls.checkServerIdentity(host, cert);
+    const actual = checkServerIdentity(host, cert);
+    assert.equal(actual?.code, expected?.code, `${host} must retain Node identity verification`);
+    assert.equal(actual?.message, expected?.message, `${host} must retain Node identity verification`);
   }
 });
 
