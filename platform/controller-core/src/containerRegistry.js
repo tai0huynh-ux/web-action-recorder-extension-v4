@@ -146,6 +146,7 @@ function sanitizeRuntime(runtime = {}) {
     privileged: false,
     ...network,
     ipv4Network: optionalString(runtime.ipv4Network),
+    ipv4MacAddress: normalizeOptionalMacAddress(runtime.ipv4MacAddress),
     ipv6Prefix: normalizeOptionalIpv6Prefix(runtime.ipv6Prefix),
     ipv6Address: normalizeOptionalIpv6Address(runtime.ipv6Address),
     ipv6Network: optionalString(runtime.ipv6Network),
@@ -176,7 +177,10 @@ function normalizeOptionalIpv6Address(value) {
 function normalizeOptionalMacAddress(value) {
   if (!value) return null;
   const text = String(value).toLowerCase();
-  if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(text)) {
+  if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(text)
+    || (Number.parseInt(text.slice(0, 2), 16) & 1) === 1
+    || text === '00:00:00:00:00:00'
+    || text === 'ff:ff:ff:ff:ff:ff') {
     throw domainError(ERROR_CODES.INVALID_TARGET, 'Managed container MAC address is invalid', 400);
   }
   return text;

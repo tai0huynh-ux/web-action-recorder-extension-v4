@@ -7,6 +7,8 @@ import { ControllerApplicationService, DISPATCH_DEADLINE_SECONDS } from '../src/
 import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 import { normalizeIpv6Eui64Suffix } from '../../controller-core/src/networkConfig.js';
 
+const IMAGE_PIN = `sha256:${'a'.repeat(64)}`;
+
 test('application dispatch persists a command and delivers it through WSS without leaking main-owned fields', async () => {
   const core = await connectedCore();
   await core.workflows.putRevision(revision({ requiredInputs: [{ name: 'url', index: 0, required: true, sensitive: false, type: 'string' }] }));
@@ -100,7 +102,7 @@ test('application exposes only a probed configured Docker host and owns containe
 
   const added = await app.addContainer({ name: 'Agent One', host: 'configured-docker-host', runtime: { ipv4Enabled: true } });
   assert.equal(added.data.container.host, 'configured-docker-host');
-  assert.equal(added.data.container.image, 'war-browser-agent:reviewed');
+  assert.equal(added.data.container.image, IMAGE_PIN);
   assert.match(added.data.container.runtime.dockerName, /^war-Agent-One-[0-9a-f]{8}$/);
   await assert.rejects(
     () => app.addContainer({ name: 'Wrong Host', host: 'renderer-selected-host' }),
@@ -121,11 +123,25 @@ test('application re-probes the selected Docker host before provisioning a conta
   assert.deepEqual(core.containers.listContainers().containers, []);
 });
 
+test('application attests the host image before pairing provisioning and aborts with no helper work on failure', async () => {
+  const core = await connectedCore();
+  const adapter = fakeContainerAdapter();
+  const calls = [];
+  adapter.attestImage = async () => { calls.push('attest'); throw new Error('immutable image attestation failed'); };
+  const provisionManagedAgent = core.pairing.provisionManagedAgent.bind(core.pairing);
+  core.pairing.provisionManagedAgent = async (...args) => { calls.push('provision'); return provisionManagedAgent(...args); };
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, config: managedRuntimeConfig(), now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+
+  await assert.rejects(() => app.addContainer({ name: 'Untrusted image', host: 'configured-docker-host' }), /immutable image attestation failed/);
+  assert.deepEqual(calls, ['attest']);
+  assert.deepEqual(adapter.calls.filter((call) => call.action === 'create'), []);
+});
+
 test('application validates the managed host image before create, duplicate, start, and restart', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
   const ensured = [];
-  const host = { id: 'ssh-host-1', image: 'war-browser-agent:phase1' };
+  const host = { id: 'ssh-host-1', image: IMAGE_PIN, imagePin: IMAGE_PIN };
   const containerHostManager = {
     getHost: (hostId) => hostId === host.id ? host : null,
     firstHostId: () => host.id,
@@ -141,6 +157,42 @@ test('application validates the managed host image before create, duplicate, sta
 
   assert.deepEqual(ensured, [host.id, host.id, host.id, host.id]);
   assert.deepEqual(adapter.calls.map((item) => item.action), ['probe', 'create', 'create', 'start', 'restart']);
+});
+
+test('application pins legacy persisted container images before refresh and start adapter calls', async () => {
+  const core = await connectedCore();
+  const imagePin = `sha256:${'a'.repeat(64)}`;
+  const config = managedRuntimeConfig();
+  config.containers.imagePin = imagePin;
+  const calls = [];
+  const adapter = {
+    async status(container) {
+      calls.push({ action: 'status', id: container.id, image: container.image });
+      return { status: 'stopped', runtime: container.runtime };
+    },
+    async start(container) {
+      calls.push({ action: 'start', id: container.id, image: container.image });
+      return { status: 'running', runtime: container.runtime };
+    },
+  };
+  const legacy = await core.containers.createContainer({
+    name: 'Legacy tagged agent',
+    host: 'configured-docker-host',
+    image: 'war-browser-agent:phase1',
+    deviceId: 'dev-a',
+    runtime: { dockerName: 'legacy-tagged-agent' },
+  });
+  await core.containers.updateStatus(legacy.id, 'stopped', { desiredState: 'stopped' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, config });
+
+  await app.refreshContainer({ containerId: legacy.id });
+  await app.startContainer({ containerId: legacy.id });
+
+  assert.equal(core.containers.getContainer(legacy.id).image, 'war-browser-agent:phase1');
+  assert.deepEqual(calls, [
+    { action: 'status', id: legacy.id, image: imagePin },
+    { action: 'start', id: legacy.id, image: imagePin },
+  ]);
 });
 
 test('startup reconciliation honors each container persisted desired state', async () => {
@@ -166,7 +218,7 @@ test('startup reconciliation repairs managed definition drift before restoring a
   const adapter = {
     async repair(container) {
       calls.push(['repair', container.id]);
-      assert.equal(container.image, 'war-browser-agent:stale');
+      assert.equal(container.image, IMAGE_PIN);
       return { status: 'stopped', runtime: { dockerName: container.runtime.dockerName } };
     },
     async status(container) {
@@ -178,7 +230,7 @@ test('startup reconciliation repairs managed definition drift before restoring a
       return { status: 'running', runtime: { dockerName: container.runtime.dockerName } };
     },
   };
-  const created = await core.containers.createContainer({ name: 'Definition drift', image: 'war-browser-agent:stale', deviceId: 'dev-a', runtime: { dockerName: 'definition-drift' } });
+  const created = await core.containers.createContainer({ name: 'Definition drift', image: IMAGE_PIN, deviceId: 'dev-a', runtime: { dockerName: 'definition-drift' } });
   await core.containers.updateStatus(created.id, 'running', { desiredState: 'running' });
   const app = new ControllerApplicationService({ core, containerAdapter: adapter });
 
@@ -323,6 +375,7 @@ test('repairing a managed host reconciles a persisted desired-running container 
     async repairHost(id) { calls.push(['repairHost', id]); return { id, connected: true }; },
     async ensureReady(id) { calls.push(['ensureReady', id]); return { id, connected: true }; },
     getAdapter: (id) => id === hostId ? adapter : null,
+    getHost: (id) => id === hostId ? { id, image: IMAGE_PIN, imagePin: IMAGE_PIN } : null,
     configuredHostIds: () => [hostId],
   };
   const created = await core.containers.createContainer({ name: 'Recovered running', host: hostId, deviceId: 'dev-a', runtime: { dockerName: 'recovered-running' } });
@@ -403,7 +456,7 @@ test('scan imports only validated managed containers and reuses their credential
           dockerName: 'war-imported-1',
           deviceId: 'managed-imported-1',
           credential: 'c'.repeat(43),
-          image: 'war-browser-agent:reviewed',
+          image: IMAGE_PIN,
           runtime: { dockerName: 'war-imported-1', ipv4Enabled: true },
           status: 'running',
         }],
@@ -430,7 +483,7 @@ test('application manages container lifecycle through a bounded adapter', async 
   const adapter = fakeContainerAdapter();
   const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
 
-  const added = await app.addContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'agent-one' } });
+  const added = await app.addContainer({ name: 'Agent One', image: IMAGE_PIN, runtime: { dockerName: 'agent-one' } });
   const containerId = added.data.container.id;
   await app.startContainer({ containerId });
   await app.refreshContainer({ containerId });
@@ -470,7 +523,7 @@ test('trashing an already-revoked failed managed container remains recoverable',
     throw new Error('create failed');
   };
   const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
-  const added = await app.addContainer({ name: 'Failed Agent', image: 'war-browser-agent:test', runtime: { dockerName: 'failed-agent' } });
+  const added = await app.addContainer({ name: 'Failed Agent', image: IMAGE_PIN, runtime: { dockerName: 'failed-agent' } });
 
   const deleted = await app.deleteContainer({ containerId: added.data.container.id });
 
@@ -488,7 +541,7 @@ test('managed container permanent deletion failure keeps the item in trash', asy
     throw new Error('runtime cleanup failed');
   };
   const app = new ControllerApplicationService({ core, containerAdapter: adapter, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
-  const added = await app.addContainer({ name: 'Agent One', image: 'war-browser-agent:test', runtime: { dockerName: 'agent-one' } });
+  const added = await app.addContainer({ name: 'Agent One', image: IMAGE_PIN, runtime: { dockerName: 'agent-one' } });
   const managedDeviceId = added.data.container.deviceId;
 
   await app.deleteContainer({ containerId: added.data.container.id });
@@ -504,7 +557,7 @@ test('managed container permanent deletion failure keeps the item in trash', asy
 test('failed container without a proven runtime can be purged locally from trash', async () => {
   const core = await connectedCore();
   const app = new ControllerApplicationService({ core, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
-  const added = await app.addContainer({ name: 'Never Provisioned', image: 'war-browser-agent:test', runtime: { dockerName: 'never-provisioned' } });
+  const added = await app.addContainer({ name: 'Never Provisioned', image: IMAGE_PIN, runtime: { dockerName: 'never-provisioned' } });
 
   assert.equal(added.data.container.status, 'failed');
   const trashed = await app.deleteContainer({ containerId: added.data.container.id });
@@ -844,6 +897,90 @@ test('application fans synchronized remote input to selected online Agents and c
   assert.equal(capture.data.frame.width, 800);
 });
 
+test('application binds synchronized browser-space input to each device target without changing shared timing', async () => {
+  const core = await connectedCore();
+  await pairSecondDevice(core);
+  const transport = fakeTransport();
+  const app = application(core, transport);
+
+  const control = await app.remoteControl({
+    deviceIds: ['dev-a', 'dev-b'],
+    command: 'input.shortcut',
+    payload: { keys: 'CTRL+L', space: 'browser' },
+    targetIds: { 'dev-a': 'tab-a', 'dev-b': 'tab-b' },
+    synchronized: true,
+  });
+
+  assert.equal(control.data.targets.every((item) => item.ok), true);
+  assert.deepEqual(transport.remoteRequests.map((request) => request.payload.payload.targetId), ['tab-a', 'tab-b']);
+  assert.equal(transport.remoteRequests[0].payload.syncAt, transport.remoteRequests[1].payload.syncAt);
+  await assert.rejects(
+    () => app.remoteControl({ deviceIds: ['dev-a'], command: 'input.shortcut', payload: { keys: 'CTRL+L', space: 'browser' } }),
+    code('REMOTE_BROWSER_TARGET_REQUIRED'),
+  );
+});
+
+test('remote control allowlist forwards Chrome-like tab and internal-page commands but blocks clipboard export', async () => {
+  const core = await connectedCore();
+  const transport = fakeTransport();
+  const app = application(core, transport);
+  const commands = [
+    ['tab.new', { url: 'https://example.test/new' }],
+    ['tab.back', { targetId: 'tab-1' }],
+    ['tab.forward', { targetId: 'tab-1' }],
+    ['tab.reload', { targetId: 'tab-1' }],
+    ['tab.home', { targetId: 'tab-1' }],
+    ['browser.openInternalPage', { page: 'settings' }],
+    ['browser.openInternalPage', { page: 'extensions' }],
+  ];
+
+  for (const [command, payload] of commands) {
+    const result = await app.remoteControl({ deviceIds: ['dev-a'], command, payload, synchronized: false });
+    assert.equal(result.data.targets[0].ok, true);
+  }
+
+  assert.deepEqual(transport.remoteRequests.map((request) => [request.payload.command, request.payload.payload]), commands);
+  await assert.rejects(
+    () => app.remoteControl({ deviceIds: ['dev-a'], command: 'clipboard.copySelection', payload: {}, synchronized: false }),
+    code('REMOTE_COMMAND_NOT_ALLOWED'),
+  );
+});
+
+test('dedicated remote clipboard methods keep text out of generic control and enforce the 64 KiB boundary', async () => {
+  const core = await connectedCore();
+  const transport = fakeTransport();
+  const secret = 'synthetic clipboard secret';
+  transport.requestRemoteControl = async (deviceId, generation, payload) => {
+    transport.remoteRequests.push({ deviceId, generation, payload: structuredClone(payload) });
+    if (payload.command === 'clipboard.copySelection') {
+      return {
+        payload: {
+          ok: true,
+          result: {
+            type: 'clipboard.copySelection',
+            result: { copied: true, bytes: Buffer.byteLength(secret), text: secret },
+          },
+        },
+      };
+    }
+    return { payload: { ok: true, result: { type: payload.command, result: { pasted: true } } } };
+  };
+  const app = application(core, transport);
+
+  const copied = await app.remoteClipboardCopy({ deviceId: 'dev-a' });
+  assert.equal(copied.data.text, secret);
+  assert.equal(copied.data.bytes, Buffer.byteLength(secret));
+
+  const pasted = await app.remoteClipboardPaste({ deviceIds: ['dev-a'], synchronized: false, text: secret });
+  assert.equal(pasted.data.pasted, true);
+  assert.equal(pasted.data.bytes, Buffer.byteLength(secret));
+  assert.deepEqual(transport.remoteRequests.map((request) => request.payload.command), ['clipboard.copySelection', 'clipboard.pasteText']);
+  await assert.rejects(
+    () => app.remoteClipboardPaste({ deviceIds: ['dev-a'], text: 'x'.repeat(64 * 1024 + 1) }),
+    code('REMOTE_CLIPBOARD_TOO_LARGE'),
+  );
+});
+
 test('remote control does not forward Agent-provided error text or codes', async () => {
   const core = await connectedCore();
   const secret = 'synthetic-remote-agent-secret';
@@ -874,7 +1011,7 @@ test('remote control does not forward Agent-provided error text or codes', async
 test('remote capture starts one automatic managed Agent upgrade and succeeds after reconnect', async () => {
   const core = await connectedCore();
   await core.devices.registerDevice('dev-a', { capabilities: { ...core.devices.getDevice('dev-a').capabilities, remoteVideo: false } });
-  await core.containers.createContainer({ name: 'Chromium 1', host: 'ssh-host-1', image: 'war-browser-agent:phase1', deviceId: 'dev-a', runtime: { dockerName: 'war-chromium-1' } });
+  await core.containers.createContainer({ name: 'Chromium 1', host: 'ssh-host-1', image: IMAGE_PIN, deviceId: 'dev-a', runtime: { dockerName: 'war-chromium-1' } });
   let ensureCalls = 0;
   let restartCalls = 0;
   const adapter = {
@@ -886,6 +1023,7 @@ test('remote capture starts one automatic managed Agent upgrade and succeeds aft
   const containerHostManager = {
     ensureReady: async () => { ensureCalls += 1; return { connected: true }; },
     getAdapter: () => adapter,
+    getHost: () => ({ id: 'ssh-host-1', image: IMAGE_PIN, imagePin: IMAGE_PIN }),
   };
   const transport = fakeTransport();
   const app = new ControllerApplicationService({ core, containerHostManager, wssTransport: transport, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
@@ -1004,7 +1142,8 @@ function managedRuntimeConfig() {
       hostId: 'configured-docker-host',
       hostDisplayName: 'Reviewed Linux host',
       hostLabel: 'ssh-docker',
-      image: 'war-browser-agent:reviewed',
+      image: IMAGE_PIN,
+      imagePin: IMAGE_PIN,
     },
   };
 }

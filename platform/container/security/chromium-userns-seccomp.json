@@ -738,17 +738,6 @@
     },
     {
       "names": [
-        "chroot"
-      ],
-      "action": "SCMP_ACT_ALLOW",
-      "includes": {
-        "caps": [
-          "CAP_SYS_CHROOT"
-        ]
-      }
-    },
-    {
-      "names": [
         "delete_module",
         "init_module",
         "finit_module"
@@ -870,6 +859,12 @@
           "CAP_PERFMON"
         ]
       }
+    },
+    {
+      "names": [
+        "chroot"
+      ],
+      "action": "SCMP_ACT_ALLOW"
     },
     {
       "names": [

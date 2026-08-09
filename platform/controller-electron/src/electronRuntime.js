@@ -23,6 +23,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     protocol: dependencies.protocol,
     session: dependencies.session,
     dialog: dependencies.dialog,
+    clipboard: dependencies.clipboard,
     fs: dependencies.fs || fs,
     path: dependencies.path || path,
     https: dependencies.https || https,
@@ -143,6 +144,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
         mainWindow: () => state.mainWindow,
         application: state.application,
         dialog: state.dialog,
+        clipboard: state.clipboard,
         fs: state.fs,
         path: state.path,
         allowedWindows: () => state.windows,
@@ -202,7 +204,7 @@ async function closeWindow(window) {
 }
 
 function requireDependencies(state) {
-  for (const key of ['app', 'BrowserWindow', 'ipcMain', 'protocol', 'session', 'dialog']) {
+  for (const key of ['app', 'BrowserWindow', 'ipcMain', 'protocol', 'session', 'dialog', 'clipboard']) {
     if (!state[key]) throw new Error(`Electron runtime missing dependency: ${key}`);
   }
 }
@@ -278,7 +280,9 @@ async function maybeStartWss(state) {
   state.wssRuntime = new state.ControllerWssRuntimeServer({ server: state.httpsServer, adapter });
   const address = state.httpsServer.address?.();
   state.config = withBoundWssPort(state.config, typeof address === 'object' ? address?.port : null);
-  if (state.config.wss.source === 'environment') await state.runtimeProfileStore?.save(runtimeProfileFromConfig(state.config));
+  if (state.config.wss.source === 'environment' || Object.hasOwn(state.env || {}, 'WAR_CONTAINER_IMAGE')) {
+    await state.runtimeProfileStore?.save(runtimeProfileFromConfig(state.config));
+  }
 }
 
 function supportsRuntimeProfileStore(fsImpl) {

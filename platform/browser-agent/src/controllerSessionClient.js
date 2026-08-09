@@ -1,12 +1,20 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import WebSocket from 'ws';
-import { PROTOCOL_VERSION, MESSAGE_TYPES } from '../../protocol/src/protocolV2.js';
+import { PROTOCOL_VERSION, MESSAGE_TYPES, validateEnvelope } from '../../protocol/src/protocolV2.js';
 
 const DEFAULT_MIN_RECONNECT_MS = 500;
 const DEFAULT_MAX_RECONNECT_MS = 30000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 10000;
 const DEFAULT_MAX_PENDING = 128;
 const DEFAULT_MAX_QUEUE = 256;
+const CONTROLLER_REQUEST_TYPES = new Set([
+  'execution.dispatch',
+  'execution.cancel',
+  'remote.control.request',
+  'origin.inventory.request',
+  'origin.workflow.get'
+]);
 
 export class ControllerSessionClient extends EventEmitter {
   constructor({
@@ -21,6 +29,7 @@ export class ControllerSessionClient extends EventEmitter {
     now = () => new Date().toISOString(),
     minReconnectMs = DEFAULT_MIN_RECONNECT_MS,
     maxReconnectMs = DEFAULT_MAX_RECONNECT_MS,
+    connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
     maxPending = DEFAULT_MAX_PENDING,
     maxQueue = DEFAULT_MAX_QUEUE,
     log = () => {}
@@ -39,6 +48,7 @@ export class ControllerSessionClient extends EventEmitter {
     this.now = now;
     this.minReconnectMs = minReconnectMs;
     this.maxReconnectMs = maxReconnectMs;
+    this.connectTimeoutMs = connectTimeoutMs;
     this.maxPending = maxPending;
     this.maxQueue = maxQueue;
     this.log = log;
@@ -46,12 +56,14 @@ export class ControllerSessionClient extends EventEmitter {
     this.status = 'offline';
     this.reconnectAttempts = 0;
     this.reconnectTimer = null;
+    this.connectTimer = null;
     this.heartbeatTimer = null;
     this.pending = new Map();
     this.queue = [];
     this.stopped = true;
     this.closedSockets = new WeakSet();
     this.session = null;
+    this.helloMessageId = null;
   }
 
   start() {
@@ -61,6 +73,7 @@ export class ControllerSessionClient extends EventEmitter {
 
   connect() {
     this.clearReconnect();
+    this.clearConnectTimeout();
     this.status = 'reconnecting';
     this.socket = this.connector(this.url, {
       ...this.connectorOptions,
@@ -69,30 +82,47 @@ export class ControllerSessionClient extends EventEmitter {
     });
     const socket = this.socket;
     socket.on?.('open', () => this.onOpen(socket));
-    socket.on?.('message', (message) => this.onMessage(message));
+    socket.on?.('message', (message) => this.onMessage(message, socket));
     socket.on?.('close', () => this.onClose(socket));
     this.socket.on?.('error', (error) => {
       this.log('warn', 'controllerSession', 'socket_error', { message: sanitizeErrorMessage(error?.message) });
       this.onClose(socket);
+      retireSocket(socket);
     });
+    this.connectTimer = this.scheduler.setTimeout(() => {
+      if (socket !== this.socket || this.stopped || this.status !== 'reconnecting') return;
+      this.log('warn', 'controllerSession', 'connect_timeout', { timeoutMs: this.connectTimeoutMs });
+      this.onClose(socket);
+      retireSocket(socket);
+    }, this.connectTimeoutMs);
     return this.socket;
   }
 
   onOpen(socket = this.socket) {
     if (socket !== this.socket || this.stopped) return;
+    this.clearConnectTimeout();
     this.status = 'online';
     this.reconnectAttempts = 0;
-    this.send(this.helloEnvelope());
+    const hello = this.helloEnvelope();
+    this.helloMessageId = hello.messageId;
+    this.send(hello);
     this.flushQueue();
     this.scheduleHeartbeat();
   }
 
-  onMessage(message) {
+  onMessage(message, socket = this.socket) {
+    if (socket !== this.socket || this.closedSockets.has(socket) || this.stopped) return;
     let envelope;
     try {
       envelope = typeof message === 'string' ? JSON.parse(message) : message;
     } catch {
-      this.emit('protocolError', { code: 'malformed_envelope' });
+      this.protocolError('malformed_envelope');
+      return;
+    }
+    const validation = validateEnvelope(envelope);
+    if (!validation.ok || envelope.protocolVersion !== PROTOCOL_VERSION) {
+      this.rejectPendingResponse(envelope?.correlationId);
+      this.protocolError('invalid_envelope');
       return;
     }
     const key = envelope.correlationId;
@@ -100,23 +130,71 @@ export class ControllerSessionClient extends EventEmitter {
       const pending = this.pending.get(key);
       this.scheduler.clearTimeout(pending.timer);
       this.pending.delete(key);
-      if (envelope.payload?.session) this.setSession(envelope.payload.session);
+      if (envelope.payload?.session && !this.setSession(envelope.payload.session)) {
+        pending.reject(new Error('Controller response session rejected'));
+        this.protocolError('session_mismatch');
+        return;
+      }
       pending.resolve(envelope);
       return;
     }
-    if (envelope.payload?.session) this.setSession(envelope.payload.session);
+    if (key === this.helloMessageId && envelope.type === 'native.bridge.response') {
+      if (!this.setSession(envelope.payload?.session)) {
+        this.protocolError('session_mismatch');
+        return;
+      }
+      this.emitReplay(envelope.payload.replay);
+      return;
+    }
+    if (!CONTROLLER_REQUEST_TYPES.has(envelope.type)) {
+      this.protocolError('unsupported_message');
+      return;
+    }
+    if (!this.isCurrentSessionEnvelope(envelope)) {
+      this.protocolError('session_mismatch');
+      return;
+    }
+    if (envelope.deadline && Date.parse(envelope.deadline) <= Date.parse(this.now())) {
+      this.protocolError('deadline_expired');
+      return;
+    }
     if (envelope.type === 'execution.dispatch') this.emit('dispatch', envelope.payload);
     if (envelope.type === 'execution.cancel') this.emit('cancel', envelope.payload);
     if (envelope.type === 'remote.control.request') this.emit('remoteControl', envelope);
     if (envelope.type === 'origin.inventory.request') this.emit('originInventoryRequest', envelope);
     if (envelope.type === 'origin.workflow.get') this.emit('originWorkflowGet', envelope);
-    if (Array.isArray(envelope.payload?.replay)) envelope.payload.replay.forEach((item) => this.emit('dispatch', item));
   }
 
   setSession(session) {
+    if (!isValidSession(session, this.identity?.deviceId)) return false;
     const changed = this.session?.sessionId !== session?.sessionId || this.session?.generation !== session?.generation;
     this.session = session;
     if (changed) this.emit('authenticated', session);
+    return true;
+  }
+
+  isCurrentSessionEnvelope(envelope) {
+    return Boolean(this.session)
+      && envelope.deviceId === this.session.deviceId
+      && envelope.deviceId === this.identity.deviceId
+      && envelope.sessionId === this.session.sessionId;
+  }
+
+  emitReplay(replay) {
+    if (!Array.isArray(replay)) return;
+    for (const item of replay) this.emit('dispatch', item);
+  }
+
+  protocolError(code) {
+    this.emit('protocolError', { code: String(code).slice(0, 64) });
+  }
+
+  rejectPendingResponse(correlationId) {
+    if (!correlationId || !this.pending.has(correlationId)) return;
+    const pending = this.pending.get(correlationId);
+    this.scheduler.clearTimeout(pending.timer);
+    this.pending.delete(correlationId);
+    pending.reject(new Error('Controller response rejected'));
   }
 
   sendOriginResponse(request, payload) {
@@ -132,7 +210,7 @@ export class ControllerSessionClient extends EventEmitter {
     });
   }
 
-  sendRemoteControlResponse(request, payload) {
+  sendRemoteControlResponse(request, payload, { transient = false } = {}) {
     return this.send({
       protocolVersion: PROTOCOL_VERSION,
       messageId: id('remote-response'),
@@ -142,13 +220,15 @@ export class ControllerSessionClient extends EventEmitter {
       deviceId: this.identity.deviceId,
       sessionId: this.session?.sessionId,
       payload
-    });
+    }, { transient });
   }
 
   onClose(socket = this.socket) {
     if (socket !== this.socket || this.closedSockets.has(socket)) return;
     this.closedSockets.add(socket);
+    this.clearConnectTimeout();
     this.clearHeartbeat();
+    this.socket = null;
     for (const pending of this.pending.values()) {
       this.scheduler.clearTimeout(pending.timer);
       pending.reject(new Error('Controller session disconnected'));
@@ -164,13 +244,15 @@ export class ControllerSessionClient extends EventEmitter {
     this.reconnectTimer = this.scheduler.setTimeout(() => this.connect(), delay);
   }
 
-  send(envelope, { expectResponse = false, timeoutMs = 10000 } = {}) {
-    const encoded = JSON.stringify(envelope);
+  send(envelope, { expectResponse = false, timeoutMs = 10000, transient = false } = {}) {
     if (!this.socket || this.status !== 'online') {
+      if (transient) throw new Error('Controller session is offline for transient response');
+      const encoded = JSON.stringify(envelope);
       if (this.queue.length >= this.maxQueue) throw new Error('Controller session outbound queue limit exceeded');
       this.queue.push(encoded);
       return expectResponse ? Promise.reject(new Error('Controller session is offline')) : undefined;
     }
+    const encoded = JSON.stringify(envelope);
     if (expectResponse) {
       if (this.pending.size >= this.maxPending) return Promise.reject(new Error('Controller session pending request limit exceeded'));
       const promise = new Promise((resolve, reject) => {
@@ -256,6 +338,7 @@ export class ControllerSessionClient extends EventEmitter {
   gracefulShutdown() {
     this.stopped = true;
     this.clearReconnect();
+    this.clearConnectTimeout();
     this.clearHeartbeat();
     for (const pending of this.pending.values()) {
       this.scheduler.clearTimeout(pending.timer);
@@ -263,8 +346,9 @@ export class ControllerSessionClient extends EventEmitter {
     }
     this.pending.clear();
     this.queue = [];
-    this.socket?.close?.();
+    const socket = this.socket;
     this.socket = null;
+    socket?.close?.();
     this.status = 'offline';
   }
 
@@ -287,6 +371,11 @@ export class ControllerSessionClient extends EventEmitter {
   clearReconnect() {
     if (this.reconnectTimer) this.scheduler.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  clearConnectTimeout() {
+    if (this.connectTimer) this.scheduler.clearTimeout(this.connectTimer);
+    this.connectTimer = null;
   }
 
   clearHeartbeat() {
@@ -336,7 +425,7 @@ export function buildDeviceDescriptor(identity, version, now) {
       nativeX11Input: true,
       screenshot: true,
       remoteVideo: true,
-      clipboardText: false,
+      clipboardText: true,
       synchronizedInput: true
     },
     labels: identity.labels || [],
@@ -357,6 +446,7 @@ export function createWebSocketConnector(url, options = {}) {
   return {
     send: (message) => socket.send(message),
     close: () => socket.close(),
+    terminate: () => retireSocket(socket),
     on(event, handler) {
       if (typeof socket.on === 'function') {
         if (event === 'message') socket.on('message', (message) => handler(normalizeMessage(message)));
@@ -381,6 +471,21 @@ function normalizeMessage(message) {
 
 function sanitizeErrorMessage(message = '') {
   return String(message).replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]');
+}
+
+function retireSocket(socket) {
+  if (typeof socket?.terminate === 'function') socket.terminate();
+  else socket?.close?.();
+}
+
+function isValidSession(session, deviceId) {
+  return Boolean(session)
+    && typeof session.sessionId === 'string'
+    && session.sessionId.length > 0
+    && session.sessionId.length <= 4096
+    && session.deviceId === deviceId
+    && Number.isInteger(session.generation)
+    && session.generation > 0;
 }
 
 const globalScheduler = {

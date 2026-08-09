@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { chromium } from 'playwright-core';
 import { AgentError, redactUrl } from './errors.js';
+import { BrowserEngine } from './browserEngine.js';
 
 const SANDBOX_YES_NO_ROWS = Object.freeze({
   pidNs: 'PID namespaces',
@@ -50,17 +50,16 @@ export class BrowserController {
     this.config = config;
     this.log = log;
     this.context = null;
+    this.engine = new BrowserEngine(config);
+    this.browserVersion = undefined;
     this.createdAtByPage = new WeakMap();
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId = new Map();
     this.activeTargetId = undefined;
-    this.nativeBridgePollTriggeredFor = new Set();
-    this.nativeBridgeRestartedFor = new Set();
-    this.pendingNativeBridgeRestartFor = null;
     this.extensionStatus = {
       configuredPath: config.extensionDir,
       loaded: false,
-      extensionId: undefined,
+      extensionId: config.extensionId,
       version: readManifestVersion(config.extensionDir),
       lastError: undefined
     };
@@ -76,18 +75,16 @@ export class BrowserController {
       });
     }
     const args = [
-      `--disable-extensions-except=${this.config.extensionDir}`,
       `--load-extension=${this.config.extensionDir}`,
       `--window-size=${this.config.width},${this.config.height}`
     ];
     if (this.config.noSandbox) args.push('--no-sandbox');
     const ignoreDefaultArgs = ['--disable-dev-shm-usage'];
     if (!this.config.noSandbox) ignoreDefaultArgs.push('--no-sandbox');
-    this.context = await chromium.launchPersistentContext(this.config.paths.profileDir, {
-      executablePath: this.config.chromiumExecutable,
+    this.context = await this.engine.launchPersistentContext(this.config.paths.profileDir, {
       headless: this.config.headless,
       chromiumSandbox: !this.config.noSandbox,
-      ignoreDefaultArgs,
+      ignoreDefaultArgs: [...ignoreDefaultArgs, '--disable-extensions', '--disable-component-extensions-with-background-pages'],
       viewport: { width: this.config.width, height: this.config.height },
       locale: this.config.locale,
       timezoneId: this.config.timezone,
@@ -95,16 +92,10 @@ export class BrowserController {
       env: browserEnvironment(process.env),
       args
     });
+    this.browserVersion = safelyReadBrowserVersion(this.context);
     for (const page of this.context.pages()) this.registerPage(page);
     this.context.on('page', (page) => this.registerPage(page, { activate: true }));
     await this.refreshExtensionStatus();
-    if (this.pendingNativeBridgeRestartFor && !this.nativeBridgeRestartedFor.has(this.pendingNativeBridgeRestartFor)) {
-      const extensionId = this.pendingNativeBridgeRestartFor;
-      this.pendingNativeBridgeRestartFor = null;
-      this.nativeBridgeRestartedFor.add(extensionId);
-      await this.stop();
-      return this.start();
-    }
     if (!this.context.pages().length) this.registerPage(await this.context.newPage());
     await Promise.all(this.context.pages().map((page) => this.ensureDefaultNewTab(page)));
     if (!this.activeTargetId) this.activeTargetId = this.firstOpenTargetId();
@@ -128,7 +119,8 @@ export class BrowserController {
     return {
       tabs: await this.listTabs(),
       extension: this.extensionStatus,
-      profileDir: this.config.paths.profileDir
+      profileDir: this.config.paths.profileDir,
+      engine: this.engine.state(this.browserVersion)
     };
   }
 
@@ -155,11 +147,11 @@ export class BrowserController {
   }
 
   async openTab(url) {
-    assertSafeHttpUrl(url);
+    const targetUrl = url === undefined ? DEFAULT_NEW_TAB_URL : assertSafeHttpUrl(url);
     this.assertRunning();
     const page = await this.context.newPage();
     this.registerPage(page);
-    await page.goto(url);
+    await page.goto(targetUrl);
     await page.bringToFront();
     this.activeTargetId = this.getTargetId(page);
     return this.describePage(page, true);
@@ -190,6 +182,45 @@ export class BrowserController {
     await page.bringToFront();
     this.activeTargetId = this.getTargetId(page);
     return this.describePage(page, true);
+  }
+
+  async backTab(targetId) {
+    const page = await this.findPage(targetId);
+    await page.goBack();
+    await page.bringToFront();
+    this.activeTargetId = this.getTargetId(page);
+    return this.describePage(page, true);
+  }
+
+  async forwardTab(targetId) {
+    const page = await this.findPage(targetId);
+    await page.goForward();
+    await page.bringToFront();
+    this.activeTargetId = this.getTargetId(page);
+    return this.describePage(page, true);
+  }
+
+  async reloadTab(targetId) {
+    const page = await this.findPage(targetId);
+    await page.reload();
+    await page.bringToFront();
+    this.activeTargetId = this.getTargetId(page);
+    return this.describePage(page, true);
+  }
+
+  async homeTab(targetId) {
+    const page = await this.findPage(targetId);
+    await page.goto(DEFAULT_NEW_TAB_URL);
+    await page.bringToFront();
+    this.activeTargetId = this.getTargetId(page);
+    return this.describePage(page, true);
+  }
+
+  async focusActiveTab() {
+    const page = await this.findPage(this.activeTargetId || this.firstOpenTargetId());
+    await page.bringToFront();
+    this.activeTargetId = this.getTargetId(page);
+    return { targetId: this.activeTargetId };
   }
 
   async captureRemoteFrame({ quality = 45, maxBytes = 500000 } = {}) {
@@ -242,13 +273,11 @@ export class BrowserController {
   }
 
   resolveInternalPage(pageName) {
-    const extensionId = this.extensionStatus.extensionId;
+    const extensionId = this.config.extensionId;
     const allowed = {
       settings: 'chrome://settings/',
       extensions: 'chrome://extensions/',
-      downloads: 'chrome://downloads/',
-      version: 'chrome://version/',
-      flags: 'chrome://flags/'
+      downloads: 'chrome://downloads/'
     };
     if (pageName === 'extensionSidePanel' || pageName === 'extensionPage') {
       if (!extensionId) throw new AgentError('extension_not_loaded', 'Extension ID is not available', 409);
@@ -275,32 +304,25 @@ export class BrowserController {
   }
 
   async refreshExtensionStatus() {
-    const previousExtensionId = this.extensionStatus.extensionId;
+    const extensionId = this.config.extensionId;
     const manifest = readManifest(this.config.extensionDir);
     this.extensionStatus = {
       configuredPath: this.config.extensionDir,
       loaded: false,
-      extensionId: previousExtensionId,
+      extensionId,
       version: manifest?.version,
       lastError: manifest ? undefined : 'manifest.json could not be read'
     };
     if (!manifest) return this.extensionStatus;
     if (!this.context) return this.extensionStatus;
     try {
-      const extensionUrls = [
-        ...this.context.serviceWorkers().map((worker) => worker.url()),
-        ...this.context.pages().map((page) => page.url())
-      ].filter((url) => url.startsWith('chrome-extension://'));
-      let extensionId = previousExtensionId || extensionUrls.map(extractExtensionId).find(Boolean);
-      let worker = this.context.serviceWorkers().find((candidate) => candidate.url().startsWith('chrome-extension://'));
+      let worker = this.context.serviceWorkers().find((candidate) => isBuiltInExtensionUrl(candidate.url(), extensionId));
       if (!worker) {
-        worker = await this.context.waitForEvent('serviceworker', { timeout: 3000 }).catch(() => undefined);
+        const candidate = await this.context.waitForEvent('serviceworker', { timeout: 3000 }).catch(() => undefined);
+        worker = candidate && isBuiltInExtensionUrl(candidate.url(), extensionId) ? candidate : undefined;
       }
-      if (!extensionId && worker?.url().startsWith('chrome-extension://')) {
-        extensionId = extractExtensionId(worker.url());
-      }
-      const extensionPageLoaded = extensionId ? await this.verifyExtensionPage(extensionId) : false;
-      if (extensionId && (worker?.url().startsWith('chrome-extension://') || extensionPageLoaded)) {
+      const extensionPageLoaded = await this.verifyExtensionPage(extensionId);
+      if (worker || extensionPageLoaded) {
         this.extensionStatus = {
           configuredPath: this.config.extensionDir,
           loaded: true,
@@ -308,8 +330,6 @@ export class BrowserController {
           version: manifest?.version,
           lastError: undefined
         };
-        if (this.ensureNativeMessagingManifest(extensionId)) this.pendingNativeBridgeRestartFor = extensionId;
-        else await this.triggerNativeBridgePolling(extensionId);
       } else {
         this.extensionStatus.lastError = 'No extension target or loadable extension page detected';
       }
@@ -317,77 +337,6 @@ export class BrowserController {
       this.extensionStatus.lastError = error.message;
     }
     return this.extensionStatus;
-  }
-
-  ensureNativeMessagingManifest(extensionId) {
-    const hostPath = process.env.WAR_NATIVE_HOST_PATH;
-    if (!hostPath) return false;
-    if (!path.isAbsolute(hostPath)) throw new AgentError('invalid_config', 'WAR_NATIVE_HOST_PATH must be absolute');
-    const hostDir = path.join(os.homedir(), '.config', 'chromium', 'NativeMessagingHosts');
-    fs.mkdirSync(hostDir, { recursive: true, mode: 0o700 });
-    const manifestPath = path.join(hostDir, 'com.web_action_recorder.native_bridge.json');
-    const manifest = {
-      name: 'com.web_action_recorder.native_bridge',
-      description: 'Web Action Recorder container native bridge',
-      path: hostPath,
-      type: 'stdio',
-      allowed_origins: [`chrome-extension://${extensionId}/`]
-    };
-    const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
-    if (fs.existsSync(manifestPath) && fs.readFileSync(manifestPath, 'utf8') === serialized) return false;
-    fs.writeFileSync(manifestPath, serialized, { mode: 0o600 });
-    return true;
-  }
-
-  async triggerNativeBridgePolling(extensionId) {
-    if (!process.env.WAR_NATIVE_HOST_PATH || this.nativeBridgePollTriggeredFor.has(extensionId)) return;
-    this.nativeBridgePollTriggeredFor.add(extensionId);
-    let page;
-    try {
-      page = await this.context.newPage();
-      this.registerPage(page);
-      await page.goto(`chrome-extension://${extensionId}/ui/sidepanel.html?standalone=1`, { waitUntil: 'domcontentloaded', timeout: 5000 });
-      await page.evaluate(async () => {
-        const data = await chrome.storage.local.get('war_settings');
-        const settings = data.war_settings || {};
-        await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: false } });
-        await chrome.storage.local.set({ war_settings: { ...settings, nativeBridgeEnabled: true } });
-      });
-      this.extensionStatus.nativeBridgeProbe = await page.evaluate((hostName) => new Promise((resolve) => {
-        let port;
-        const timer = setTimeout(() => {
-          try { port?.disconnect?.(); } catch {}
-          resolve({ ok: false, error: 'native_bridge_probe_timeout' });
-        }, 3000);
-        try {
-          port = chrome.runtime.connectNative(hostName);
-          port.onMessage.addListener((message) => {
-            clearTimeout(timer);
-            resolve({ ok: Boolean(message?.payload?.ok), type: message?.type, error: message?.payload?.error?.code });
-            try { port.disconnect(); } catch {}
-          });
-          port.onDisconnect.addListener(() => {
-            clearTimeout(timer);
-            resolve({ ok: false, error: chrome.runtime.lastError?.message || 'native_bridge_disconnected' });
-          });
-          port.postMessage({
-            protocolVersion: 'war-control.v2',
-            messageId: `probe-${Date.now()}`,
-            type: 'bridge.health',
-            sentAt: new Date().toISOString(),
-            payload: {}
-          });
-        } catch (error) {
-          clearTimeout(timer);
-          resolve({ ok: false, error: error.message });
-        }
-      }), 'com.web_action_recorder.native_bridge');
-    } catch (error) {
-      this.extensionStatus.nativeBridgeProbe = { ok: false, error: error.message };
-      this.log('warn', 'browserController', 'native_bridge_poll_trigger_failed', { message: error.message });
-    } finally {
-      await page?.close().catch(() => {});
-    }
   }
 
   async describePage(page, active = false) {
@@ -409,6 +358,34 @@ export class BrowserController {
     const page = this.pageByTargetId.get(targetId);
     if (!page || page.isClosed()) throw new AgentError('tab_not_found', 'Tab not found', 404);
     return page;
+  }
+
+  async assertSingleWindowForRawInput(targetId) {
+    await this.findPage(targetId);
+    const pages = this.context.pages().filter((page) => !page.isClosed() && this.pageByTargetId.has(this.getTargetId(page)));
+    const windowIds = new Set();
+    try {
+      for (const page of pages) {
+        const session = await this.context.newCDPSession(page);
+        try {
+          // A page-scoped session resolves its own DevTools target without trusting caller input.
+          const { windowId } = await session.send('Browser.getWindowForTarget');
+          if (!Number.isInteger(windowId) || windowId <= 0) {
+            throw new AgentError('raw_input_window_ambiguous', 'Browser window mapping is unavailable', 409);
+          }
+          windowIds.add(windowId);
+        } finally {
+          await session.detach?.().catch(() => {});
+        }
+      }
+    } catch (error) {
+      if (error instanceof AgentError) throw error;
+      throw new AgentError('raw_input_window_ambiguous', 'Browser window mapping is unavailable', 409);
+    }
+    if (windowIds.size !== 1) {
+      throw new AgentError('raw_input_window_ambiguous', 'Selected target resolves to multiple browser windows', 409);
+    }
+    return { targetId, windowId: [...windowIds][0] };
   }
 
   assertRunning() {
@@ -504,7 +481,7 @@ export function recoverStaleChromiumProfileLocks(profileDir, {
 }
 
 export function browserEnvironment(env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !/(credential|password|secret|token)/i.test(key)));
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/(credential|password|secret|token|license_key)/i.test(key)));
 }
 
 export function assertSafeHttpUrl(rawUrl) {
@@ -543,10 +520,18 @@ async function safeTitle(page) {
   }
 }
 
-function extractExtensionId(rawUrl) {
+function isBuiltInExtensionUrl(rawUrl, extensionId) {
   try {
     const parsed = new URL(rawUrl);
-    return parsed.protocol === 'chrome-extension:' ? parsed.host : undefined;
+    return parsed.protocol === 'chrome-extension:' && parsed.host === extensionId;
+  } catch {
+    return false;
+  }
+}
+
+function safelyReadBrowserVersion(context) {
+  try {
+    return context.browser?.().version?.();
   } catch {
     return undefined;
   }

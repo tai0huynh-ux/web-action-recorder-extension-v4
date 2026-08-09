@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "component": "xclip-sensitive",
+  "upstream": "xclip",
+  "sourceCommit": "2c3b811002b35d3be7f39cc1145dd06bdb32e31c",
+  "sourceArchive": "https://github.com/astrand/xclip/archive/2c3b811002b35d3be7f39cc1145dd06bdb32e31c.tar.gz",
+  "sourceArchiveSha256": "2bb193f5ac15872bc1b2579643bebf6303804b98e7b6bcc55ff2be9921843a4a",
+  "license": "GPL-2.0-or-later",
+  "primaryLicenseText": "https://raw.githubusercontent.com/astrand/xclip/2c3b811002b35d3be7f39cc1145dd06bdb32e31c/COPYING",
+  "sourceArchivePath": "/usr/share/doc/war-xclip-sensitive/xclip-2c3b811002b35d3be7f39cc1145dd06bdb32e31c.tar.gz"
+}

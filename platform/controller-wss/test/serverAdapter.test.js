@@ -152,6 +152,37 @@ test('controller WSS adapter emits execution invalidation after persisted result
   assert.deepEqual(events, [{ jobId: dispatch.jobId, deviceId: 'dev-a', eventType: 'job_succeeded' }]);
 });
 
+test('controller WSS adapter rejects an authenticated Agent event forged for another device session', async () => {
+  const core = await pairedCoreWithSecondDevice();
+  await core.workflows.putRevision(revision());
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions });
+  const stateA = {};
+  const stateB = {};
+  await adapter.handleMessage(JSON.stringify(agentHello()), stateA, 'cred-a', () => {});
+  await adapter.handleMessage(JSON.stringify(agentHelloFor(deviceB(), 'nonce-b')), stateB, 'cred-b', () => {});
+  const sessionA = core.sessions.getPublicSession('dev-a');
+  const sessionB = core.sessions.getPublicSession('dev-b');
+  const { dispatch } = await core.sessions.dispatch({
+    deviceId: 'dev-b',
+    generation: sessionB.generation,
+    workflowId: 'wf-a',
+    workflowRevision: 1,
+    workflowContentHash: revision().contentHash,
+    inputs: {},
+    deadline: '2026-07-16T00:05:00.000Z',
+    idempotencyKey: 'dispatch-b'
+  });
+  const before = core.events.listRecent({ jobId: dispatch.jobId, limit: 20 });
+  const statusBefore = core.jobs.getCommand(dispatch.jobId).status;
+  const forged = executionResult(sessionB, dispatch.jobId);
+  const response = await adapter.handleMessage(JSON.stringify(forged), stateA, 'cred-a', () => {});
+
+  assert.notEqual(sessionA.sessionId, sessionB.sessionId, 'fixture must use different device sessions');
+  assert.equal(response.payload.ok, false, 'dev-a socket must not submit an event as dev-b');
+  assert.deepEqual(core.events.listRecent({ jobId: dispatch.jobId, limit: 20 }), before, 'forged event must not mutate dev-b history');
+  assert.equal(core.jobs.getCommand(dispatch.jobId).status, statusBefore, 'forged event must not change dev-b job state');
+});
+
 test('controller WSS origin request resolves only authenticated matching Agent responses', async () => {
   const core = await pairedCore();
   const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
@@ -286,6 +317,175 @@ test('runtime WSS wrapper caps connections and closes clients that miss the hell
   }
 });
 
+test('runtime WSS isolates unauthenticated capacity by source and releases counters', async () => {
+  const server = http.createServer();
+  const accepted = [];
+  const runtime = new ControllerWssRuntimeServer({
+    server,
+    adapter: { accept(connection, context) { accepted.push({ connection, context }); } },
+    maxConnections: 16,
+    maxUnauthenticatedConnectionsPerSource: 2,
+    authenticationTimeoutMs: 80,
+  });
+  const sockets = [];
+  runtime.wss.handleUpgrade = (_request, _socket, _head, callback) => {
+    const ws = new UpgradeFakeWebSocket();
+    sockets.push(ws);
+    callback(ws);
+  };
+
+  const sourceA = '198.51.100.10';
+  const sourceB = '198.51.100.11';
+  try {
+    runtime.handleUpgrade(upgradeRequest(sourceA), {}, Buffer.alloc(0));
+    runtime.handleUpgrade(upgradeRequest(sourceA), {}, Buffer.alloc(0));
+    const excessFromA = upgradeRequest(sourceA);
+    runtime.handleUpgrade(excessFromA, {}, Buffer.alloc(0));
+    runtime.handleUpgrade(upgradeRequest(sourceB), {}, Buffer.alloc(0));
+
+    assert.equal(accepted.length, 3, 'one source must not consume another source\'s unauthenticated capacity');
+    assert.match(excessFromA.socket.response, /^HTTP\/1\.1 503 /);
+    assert.deepEqual([...runtime.unauthenticatedBySource.entries()].sort(), [[sourceA, 2], [sourceB, 1]]);
+
+    sockets[0].close();
+    assert.equal(runtime.unauthenticatedBySource.get(sourceA), 1, 'close must release only the closed source slot');
+    runtime.handleUpgrade(upgradeRequest(sourceA), {}, Buffer.alloc(0));
+    assert.equal(accepted.length, 4, 'the released source slot must become usable immediately');
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(runtime.connections.size, 0, 'hello timeout must close unauthenticated connections');
+    assert.equal(runtime.unauthenticatedBySource.size, 0, 'hello timeout must release every source counter');
+
+    runtime.handleUpgrade(upgradeRequest(sourceB), {}, Buffer.alloc(0));
+    assert.equal(accepted.length, 5, 'a timed-out source must become admissible again');
+    runtime.shutdown();
+    assert.equal(sockets.at(-1).closed, true, 'shutdown must close the remaining unauthenticated connection');
+    assert.equal(runtime.unauthenticatedBySource.size, 0, 'shutdown must clear source counters');
+  } finally {
+    runtime.shutdown();
+  }
+});
+
+test('runtime WSS timeout terminates a silent peer and releases connection state without close', async () => {
+  const server = http.createServer();
+  const accepted = [];
+  const sockets = [];
+  const runtime = new ControllerWssRuntimeServer({
+    server,
+    adapter: { accept(connection, context) { accepted.push({ connection, context }); } },
+    maxConnections: 1,
+    maxUnauthenticatedConnectionsPerSource: 1,
+    authenticationTimeoutMs: 20,
+  });
+  runtime.wss.handleUpgrade = (_request, _socket, _head, callback) => {
+    const ws = new SilentTerminateWebSocket();
+    sockets.push(ws);
+    callback(ws);
+  };
+
+  const source = '198.51.100.40';
+  try {
+    runtime.handleUpgrade(upgradeRequest(source), {}, Buffer.alloc(0));
+    assert.equal(accepted.length, 1);
+    assert.equal(runtime.connections.size, 1);
+    assert.equal(runtime.unauthenticatedBySource.get(source), 1);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(sockets[0].terminated, true, 'timeout must force-close a peer that never emits close');
+    assert.equal(sockets[0].closeCalls, 0, 'terminate-capable peers must not depend on the close fallback');
+    assert.equal(runtime.connections.size, 0, 'timeout must release global capacity without waiting for peer close');
+    assert.equal(runtime.unauthenticatedBySource.size, 0, 'timeout must release the source capacity without peer close');
+  } finally {
+    runtime.shutdown();
+  }
+});
+
+test('runtime WSS normalizes IPv4-mapped sources and ignores forwarded headers for pre-auth capacity', () => {
+  const server = http.createServer();
+  const accepted = [];
+  const runtime = createUpgradeRuntime({
+    server,
+    accepted,
+    maxUnauthenticatedConnectionsPerSource: 1,
+  });
+  const directIpv4 = '198.51.100.10';
+  try {
+    runtime.handleUpgrade(upgradeRequest(`::ffff:${directIpv4}`, {
+      headers: { 'x-forwarded-for': '203.0.113.20' },
+    }), {}, Buffer.alloc(0));
+    const sameDirectSource = upgradeRequest(directIpv4, {
+      headers: { 'x-forwarded-for': '203.0.113.21, 203.0.113.22' },
+    });
+    runtime.handleUpgrade(sameDirectSource, {}, Buffer.alloc(0));
+
+    assert.equal(accepted.length, 1);
+    assert.match(sameDirectSource.socket.response, /^HTTP\/1\.1 503 /);
+    assert.deepEqual([...runtime.unauthenticatedBySource.entries()], [[directIpv4, 1]]);
+    assert.equal([...runtime.unauthenticatedBySource.keys()].some((key) => key.includes('203.0.113')), false);
+  } finally {
+    runtime.shutdown();
+  }
+});
+
+test('runtime WSS returns 429 after a rapid-close source flood and refills deterministically', () => {
+  const server = http.createServer();
+  const accepted = [];
+  let now = 1_000;
+  const runtime = createUpgradeRuntime({
+    server,
+    accepted,
+    maxUnauthenticatedConnectionsPerSource: 64,
+    now: () => now,
+  });
+  const source = '198.51.100.30';
+  try {
+    for (let index = 0; index < 12; index += 1) {
+      runtime.handleUpgrade(upgradeRequest(source), {}, Buffer.alloc(0));
+      accepted.at(-1).connection.close();
+    }
+    const exhausted = upgradeRequest(source);
+    runtime.handleUpgrade(exhausted, {}, Buffer.alloc(0));
+
+    assert.equal(accepted.length, 12, 'closing immediately must not replenish a source token');
+    assert.match(exhausted.socket.response, /^HTTP\/1\.1 429 /);
+
+    now += 5_000;
+    runtime.handleUpgrade(upgradeRequest(source), {}, Buffer.alloc(0));
+    assert.equal(accepted.length, 13, 'one five-second refill interval must admit exactly one retry');
+  } finally {
+    runtime.shutdown();
+  }
+});
+
+test('runtime WSS bounds source-rate records, evicts idle records, and clears them on shutdown', () => {
+  const server = http.createServer();
+  let now = 0;
+  const runtime = createUpgradeRuntime({ server, now: () => now });
+  try {
+    for (let index = 0; index < 1024; index += 1) {
+      const rejected = upgradeRequest(sourceAt(index), { headers: { authorization: 'Basic rejected' } });
+      runtime.handleUpgrade(rejected, {}, Buffer.alloc(0));
+      assert.match(rejected.socket.response, /^HTTP\/1\.1 401 /);
+    }
+    const overflow = upgradeRequest(sourceAt(1024), { headers: { authorization: 'Basic rejected' } });
+    runtime.handleUpgrade(overflow, {}, Buffer.alloc(0));
+    assert.equal(runtime.sourceRateLimits.size, 1024);
+    assert.match(overflow.socket.response, /^HTTP\/1\.1 429 /, 'an unbounded source table must fail closed');
+
+    now += 120_000;
+    runtime.sweepSourceRateLimits();
+    assert.equal(runtime.sourceRateLimits.size, 0, 'idle source records must be evicted deterministically');
+
+    runtime.handleUpgrade(upgradeRequest(sourceAt(1024), { headers: { authorization: 'Basic rejected' } }), {}, Buffer.alloc(0));
+    assert.equal(runtime.sourceRateLimits.size, 1);
+    runtime.shutdown();
+    assert.equal(runtime.sourceRateLimits.size, 0, 'shutdown must release every rate-limit record');
+  } finally {
+    runtime.shutdown();
+  }
+});
+
 class FakeConnection extends EventEmitter {
   constructor() {
     super();
@@ -316,31 +516,112 @@ class FakeConnection extends EventEmitter {
   }
 }
 
+class UpgradeFakeWebSocket extends EventEmitter {
+  constructor() {
+    super();
+    this.readyState = 1;
+    this.closed = false;
+  }
+
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.readyState = 3;
+    this.emit('close');
+  }
+}
+
+class SilentTerminateWebSocket extends EventEmitter {
+  constructor() {
+    super();
+    this.readyState = 1;
+    this.terminated = false;
+    this.closeCalls = 0;
+  }
+
+  terminate() {
+    this.terminated = true;
+    this.readyState = 3;
+  }
+
+  close() {
+    this.closeCalls += 1;
+  }
+}
+
+function createUpgradeRuntime({ server, accepted = [], ...options } = {}) {
+  const runtime = new ControllerWssRuntimeServer({
+    server,
+    adapter: { accept(connection, context) { accepted.push({ connection, context }); } },
+    maxConnections: 2048,
+    authenticationTimeoutMs: 10_000,
+    ...options,
+  });
+  runtime.wss.handleUpgrade = (_request, _socket, _head, callback) => callback(new UpgradeFakeWebSocket());
+  return runtime;
+}
+
+function upgradeRequest(remoteAddress, { headers = {}, url = '/v1/agent-session' } = {}) {
+  const socket = {
+    response: '',
+    destroyed: false,
+    remoteAddress,
+    write(value) { this.response += value; },
+    destroy() { this.destroyed = true; },
+  };
+  return {
+    url,
+    headers: { authorization: 'Bearer credential-a', ...headers },
+    socket,
+  };
+}
+
+function sourceAt(index) {
+  return `198.18.${Math.floor(index / 256)}.${index % 256}`;
+}
+
 async function pairedCore() {
   const store = createMemoryStore();
   const core = new ControllerCore({ store, now: () => '2026-07-16T00:00:00.000Z', id: (prefix) => `${prefix}-1` });
   await core.load();
-  await core.pairing.requestPairing({ device: device(), requestId: 'pair-a' });
-  await core.store.update((state) => {
-    state.pendingPairings[0].tokenHash = hashSecret('code-a');
-  });
-  await core.pairing.confirmPairing('pair-a', 'code-a');
-  await core.store.update((state) => {
-    state.pairedAgents[0].credentialHash = hashSecret('cred-a');
-  });
+  await pairDevice(core, device(), 'pair-a', 'code-a', 'cred-a');
   return core;
 }
 
+async function pairedCoreWithSecondDevice() {
+  const store = createMemoryStore();
+  const core = new ControllerCore({ store, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  await core.load();
+  await pairDevice(core, device(), 'pair-a', 'code-a', 'cred-a');
+  await pairDevice(core, deviceB(), 'pair-b', 'code-b', 'cred-b');
+  return core;
+}
+
+async function pairDevice(core, descriptor, requestId, code, credential) {
+  await core.pairing.requestPairing({ device: descriptor, requestId });
+  await core.store.update((state) => {
+    state.pendingPairings.find((item) => item.requestId === requestId).tokenHash = hashSecret(code);
+  });
+  await core.pairing.confirmPairing(requestId, code);
+  await core.store.update((state) => {
+    state.pairedAgents.find((item) => item.deviceId === descriptor.deviceId).credentialHash = hashSecret(credential);
+  });
+}
+
 function agentHello(nonce = 'nonce-a') {
+  return agentHelloFor(device(), nonce);
+}
+
+function agentHelloFor(descriptor, nonce) {
   return {
     protocolVersion: PROTOCOL_VERSION,
     messageId: `hello-a-${nonce}`,
     type: 'agent.hello',
     sentAt: '2026-07-16T00:00:00.000Z',
-    deviceId: 'dev-a',
+    deviceId: descriptor.deviceId,
     payload: {
       protocolVersion: PROTOCOL_VERSION,
-      device: device(),
+      device: descriptor,
       supportedMessageTypes: ['agent.hello', 'agent.presence', 'agent.execution.event'],
       sessionNonce: nonce,
       sentAt: '2026-07-16T00:00:00.000Z'
@@ -441,6 +722,15 @@ function device() {
     groupIds: [],
     status: 'online',
     lastSeenAt: '2026-07-16T00:00:00.000Z'
+  };
+}
+
+function deviceB() {
+  return {
+    ...device(),
+    deviceId: 'dev-b',
+    displayName: 'Agent B',
+    hostName: 'host-b'
   };
 }
 

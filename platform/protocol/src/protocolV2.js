@@ -74,6 +74,7 @@ export const MESSAGE_TYPES = Object.freeze([
 ]);
 
 const MAX_STRING_LENGTH = 4096;
+const MAX_CLIPBOARD_TEXT_BYTES = 64 * 1024;
 const MAX_ARRAY_LENGTH = 256;
 const MAX_LABELS = 64;
 const MAX_GROUPS = 64;
@@ -178,7 +179,8 @@ export function validateEnvelope(envelope, options = {}) {
   if (envelope.type === 'controller.dispatch.create') validateDispatchPlan(envelope.payload, '$.payload', errors);
   if (envelope.type === 'pairing.request') validatePairingRequest(envelope.payload, '$.payload', errors);
   if (envelope.type === 'pairing.result') validatePairingResult(envelope.payload, '$.payload', errors);
-  validateLimits(envelope, '$', errors);
+  const clipboardTextPath = clipboardTextPathForEnvelope(envelope);
+  validateLimits(envelope, '$', errors, clipboardTextPath);
   return result(errors);
 }
 
@@ -384,6 +386,10 @@ function validateRemoteControlRequest(value, path, errors) {
   optionalString(value.requestId, `${path}.requestId`, errors);
   optionalString(value.syncId, `${path}.syncId`, errors);
   if (value.syncAt !== undefined) requireIsoUtc(value.syncAt, `${path}.syncAt`, errors);
+  if (value.command === 'clipboard.pasteText') {
+    rejectUnknownKeys(value, new Set(['command', 'payload', 'requestId', 'syncId', 'syncAt']), path, errors);
+    validateClipboardPasteText(value.payload, `${path}.payload`, errors);
+  }
 }
 
 function validateRemoteControlResponse(value, path, errors) {
@@ -399,6 +405,35 @@ function validateRemoteControlResponse(value, path, errors) {
     }
   }
   if (value.frame !== undefined) validateRemoteFrame(value.frame, `${path}.frame`, errors);
+  if (value.result?.type === 'clipboard.copySelection') {
+    rejectUnknownKeys(value, new Set(['ok', 'requestId', 'result', 'error', 'frame']), path, errors);
+    validateClipboardCopySelectionResult(value.result, `${path}.result`, errors);
+  }
+}
+
+function validateClipboardPasteText(value, path, errors) {
+  if (!isPlainObject(value)) return;
+  rejectUnknownKeys(value, new Set(['text']), path, errors);
+  if (typeof value.text !== 'string') return error(errors, `${path}.text`, 'Clipboard text must be a string.');
+  if (Buffer.byteLength(value.text, 'utf8') > MAX_CLIPBOARD_TEXT_BYTES) {
+    error(errors, `${path}.text`, 'Clipboard text exceeds 64 KiB.');
+  }
+}
+
+function validateClipboardCopySelectionResult(value, path, errors) {
+  if (!isPlainObject(value)) return;
+  rejectUnknownKeys(value, new Set(['protocol', 'messageId', 'type', 'status', 'deviceId', 'startedAt', 'finishedAt', 'durationMs', 'result']), path, errors);
+  if (value.type !== 'clipboard.copySelection') error(errors, `${path}.type`, 'Clipboard result type is invalid.');
+  if (!isPlainObject(value.result)) return error(errors, `${path}.result`, 'Clipboard result must be an object.');
+  rejectUnknownKeys(value.result, new Set(['copied', 'text', 'bytes']), `${path}.result`, errors);
+  if (value.result.copied !== true) error(errors, `${path}.result.copied`, 'Clipboard result must confirm copied.');
+  if (typeof value.result.text !== 'string') error(errors, `${path}.result.text`, 'Clipboard text must be a string.');
+  else if (Buffer.byteLength(value.result.text, 'utf8') > MAX_CLIPBOARD_TEXT_BYTES) error(errors, `${path}.result.text`, 'Clipboard text exceeds 64 KiB.');
+  if (!Number.isInteger(value.result.bytes) || value.result.bytes < 0 || value.result.bytes > MAX_CLIPBOARD_TEXT_BYTES) {
+    error(errors, `${path}.result.bytes`, 'Clipboard byte length is invalid.');
+  } else if (typeof value.result.text === 'string' && value.result.bytes !== Buffer.byteLength(value.result.text, 'utf8')) {
+    error(errors, `${path}.result.bytes`, 'Clipboard byte length does not match text.');
+  }
 }
 
 function validateRemoteFrame(value, path, errors) {
@@ -450,16 +485,22 @@ function validatePairingResult(value, path, errors) {
   requireIsoUtc(value.decidedAt, `${path}.decidedAt`, errors);
 }
 
-function validateLimits(value, path, errors) {
+function validateLimits(value, path, errors, clipboardTextPath) {
   const remoteFrameData = path === '$.payload.frame.data';
-  if (typeof value === 'string' && value.length > MAX_STRING_LENGTH && !remoteFrameData) error(errors, path, `String exceeds max length ${MAX_STRING_LENGTH}.`);
+  if (typeof value === 'string' && value.length > MAX_STRING_LENGTH && !remoteFrameData && path !== clipboardTextPath) error(errors, path, `String exceeds max length ${MAX_STRING_LENGTH}.`);
   if (Array.isArray(value)) {
     if (value.length > MAX_ARRAY_LENGTH) error(errors, path, `Array exceeds max length ${MAX_ARRAY_LENGTH}.`);
-    value.forEach((item, index) => validateLimits(item, `${path}[${index}]`, errors));
+    value.forEach((item, index) => validateLimits(item, `${path}[${index}]`, errors, clipboardTextPath));
   }
   if (isPlainObject(value)) {
-    for (const [key, child] of Object.entries(value)) validateLimits(child, `${path}.${key}`, errors);
+    for (const [key, child] of Object.entries(value)) validateLimits(child, `${path}.${key}`, errors, clipboardTextPath);
   }
+}
+
+function clipboardTextPathForEnvelope(envelope) {
+  if (envelope?.type === 'remote.control.request' && envelope.payload?.command === 'clipboard.pasteText') return '$.payload.payload.text';
+  if (envelope?.type === 'remote.control.response' && envelope.payload?.result?.type === 'clipboard.copySelection') return '$.payload.result.result.text';
+  return undefined;
 }
 
 function requireString(object, key, path, errors, options = {}) {

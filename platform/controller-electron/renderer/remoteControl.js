@@ -60,6 +60,44 @@ export function qualityForFps(fps) {
   return normalized >= 5 ? 35 : normalized >= 3 ? 45 : 55;
 }
 
+export function normalizeOmniboxInput(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  if (/^https?:\/\//i.test(input)) return input;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(input)) return input;
+  if (/^[^\s/]+\.[^\s/]+(?:\/[^\s]*)?$/i.test(input) || /^localhost(?::\d+)?(?:\/[^\s]*)?$/i.test(input)) {
+    return 'https:' + '//' + input;
+  }
+  return 'https:' + '//www.google.com/search?q=' + encodeURIComponent(input);
+}
+
+export function browserStateFromRemoteResult(response, deviceId = '') {
+  const data = response?.data ?? response;
+  const targets = Array.isArray(data?.targets) ? data.targets : [];
+  const target = targets.find((item) => item?.deviceId === deviceId) || data?.target || targets[0] || data;
+  const candidates = [
+    target?.result?.result?.browser,
+    target?.result?.browser,
+    target?.browser,
+    data?.result?.result?.browser,
+    data?.result?.browser,
+    data?.browser,
+  ];
+  return candidates.find((browser) => browser && typeof browser === 'object') || null;
+}
+
+export function normalizedBrowserTabs(browser) {
+  const tabs = Array.isArray(browser?.tabs) ? browser.tabs : [];
+  return tabs
+    .filter((tab) => tab && (tab.id || tab.targetId))
+    .map((tab) => ({
+      id: String(tab.id || tab.targetId),
+      title: String(tab.title || tab.url || 'New tab'),
+      url: String(tab.url || ''),
+      active: tab.active === true || tab.id === browser?.activeTabId || tab.targetId === browser?.activeTabId,
+    }));
+}
+
 function normalizeKey(key) {
   const value = String(key || '').toUpperCase();
   if (value === 'ARROWLEFT') return 'LEFT';

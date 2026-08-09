@@ -31,6 +31,8 @@ export const IPC_CHANNELS = deepFreeze({
   remote: {
     capture: `${CHANNEL_PREFIX}remote:capture`,
     control: `${CHANNEL_PREFIX}remote:control`,
+    clipboardCopy: `${CHANNEL_PREFIX}remote:clipboard-copy`,
+    clipboardPaste: `${CHANNEL_PREFIX}remote:clipboard-paste`,
     openWindow: `${CHANNEL_PREFIX}remote:open-window`,
   },
   containers: {
@@ -115,6 +117,8 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.sessions.list,
   IPC_CHANNELS.remote.capture,
   IPC_CHANNELS.remote.control,
+  IPC_CHANNELS.remote.clipboardCopy,
+  IPC_CHANNELS.remote.clipboardPaste,
   IPC_CHANNELS.remote.openWindow,
   IPC_CHANNELS.containers.list,
   IPC_CHANNELS.containers.trash,
@@ -194,7 +198,9 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.settings.update, objectSchema({ locale: 'optionalString', theme: 'optionalString', workspace: 'optionalObject', hostAliases: 'optionalObject' })],
   [IPC_CHANNELS.sessions.list, LIST_PAYLOAD],
   [IPC_CHANNELS.remote.capture, objectSchema({ deviceId: 'id', quality: 'optionalPositiveInteger' })],
-  [IPC_CHANNELS.remote.control, objectSchema({ deviceIds: 'optionalIdArray', command: 'id', payload: 'optionalObject', synchronized: 'optionalBoolean' })],
+  [IPC_CHANNELS.remote.control, objectSchema({ deviceIds: 'optionalIdArray', command: 'id', payload: 'optionalObject', targetIds: 'optionalObject', synchronized: 'optionalBoolean' })],
+  [IPC_CHANNELS.remote.clipboardCopy, objectSchema({ deviceId: 'id' })],
+  [IPC_CHANNELS.remote.clipboardPaste, objectSchema({ deviceIds: 'optionalIdArray', synchronized: 'optionalBoolean' })],
   [IPC_CHANNELS.remote.openWindow, objectSchema({ mode: 'id', deviceIds: 'optionalIdArray', layout: 'optionalString' })],
   [IPC_CHANNELS.containers.list, LIST_PAYLOAD],
   [IPC_CHANNELS.containers.trash, NO_PAYLOAD],

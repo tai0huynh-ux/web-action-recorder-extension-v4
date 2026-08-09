@@ -82,11 +82,20 @@ test('container registry creates, updates status, duplicates, trashes, restores,
   const created = await core.containers.createContainer({
     name: 'Agent One',
     image: 'war-browser-agent:test',
-    runtime: { dockerName: 'war-agent-one', privileged: true, ipv4Enabled: true, ipv6Enabled: true, ipv6Suffix: 'abcd:ef01:2345:6789' },
+    runtime: {
+      dockerName: 'war-agent-one',
+      privileged: true,
+      ipv4Enabled: true,
+      ipv4MacAddress: 'AA:68:A4:33:03:CE',
+      ipv6Enabled: true,
+      ipv6Suffix: 'abcd:ef01:2345:6789',
+    },
   });
   assert.equal(created.id, 'container-1');
   assert.equal(created.status, 'created');
   assert.equal(created.runtime.privileged, false);
+  assert.equal(created.runtime.ipv4MacAddress, 'aa:68:a4:33:03:ce');
+  assert.equal(store.snapshot().managedContainers[0].runtime.ipv4MacAddress, 'aa:68:a4:33:03:ce');
   assert.equal(created.runtime.ipv6Suffix, 'abcd:ef01:2345:6789');
   const running = await core.containers.updateStatus(created.id, 'running', {
     desiredState: 'running',
@@ -107,6 +116,27 @@ test('container registry creates, updates status, duplicates, trashes, restores,
   const purged = await core.containers.purgeContainer(created.id);
   assert.equal(purged.id, created.id);
   assert.equal(core.containers.listContainers().containers.length, 1);
+});
+
+test('container registry rejects malformed and unsafe IPv4 endpoint MAC addresses', async (t) => {
+  const core = await fixtureCore();
+  for (const [caseName, macAddress] of [
+    ['malformed', 'aa:68:a4:33:03:zz'],
+    ['multicast', '01:00:5e:00:00:01'],
+    ['all-zero', '00:00:00:00:00:00'],
+    ['broadcast', 'ff:ff:ff:ff:ff:ff'],
+  ]) {
+    await t.test(caseName, () => {
+      assert.throws(
+        () => core.containers.createContainer({
+          name: 'Invalid IPv4 MAC',
+          image: 'war-browser-agent:test',
+          runtime: { ipv4MacAddress: macAddress },
+        }),
+        /Managed container MAC address is invalid/,
+      );
+    });
+  }
 });
 
 test('job service creates dispatch plan, per-device jobs, idempotency, transitions, cancel, timeout, and target snapshot', async () => {

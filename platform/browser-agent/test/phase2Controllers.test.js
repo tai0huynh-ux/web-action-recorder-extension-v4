@@ -154,24 +154,126 @@ test('phase2 raw input tracks held keys', async () => {
 
 test('phase2 browser-space keyDown/keyUp use native X11 backend', async () => {
   const raw = makeRaw();
-  await raw.execute('input.keyDown', { space: 'browser', key: 'Enter' });
-  await raw.execute('input.keyUp', { space: 'browser', key: 'Enter' });
+  await raw.execute('input.keyDown', { targetId: 'tab-1', space: 'browser', key: 'Enter' });
+  await raw.execute('input.keyUp', { targetId: 'tab-1', space: 'browser', key: 'Enter' });
   assert.deepEqual(raw.x11.calls.keyDown, ['Enter']);
   assert.deepEqual(raw.x11.calls.keyUp, ['Enter']);
-  assert.deepEqual(raw.x11.calls.events, ['focusChromium', 'keyDown:Enter', 'focusChromium', 'keyUp:Enter']);
+  assert.deepEqual(raw.x11.calls.events, ['focusChromium', 'keyDown:Enter', 'keyUp:Enter']);
   assert.deepEqual(raw.getState().heldKeys, []);
 });
 
 test('phase2 browser-space shortcut and text focus Chromium before native input', async () => {
   const raw = makeRaw();
-  await raw.execute('input.shortcut', { space: 'browser', keys: ['CTRL', 'L'] });
-  await raw.execute('input.insertText', { space: 'browser', text: 'https://example.com' });
+  await raw.execute('input.shortcut', { targetId: 'tab-1', space: 'browser', keys: ['CTRL', 'L'] });
+  await raw.execute('input.insertText', { targetId: 'tab-1', space: 'browser', text: 'https://example.com' });
   assert.deepEqual(raw.x11.calls.events, [
     'focusChromium',
     'shortcut:CTRL+L',
-    'focusChromium',
     'typeText:https://example.com'
   ]);
+});
+
+test('phase2 browser-space navigation selects the active target before native X11 input', async () => {
+  const navigation = makeRawNavigationHarness();
+  const targetUrl = 'https://target.example/arrived';
+
+  await navigation.raw.execute('input.shortcut', { targetId: 'target-b', space: 'browser', keys: ['CTRL', 'L'] });
+  await navigation.raw.execute('input.insertText', { targetId: 'target-b', space: 'browser', text: targetUrl });
+  await navigation.raw.execute('input.keyDown', { targetId: 'target-b', space: 'browser', key: 'Enter' });
+
+  assert.deepEqual(navigation.focusCalls, ['target-b', 'target-b', 'target-b']);
+  assert.equal(navigation.urls.get('target-b'), targetUrl);
+  assert.equal(navigation.urls.get('unrelated-chromium'), 'https://unrelated.example/original');
+});
+
+test('phase2 browser-space raw input fails closed when the selected target resolves to multiple browser windows', async () => {
+  const x11Calls = [];
+  const ambiguity = Object.assign(new Error('Selected target resolves to multiple browser windows'), {
+    code: 'raw_input_window_ambiguous'
+  });
+  const controller = {
+    activeTargetId: 'target-b',
+    firstOpenTargetId: () => 'target-b',
+    assertSingleWindowForRawInput: async (targetId) => {
+      assert.equal(targetId, 'target-b');
+      throw ambiguity;
+    },
+    activateTab: async () => {},
+    findPage: async () => ({})
+  };
+  const x11 = {
+    focusChromium: async () => x11Calls.push('focusChromium'),
+    shortcut: async () => x11Calls.push('shortcut'),
+    releaseAll: async () => {}
+  };
+  const raw = new RawInputController({ browserController: controller, config: { width: 100, height: 100 }, x11 });
+
+  await assert.rejects(
+    () => raw.execute('input.shortcut', { targetId: 'target-b', space: 'browser', keys: ['CTRL', 'L'] }),
+    (error) => error?.code === 'raw_input_window_ambiguous'
+  );
+  assert.deepEqual(x11Calls, [], 'ambiguous browser window selection must not emit X11 input');
+});
+
+test('phase2 browser-space raw input rechecks its deadline after the CDP window guard', async () => {
+  let now = 0;
+  const x11Calls = [];
+  const controller = {
+    assertSingleWindowForRawInput: async () => { now = 2; return { targetId: 'target-b', windowId: 1 }; },
+    activateTab: async () => x11Calls.push('activate'),
+    findPage: async () => ({}),
+  };
+  const x11 = {
+    focusChromium: async () => x11Calls.push('focusChromium'),
+    shortcut: async () => x11Calls.push('shortcut'),
+    releaseAll: async () => {},
+  };
+  const raw = new RawInputController({ browserController: controller, config: { width: 100, height: 100 }, x11 });
+
+  await assert.rejects(
+    () => raw.execute('input.shortcut', { targetId: 'target-b', space: 'browser', keys: ['CTRL', 'L'] }, { deadlineAt: 1, now: () => now }),
+    (error) => error?.code === 'deadline_exceeded'
+  );
+  assert.deepEqual(x11Calls, [], 'expired input must not activate or emit X11 effects after the CDP guard');
+});
+
+test('phase2 raw X11 calls forward the deadline and reject an expiry after the native effect', async () => {
+  let now = 0;
+  const calls = [];
+  const controller = {
+    assertSingleWindowForRawInput: async () => ({ targetId: 'target-b', windowId: 1 }),
+    activateTab: async () => {},
+    findPage: async () => ({}),
+  };
+  const x11 = {
+    focusChromium: async (options) => calls.push(['focusChromium', options]),
+    shortcut: async (shortcut, options) => { calls.push(['shortcut', shortcut, options]); now = 2; },
+    releaseAll: async () => {},
+  };
+  const raw = new RawInputController({ browserController: controller, config: { width: 100, height: 100 }, x11 });
+
+  await assert.rejects(
+    () => raw.execute('input.shortcut', { targetId: 'target-b', space: 'browser', keys: ['CTRL', 'L'] }, { deadlineAt: 1, now: () => now }),
+    (error) => error?.code === 'deadline_exceeded'
+  );
+  assert.equal(calls[0]?.[1]?.deadlineAt, 1, 'native focus must receive the command deadline');
+  assert.equal(calls[1]?.[2]?.deadlineAt, 1, 'native XTEST command must receive the command deadline');
+});
+
+test('phase2 Browser target-to-window guard uses Browser.getWindowForTarget', () => {
+  const browserController = fs.readFileSync(path.resolve('platform/browser-agent/src/browserController.js'), 'utf8');
+  assert.match(browserController, /assertSingleWindowForRawInput\s*\(/, 'Browser Controller must expose the raw-input window guard');
+  assert.match(browserController, /Browser\.getWindowForTarget/, 'raw-input window guard must use the Browser CDP window mapping');
+  assert.match(browserController, /raw_input_window_ambiguous/, 'ambiguous browser-window mappings must use a typed fail-closed error');
+});
+
+test('phase2 native X11 helper rejects multiple direct browser windows without recursive first-match selection', () => {
+  const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
+  const focusWindow = nativeHelper.slice(nativeHelper.indexOf('static bool focus_window('), nativeHelper.indexOf('static void handle_line('));
+  assert.doesNotMatch(nativeHelper, /find_chromium_window\(children\[i\]\)/, 'native helper must not recursively select the first Chromium descendant');
+  assert.match(focusWindow, /if\s*\(\s*\w+\s*!=\s*1\s*\)\s*return\s+(?:false|0)\s*;/, 'native helper must reject zero or multiple direct browser windows');
+  assert.match(nativeHelper, /XGrabServer\(display\)/, 'native helper must make the window check and XTEST injection atomic');
+  assert.match(nativeHelper, /browser_window_owns_focus/, 'native helper must fail closed when the single browser window no longer owns focus');
 });
 
 test('phase2 raw input stopAll releases keys and buttons', async () => {
@@ -199,6 +301,77 @@ test('phase2 X11 protocol rejects oversized commands and parses typed response',
     heldButtons: 0
   });
   assert.throws(() => encodeX11Command('insertText', { text: 'x'.repeat(9000) }, 'cmd-2'), /too large/);
+});
+
+test('phase2 X11 protocol serializes a WAR2 64-bit absolute-deadline envelope for the native daemon', () => {
+  const deadlineAt = 1_726_796_800_123;
+  const wire = encodeX11Command('shortcut', { shortcut: 'Control_L+l' }, 'cmd-deadline', { deadlineAt });
+  const match = wire.match(/^WAR2 (\d+) (.+)\n$/);
+  assert.ok(match, 'effectful commands must use the versioned WAR2 wire format');
+  const packet = JSON.parse(match[2]);
+  assert.equal(match[1], String(deadlineAt));
+  assert.equal(packet.deadlineAt, deadlineAt);
+  assert.equal(Number.isSafeInteger(packet.deadlineAt), true);
+});
+
+test('phase2 native X11 source requires the WAR2 handshake and checks 64-bit expiry inside every X11 guard', () => {
+  const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
+  assert.match(nativeHelper, /#include <stdint\.h>/, 'native deadline arithmetic must use a fixed-width 64-bit integer');
+  assert.match(nativeHelper, /get_json_int64\s*\([^)]*int64_t\s*\*out\)/, 'native daemon must parse the absolute deadline without 32-bit truncation');
+  assert.match(nativeHelper, /WAR2/, 'native daemon must reject the legacy unversioned command wire');
+  assert.match(nativeHelper, /protocol[_ ]?version\s*==\s*2|WAR2.*protocol/, 'native daemon must complete a protocol=2 handshake before accepting effects');
+  assert.match(nativeHelper, /missing_deadline|invalid_deadline|deadline_exceeded/, 'effectful commands must reject missing, malformed, or expired deadlines');
+  assert.match(nativeHelper, /static bool begin_browser_input_guard\s*\(\s*int64_t\s+deadline_at\s*\)/, 'each XTEST operation must carry its deadline into the atomic guard');
+  assert.match(nativeHelper, /static bool focus_window\s*\(\s*int64_t\s+deadline_at\s*\)/, 'focus must recheck expiry inside its atomic guard');
+  assert.match(nativeHelper, /XGrabServer\(display\);[\s\S]{0,500}deadline_expired\(\s*&\s*\w*(?:timing|deadline)\w*\s*\)/, 'expiry must be checked through CommandTiming after grabbing the server and before focus/XTEST');
+  for (const exempt of ['ping', 'getState', 'releaseAll']) {
+    assert.match(nativeHelper, new RegExp(`strcmp\\(type, \\\"${exempt}\\\"\\)`, 'g'), `${exempt} must remain an explicitly audited non-effectful exemption`);
+  }
+});
+
+test('phase2 native X11 guards recheck expiry after validation and preserve typed deadline failures', () => {
+  const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
+  const beginGuard = nativeHelper.slice(
+    nativeHelper.indexOf('static bool begin_browser_input_guard('),
+    nativeHelper.indexOf('static bool end_browser_input_guard(')
+  );
+  const focusWindow = nativeHelper.slice(
+    nativeHelper.indexOf('static bool focus_window('),
+    nativeHelper.indexOf('static void handle_line(')
+  );
+  const commandDispatch = nativeHelper.slice(nativeHelper.indexOf('static void handle_line('));
+
+  assert.match(beginGuard, /browser_window_owns_focus[\s\S]{0,300}deadline_expired\(\s*&\s*\w*(?:timing|deadline)\w*\s*\)[\s\S]{0,250}return true;/, 'input guard must recheck the CommandTiming after browser-window validation and before its caller can emit XTEST');
+  assert.match(focusWindow, /find_direct_browser_windows[\s\S]{0,300}deadline_expired\(\s*&\s*\w*(?:timing|deadline)\w*\s*\)[\s\S]{0,250}XRaiseWindow/, 'focus guard must recheck the CommandTiming after window validation and immediately before focus effects');
+  const guardFailure = nativeHelper.slice(
+    nativeHelper.indexOf('static const char *guard_failure_error('),
+    nativeHelper.indexOf('static bool end_browser_input_guard(')
+  );
+  assert.match(guardFailure, /last_guard_deadline\s*\?\s*"deadline_exceeded"\s*:\s*"focus_failed"/, 'guard failure mapping must preserve deadline expiry for the X11 client as typed HTTP 408');
+  const beginGuardBranches = [...commandDispatch.matchAll(/!begin_browser_input_guard\s*\([^)]*\)/g)];
+  assert.ok(beginGuardBranches.length > 0, 'effectful commands must use the native browser-input guard');
+  for (const branch of beginGuardBranches) {
+    const branchBody = commandDispatch.slice(branch.index, branch.index + 300);
+    assert.match(branchBody, /guard_failure_error\s*\(\s*\)/, 'every begin_browser_input_guard failure branch must use the typed guard failure mapping');
+  }
+});
+
+test('phase2 X11 client uses a bounded WAR2 response deadline and bounded UTF-8 framing', () => {
+  const client = fs.readFileSync(path.resolve('platform/browser-agent/src/x11InputClient.js'), 'utf8');
+  assert.match(client, /WAR2\s+\$\{\s*(?:deadline|effectiveDeadlineAt|boundedDeadlineAt|boundedDeadline)(?:\s*\|\|\s*0)?\s*\}/, 'client must emit the protocol=2 bounded deadline prefix');
+  assert.match(client, /Math\.min\(\s*deadlineAt\s*,\s*[^,]+\+\s*[^)]+(?:timeout|Timeout)/, 'client expiry must be the earlier of global deadline and send-time response timeout');
+  assert.match(client, /Buffer\.byteLength\([^,]+,\s*['\"]utf8['\"]\)/, 'wire limits must use UTF-8 bytes rather than JavaScript code units');
+  assert.match(client, /buffer\.length\s*>\s*MAX_LINE|partial[^\n]{0,80}MAX_LINE/i, 'partial response framing must be bounded before a newline arrives');
+});
+
+test('phase2 native X11 shortcut and button paths check every XTEST result', () => {
+  const nativeHelper = fs.readFileSync(path.resolve('platform/browser-agent/native/x11-inputd/x11-inputd.c'), 'utf8');
+  const shortcut = nativeHelper.slice(nativeHelper.indexOf('if (strcmp(type, "shortcut") == 0)'), nativeHelper.indexOf('respond(out, id, false, "unknown_type"'));
+  assert.match(nativeHelper, /if\s*\(\s*!XTestFakeKeyEvent\(display, code, down \? True : False, CurrentTime\)\s*\)\s*return false;/, 'fake_key must not report success when XTEST rejects the key event');
+  assert.match(nativeHelper, /static bool fake_button\s*\([^)]*\)[\s\S]{0,500}XTestFakeButtonEvent/, 'button injection must use a checked helper rather than discard XTEST status');
+  assert.match(shortcut, /if\s*\(\s*!fake_key\(parts\[count - 1\], true\)\s*\)/, 'shortcut must reject a failed main-key press');
+  assert.match(shortcut, /if\s*\(\s*!fake_key\(parts\[count - 1\], false\)\s*\)/, 'shortcut must reject a failed main-key release');
+  assert.match(shortcut, /if\s*\(\s*!fake_key\(parts\[i\], false\)\s*\)/, 'shortcut must reject a failed modifier release');
 });
 
 test('phase2 raw input stopAll has queue priority', async () => {
@@ -344,6 +517,8 @@ function makeRaw({ config = {} } = {}) {
   const controller = {
     activeTargetId: 'tab-1',
     firstOpenTargetId: () => 'tab-1',
+    assertSingleWindowForRawInput: async () => ({ targetId: 'tab-1', windowId: 1 }),
+    activateTab: async () => {},
     findPage: async () => page
   };
   const raw = new RawInputController({ browserController: controller, config: { width: 100, height: 100, ...config }, x11: fakeX11() });
@@ -428,6 +603,51 @@ function fakeX11() {
     keyUp: async (key) => { calls.keyUp.push(key); calls.events.push(`keyUp:${key}`); },
     typeText: async (text) => { calls.events.push(`typeText:${text}`); },
     releaseAll: async () => { calls.releaseAll += 1; }
+  };
+}
+
+function makeRawNavigationHarness() {
+  const urls = new Map([
+    ['unrelated-chromium', 'https://unrelated.example/original'],
+    ['target-b', 'https://target.example/original']
+  ]);
+  const focusCalls = [];
+  let focusedWindow;
+  let omniboxText = '';
+  let omniboxFocused = false;
+  const x11 = {
+    focusChromium: async () => {
+      omniboxFocused = false;
+    },
+    shortcut: async () => {
+      omniboxFocused = true;
+      omniboxText = '';
+    },
+    typeText: async (text) => {
+      if (omniboxFocused) omniboxText += text;
+    },
+    keyDown: async (key) => {
+      if (key === 'Enter' && omniboxFocused) urls.set(focusedWindow, omniboxText);
+    },
+    keyUp: async () => {},
+    mouseMove: async () => {},
+    click: async () => {},
+    mouseDown: async () => {},
+    mouseUp: async () => {},
+    wheel: async () => {},
+    releaseAll: async () => {}
+  };
+  const controller = {
+    activeTargetId: 'target-b',
+    firstOpenTargetId: () => 'target-b',
+    assertSingleWindowForRawInput: async (targetId) => { focusCalls.push(targetId); return { targetId, windowId: 1 }; },
+    activateTab: async (targetId) => { focusedWindow = targetId; },
+    findPage: async () => ({})
+  };
+  return {
+    raw: new RawInputController({ browserController: controller, config: { width: 100, height: 100 }, x11 }),
+    focusCalls,
+    urls
   };
 }
 

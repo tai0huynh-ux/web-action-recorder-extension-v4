@@ -10,6 +10,23 @@ test('default bind is loopback', () => {
   assert.equal(config.host, '127.0.0.1');
 });
 
+test('default browser engine pins CloakBrowser without a silent Chromium fallback', () => {
+  const config = loadConfig({}, process.cwd());
+
+  assert.deepEqual(config.browserEngine, {
+    name: 'cloakbrowser',
+    version: '0.5.5',
+    pinnedVersion: '146.0.7680.177.5',
+    executable: '/usr/local/bin/war-cloakbrowser-sandbox-launcher',
+  });
+});
+
+test('Chromium is an explicit rollback or development engine only', () => {
+  const config = loadConfig({ WAR_BROWSER_ENGINE: 'chromium' }, process.cwd());
+  assert.equal(config.browserEngine.name, 'chromium');
+  assert.equal(config.browserEngine.executable, '/usr/bin/chromium');
+});
+
 test('non-loopback is rejected without opt-in', () => {
   assert.throws(() => loadConfig({ WAR_AGENT_HOST: '0.0.0.0' }, process.cwd()), /ALLOW_REMOTE/);
 });

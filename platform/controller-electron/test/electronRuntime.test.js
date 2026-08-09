@@ -151,6 +151,33 @@ test('electron runtime persists a validated WSS profile and reuses it on a same-
   await second.shutdown();
 });
 
+test('electron runtime saves an environment image pin and restores it without a second launcher environment', async () => {
+  const imagePin = `sha256:${'a'.repeat(64)}`;
+  const profileStore = fakeRuntimeProfileStore();
+  const first = createElectronControllerRuntime(fakeRuntimeDeps([], {
+    env: {
+      ...validLanWssEnv(),
+      WAR_CONTAINER_RUNTIME: 'local-docker',
+      WAR_CONTAINER_SECCOMP_PROFILE_PATH: 'C:/war/security/chromium-userns-seccomp.json',
+      WAR_CONTAINER_IMAGE: imagePin,
+    },
+    fs: readableTlsFs(),
+    https: fakeHttpsServer(47651),
+    runtimeProfileStore: profileStore,
+  }));
+
+  await first.start();
+  await first.shutdown();
+  assert.equal(profileStore.saves[0]?.imagePin, imagePin);
+
+  const second = createElectronControllerRuntime(fakeRuntimeDeps([], {
+    env: {}, fs: readableTlsFs(), https: fakeHttpsServer(47651), runtimeProfileStore: profileStore,
+  }));
+  await second.start();
+  assert.equal(second.config.containers.imagePin, imagePin);
+  await second.shutdown();
+});
+
 function fakeRuntimeDeps(calls, options = {}) {
   const storeFiles = [];
   class FakeStore {
@@ -220,6 +247,7 @@ function fakeRuntimeDeps(calls, options = {}) {
       quit: () => calls.push('app.quit'),
     },
     BrowserWindow: FakeWindow,
+    clipboard: { readText: () => '', writeText: () => {} },
     dialog: {},
     ipcMain,
     protocol: {

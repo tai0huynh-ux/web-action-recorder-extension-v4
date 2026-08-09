@@ -22,7 +22,13 @@ export async function generate() {
   const source = await response.text();
   if (sha256(source) !== UPSTREAM_SHA256) throw new Error('Pinned Moby seccomp profile integrity check failed');
   const profile = JSON.parse(source);
+  profile.syscalls = profile.syscalls.flatMap((rule) => {
+    if (!Array.isArray(rule.names) || !rule.names.includes('chroot')) return [rule];
+    const names = rule.names.filter((name) => name !== 'chroot');
+    return names.length ? [{ ...rule, names }] : [];
+  });
   profile.syscalls.push(
+    { names: ['chroot'], action: 'SCMP_ACT_ALLOW' },
     cloneRule(0x10000000, 'Allow Chromium to probe and create its user namespace only.'),
     cloneRule(0x20000000, 'Allow Chromium to fork inside its PID namespace only.'),
     cloneRule(0x70000000, 'Allow Chromium combined user, PID, and network namespace launch only.'),

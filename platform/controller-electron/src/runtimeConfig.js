@@ -3,7 +3,7 @@ import nodePath from 'node:path';
 import os from 'node:os';
 import { normalizeIpv6Prefix } from '../../controller-core/src/networkConfig.js';
 import { normalizeControllerHost } from './controllerHost.js';
-import { validateRuntimeProfile } from './runtimeProfileStore.js';
+import { isImmutableImagePin, validateRuntimeProfile } from './runtimeProfileStore.js';
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const DEFAULT_PORT = 0;
@@ -35,7 +35,8 @@ export function resolveElectronRuntimeConfig({
   const normalizedContainerControllerHost = normalizeControllerHost(containerControllerHost);
   const containerControllerCaPath = env.WAR_CONTAINER_CONTROLLER_CA_PATH || '';
   const containerSeccompProfilePath = env.WAR_CONTAINER_SECCOMP_PROFILE_PATH || '';
-  const containerImage = env.WAR_CONTAINER_IMAGE || 'war-browser-agent:phase1';
+  const explicitContainerImage = Object.hasOwn(env, 'WAR_CONTAINER_IMAGE') ? env.WAR_CONTAINER_IMAGE : null;
+  const containerImagePin = explicitContainerImage ?? storedProfile?.imagePin ?? null;
   const containerIpv6Interface = env.WAR_CONTAINER_IPV6_INTERFACE || '';
   const containerIpv6Prefix = env.WAR_CONTAINER_IPV6_PREFIX || '';
   const containerIpv6Driver = env.WAR_CONTAINER_IPV6_DRIVER || 'macvlan';
@@ -58,6 +59,7 @@ export function resolveElectronRuntimeConfig({
     if (keyPath && !isReadable(fs, keyPath)) errors.push('WSS TLS private key is not readable');
   }
   if (!['disabled', 'local-docker', 'ssh-docker'].includes(containerRuntime)) errors.push('Container runtime must be disabled, local-docker, or ssh-docker');
+  if (containerRuntime !== 'disabled' && !isImmutableImagePin(containerImagePin)) errors.push('Managed containers require an immutable image pin');
   if (containerHostLabel && !isHostLabel(containerHostLabel)) errors.push('Container host label is invalid');
   if (containerControllerHost && !normalizedContainerControllerHost) errors.push('Container Controller host is invalid');
   if (containerRuntime === 'ssh-docker' && !containerSshTarget) errors.push('SSH Docker runtime requires WAR_CONTAINER_SSH_TARGET');
@@ -114,7 +116,10 @@ export function resolveElectronRuntimeConfig({
       controllerHost: normalizedContainerControllerHost,
       controllerCaPath: containerControllerCaPath || null,
       seccompProfilePath: containerSeccompProfilePath || null,
-      image: containerImage,
+      // Keep image as a compatibility alias for internal adapter callers; it is
+      // always the validated immutable pin for an enabled managed runtime.
+      image: containerImagePin,
+      imagePin: isImmutableImagePin(containerImagePin) ? containerImagePin : null,
       ipv6Interface: containerIpv6Interface || null,
       ipv6Prefix: normalizedIpv6Prefix,
       ipv6Driver: containerIpv6Driver,
@@ -187,6 +192,7 @@ export function runtimeProfileFromConfig(config) {
       certificatePath: config.wss.tls?.certPath,
       privateKeyPath: config.wss.tls?.keyPath,
     },
+    ...(config.containers?.imagePin ? { imagePin: config.containers.imagePin } : {}),
   };
   const validated = validateRuntimeProfile(profile);
   if (!validated.ok) throw new Error(validated.error);

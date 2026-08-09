@@ -62,6 +62,37 @@ test('IPC handlers validate payloads and call the exact application method', asy
   assert.equal(rejected.error.code, 'ERR_IPC_UNKNOWN_PROPERTY');
 });
 
+test('clipboard IPC keeps clipboard text in the main process and returns metadata only', async () => {
+  const ipcMain = fakeIpcMain();
+  const application = fakeApplication();
+  const window = trustedWindow();
+  const secret = 'synthetic clipboard secret';
+  const clipboard = {
+    writes: [],
+    readText: () => secret,
+    writeText(text, type) { this.writes.push([text, type]); },
+  };
+  application.remoteClipboardCopy = async (payload) => {
+    application.calls.push(['remoteClipboardCopy', payload]);
+    return { ok: true, data: { ...payload, copied: true, bytes: Buffer.byteLength(secret), text: secret } };
+  };
+  application.remoteClipboardPaste = async (payload) => {
+    application.calls.push(['remoteClipboardPaste', { ...payload, text: '<redacted>' }]);
+    assert.equal(payload.text, secret);
+    return { ok: true, data: { pasted: true, bytes: Buffer.byteLength(payload.text) } };
+  };
+  registerControllerIpcHandlers({ ipcMain, mainWindow: window, application, clipboard, dialog: {}, fs: {}, path: {} });
+
+  const copied = await ipcMain.handlers.get(IPC_CHANNELS.remote.clipboardCopy)(trustedEvent(window), { deviceId: 'device-1' });
+  assert.deepEqual(copied, { ok: true, data: { deviceId: 'device-1', copied: true, bytes: Buffer.byteLength(secret) } });
+  assert.deepEqual(clipboard.writes, [[secret, 'clipboard']]);
+  assert.equal(JSON.stringify(copied).includes(secret), false);
+
+  const pasted = await ipcMain.handlers.get(IPC_CHANNELS.remote.clipboardPaste)(trustedEvent(window), { deviceIds: ['device-1'], synchronized: false });
+  assert.equal(pasted.ok, true);
+  assert.equal(JSON.stringify(pasted).includes(secret), false);
+});
+
 test('IPC handlers return a fixed public error envelope for coded application failures', async () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();
@@ -186,6 +217,7 @@ function fakeApplication() {
     'updateContainerNetwork', 'duplicateContainer', 'deleteContainer', 'restoreContainer', 'purgeContainer', 'listGroups', 'createGroup', 'updateGroup', 'deleteGroup', 'addDeviceToGroup',
     'removeDeviceFromGroup', 'getSettings', 'updateSettings', 'listWorkflows', 'getWorkflowRevision', 'importWorkflowRevision', 'listJobs', 'getJob',
     'listJobEvents', 'dispatchWorkflow', 'cancelJob',
+    'remoteCapture', 'remoteControl', 'remoteClipboardCopy', 'remoteClipboardPaste',
   ];
   for (const name of names) {
     app[name] = (payload) => {

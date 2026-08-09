@@ -55,6 +55,7 @@ export class ControllerWssServerAdapter extends EventEmitter {
       if (!validation.ok) throw publicError('invalid_envelope', 'Malformed envelope rejected', 400, validation.errors);
       if (envelope.protocolVersion !== PROTOCOL_VERSION) throw publicError('protocol_version_rejected', 'Protocol version rejected', 426);
       if (envelope.type === 'agent.hello') {
+        if (state.session) throw publicError('session_already_authenticated', 'Agent session is already authenticated', 409);
         state.session = await this.sessionManager.authenticateHello(envelope, { credential });
         state.connection?.markAuthenticated?.();
         this.sessionManager.attachClose(state.session.deviceId, state.session.generation, close);
@@ -67,6 +68,23 @@ export class ControllerWssServerAdapter extends EventEmitter {
         return this.response(envelope, { ok: true, session: state.session, replay: await this.sessionManager.replayNonTerminal(state.session.deviceId, state.session.generation) });
       }
       if (!state.session) throw publicError('unauthenticated', 'Agent session is not authenticated', 401);
+      if (envelope.deviceId !== undefined && envelope.deviceId !== state.session.deviceId) {
+        throw publicError('session_identity_mismatch', 'Agent device does not match its authenticated session', 409);
+      }
+      if (envelope.sessionId !== undefined && envelope.sessionId !== state.session.sessionId) {
+        throw publicError('session_identity_mismatch', 'Agent session does not match its authenticated session', 409);
+      }
+      // The socket identity, not Agent-provided fields, is authoritative after hello.
+      const withSession = {
+        ...envelope,
+        deviceId: state.session.deviceId,
+        sessionId: state.session.sessionId,
+        payload: envelope.payload
+      };
+      const withSessionPayload = {
+        ...withSession,
+        payload: { ...envelope.payload, deviceId: state.session.deviceId, generation: state.session.generation }
+      };
       if (envelope.correlationId && this.pendingRequests.has(envelope.correlationId)) {
         const pending = this.pendingRequests.get(envelope.correlationId);
         if (pending.deviceId !== state.session.deviceId || pending.generation !== state.session.generation || (pending.expectedTypes.length && !pending.expectedTypes.includes(envelope.type))) {
@@ -74,13 +92,12 @@ export class ControllerWssServerAdapter extends EventEmitter {
         }
         this.pendingRequests.delete(envelope.correlationId);
         clearTimeout(pending.timer);
-        pending.resolve(envelope);
+        pending.resolve(withSession);
         return null;
       }
-      const withSession = { ...envelope, deviceId: envelope.deviceId || state.session.deviceId, sessionId: envelope.sessionId || state.session.sessionId, payload: { ...envelope.payload, generation: state.session.generation } };
-      if (envelope.type === 'agent.presence') return this.response(envelope, { ok: true, session: await this.sessionManager.handlePresence(withSession) });
+      if (envelope.type === 'agent.presence') return this.response(envelope, { ok: true, session: await this.sessionManager.handlePresence(withSessionPayload) });
       if (envelope.type === 'agent.execution.event' || envelope.type === 'execution.event' || envelope.type === 'execution.result' || envelope.type === 'execution.cancelled') {
-        const event = await this.sessionManager.receiveExecutionEvent(withSession);
+        const event = await this.sessionManager.receiveExecutionEvent(withSessionPayload);
         this.emit('execution', { jobId: event.jobId, deviceId: event.deviceId, eventType: event.eventType });
         return this.response(envelope, { ok: true, event });
       }
@@ -133,11 +150,19 @@ export class ControllerWssServerAdapter extends EventEmitter {
   }
 
   requestAgent(deviceId, generation, envelope, { timeoutMs = 10000, expectedTypes = [] } = {}) {
+    const session = this.requireActiveSession(deviceId, generation);
     const connection = this.requireActiveConnection(deviceId, generation);
     if (this.pendingRequests.size >= 64) return Promise.reject(wssError('WSS_SEND_FAILED', 'Agent request limit exceeded'));
     const messageId = envelope.messageId || this.id('controller-request');
     if (this.pendingRequests.has(messageId)) return Promise.reject(wssError('WSS_SEND_FAILED', 'Agent request identifier collision'));
-    const request = { protocolVersion: PROTOCOL_VERSION, sentAt: this.now(), ...envelope, messageId, deviceId };
+    const request = {
+      protocolVersion: PROTOCOL_VERSION,
+      sentAt: this.now(),
+      ...envelope,
+      messageId,
+      deviceId: session.deviceId,
+      sessionId: session.sessionId
+    };
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(messageId);

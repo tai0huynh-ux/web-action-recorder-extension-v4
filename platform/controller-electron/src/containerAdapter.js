@@ -11,11 +11,10 @@ import {
   normalizeIpv6Prefix,
   normalizeManagedNetwork,
 } from '../../controller-core/src/networkConfig.js';
-import { requireControllerHost } from './controllerHost.js';
+import { normalizeControllerHost, requireControllerHost } from './controllerHost.js';
+import { isImmutableImagePin } from './runtimeProfileStore.js';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_IMAGE = 'war-browser-agent:phase1';
-const CONTROL_PORT = '3766';
 const MANAGED_LABEL = 'war-controller';
 const MANAGED_CONTAINER_ID_LABEL = 'war-container-id';
 const MANAGED_CONTAINER_NAME_LABEL = 'war-container-name';
@@ -32,7 +31,7 @@ const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/;
 const VOLUME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MANAGED_IPV4_NETWORK_PREFIX = 'war-managed-ipv4-';
 const MANAGED_IPV6_NETWORK_PREFIX = 'war-managed-ipv6-';
-const APPROVED_SECCOMP_CANONICAL_SHA256 = '04ba8f30f2f3b6a10e6b54836363fc9b2a05a55c4aff6ea68c95d8d3f277fd5f';
+const APPROVED_SECCOMP_CANONICAL_SHA256 = '03ec0820f970cede78001a6b54e574dbc4c2bc0de05cdb53247102ac84cb3189';
 
 export function matchesApprovedSeccompSecurityOption(securityOptions) {
   const option = (securityOptions || []).find((value) => String(value).startsWith('seccomp='));
@@ -58,6 +57,7 @@ export class DockerContainerAdapter {
     this.wss = wss;
     this.execFile = execFileImpl;
     this.spawn = spawnImpl;
+    this.imageEnvironmentCache = new Map();
   }
 
   async probe() {
@@ -72,7 +72,7 @@ export class DockerContainerAdapter {
     const name = dockerName(container);
     const volume = dataVolume(name);
     const approvedImage = this.approvedImage(container);
-    const approvedImageId = await this.imageId(approvedImage);
+    let approvedImageId = null;
     let managedVolume = null;
     let network = null;
     let created = null;
@@ -80,6 +80,8 @@ export class DockerContainerAdapter {
       // Validate the deterministic volume before provisioning any other resource.
       managedVolume = await this.ensureManagedDataVolume(volume, container);
       network = await this.resolveDesiredNetwork(name, container.runtime);
+      // Re-attest after setup and immediately before secret-bearing helper work.
+      approvedImageId = await this.imageId(approvedImage);
       await this.writeCredential(volume, approvedImageId, container.provisioning?.credential);
       const launchedDockerId = await this.launchContainer(container, network, { approvedImage: approvedImageId, mode: 'run' });
       // Capture stable ownership before waiting for a macvlan endpoint, which may
@@ -145,9 +147,11 @@ export class DockerContainerAdapter {
 
   async status(container) {
     const name = dockerName(container);
+    const approvedImage = this.approvedImage(container);
+    const approvedImageId = await this.imageId(approvedImage);
     const state = (await this.docker(['inspect', '-f', '{{.State.Status}}', name])).stdout.trim();
     const network = this.networkFromRuntime(container.runtime);
-    const runtime = await this.inspectRuntime(name, dataVolume(name), { network, container });
+    const runtime = await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network, container });
     runtime.ipv6PrefixChanged = await this.ipv6PrefixChanged(runtime);
     return { status: mapDockerStatus(state), resourceUsage: await this.resourceUsage(name), runtime };
   }
@@ -236,13 +240,13 @@ export class DockerContainerAdapter {
       '--memory', '2g',
       '--cpus', '2',
       '--pids-limit', '512',
+      '--cap-drop', 'ALL',
       '--user', 'war',
       '--security-opt', 'apparmor=war-browser-agent',
       '--security-opt', `seccomp=${this.seccompProfilePath()}`,
       ...containerNetworkArgs(network),
-      '-p', `127.0.0.1::${CONTROL_PORT}`,
       '-v', `${volume}:/data`,
-      '--add-host', 'host.docker.internal:host-gateway',
+      ...this.controllerHostGatewayArgs(),
       ...environment.mountArgs,
       approvedImage,
     ];
@@ -260,6 +264,13 @@ export class DockerContainerAdapter {
     return `wss://${requireControllerHost(host)}:${port}/v1/agent-session`;
   }
 
+  controllerHostGatewayArgs() {
+    const host = normalizeControllerHost(this.config.controllerHost || this.wss?.host);
+    return host?.toLowerCase() === 'host.docker.internal'
+      ? ['--add-host', 'host.docker.internal:host-gateway']
+      : [];
+  }
+
   seccompProfilePath() {
     const value = this.config.seccompProfilePath;
     if (typeof value !== 'string' || value.length < 2 || value.length > 512 || /[\r\n]/.test(value)) {
@@ -272,17 +283,41 @@ export class DockerContainerAdapter {
   }
 
   approvedImage(container) {
-    const approved = this.config.image || DEFAULT_IMAGE;
+    const approved = this.config.imagePin || this.config.image;
     if (container?.image && container.image !== approved) throw new Error('Managed container image is not approved');
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(approved)) throw new Error('Invalid approved Docker image');
+    if (!isImmutableImagePin(approved)) throw new Error('Managed container requires an immutable image pin');
     return approved;
   }
 
+  async attestImage(container) {
+    const imagePin = this.approvedImage(container);
+    return { imagePin, imageId: await this.imageId(imagePin) };
+  }
+
   async imageId(approvedImage) {
+    if (!isImmutableImagePin(approvedImage)) throw new Error('Managed container requires an immutable image pin');
     const result = await this.docker(['image', 'inspect', '--format', '{{.Id}}', approvedImage]);
     const id = result.stdout.trim();
     if (!/^sha256:[a-f0-9]{64}$/.test(id)) throw new Error('Approved Docker image ID is invalid');
+    if (/^sha256:/i.test(approvedImage) && id !== approvedImage) {
+      throw new Error('Docker image ID does not match the configured immutable pin');
+    }
     return id;
+  }
+
+  async imageEnvironment(approvedImageId) {
+    if (this.imageEnvironmentCache.has(approvedImageId)) return this.imageEnvironmentCache.get(approvedImageId);
+    const result = await this.docker(['image', 'inspect', '--format', '{{json .Config.Env}}', approvedImageId]);
+    let entries;
+    try {
+      entries = JSON.parse(result.stdout.trim());
+    } catch {
+      throw new Error('Approved Docker image environment is invalid');
+    }
+    const environment = parseEnvironment(entries === null ? [] : entries);
+    if (!environment) throw new Error('Approved Docker image environment is invalid');
+    this.imageEnvironmentCache.set(approvedImageId, environment);
+    return environment;
   }
 
   async writeCredential(volume, approvedImage, credential) {
@@ -312,7 +347,7 @@ export class DockerContainerAdapter {
     ];
   }
 
-  async resolveDesiredNetwork(name, runtime = {}, { legacyAttachedNetworks = new Set(), legacyCanonicalDockerId = null, legacyCanonicalRunning = null } = {}) {
+  async resolveDesiredNetwork(name, runtime = {}, { legacyAttachedNetworks = new Set(), legacyCanonicalDockerId = null, legacyCanonicalRunning = null, measuredIpv4MacAddress = null } = {}) {
     const preferences = normalizeManagedNetwork(runtime);
     const canonicalIpv4Network = managedIpv4NetworkName(name);
     const legacyIpv4Network = attachedLegacyIpv4Network({
@@ -322,6 +357,10 @@ export class DockerContainerAdapter {
       canonicalDockerId: legacyCanonicalDockerId,
     });
     const ipv4Network = legacyIpv4Network || canonicalIpv4Network;
+    // Persisted endpoint identity wins; a live MAC only migrates older records.
+    const ipv4MacAddress = preferences.ipv4Enabled
+      ? (normalizeOptionalIpv4MacAddress(runtime.ipv4MacAddress) || normalizeOptionalIpv4MacAddress(measuredIpv4MacAddress))
+      : null;
     if (preferences.ipv4Enabled) {
       await this.ensureManagedIpv4Network(ipv4Network, {
         legacyAttachment: legacyIpv4Network
@@ -335,7 +374,7 @@ export class DockerContainerAdapter {
       });
     }
     if (!preferences.ipv6Enabled) {
-      return { ...preferences, ipv4Network, ipv6Driver: null, ipv6MacAddress: null, ipv6Prefix: null, ipv6Address: null, ipv6Network: null };
+      return { ...preferences, ipv4Network, ipv4MacAddress, ipv6Driver: null, ipv6MacAddress: null, ipv6Prefix: null, ipv6Address: null, ipv6Network: null };
     }
 
     const ipv6Suffix = this.config.ipv6Driver === 'macvlan' ? normalizeIpv6Eui64Suffix(preferences.ipv6Suffix) : preferences.ipv6Suffix;
@@ -360,6 +399,7 @@ export class DockerContainerAdapter {
     return {
       ...preferences,
       ipv4Network,
+      ipv4MacAddress,
       ipv6Suffix,
       ipv6Driver: this.config.ipv6Driver,
       ipv6Interface,
@@ -373,7 +413,8 @@ export class DockerContainerAdapter {
   networkFromRuntime(runtime = {}) {
     const preferences = normalizeManagedNetwork(runtime);
     const ipv4Network = runtime.ipv4Network && isManagedIpv4Network(runtime.ipv4Network) ? runtime.ipv4Network : 'bridge';
-    if (!preferences.ipv6Enabled) return { ...preferences, ipv4Network, ipv6Driver: null, ipv6MacAddress: null, ipv6Prefix: null, ipv6Address: null, ipv6Network: null };
+    const ipv4MacAddress = preferences.ipv4Enabled ? normalizeOptionalIpv4MacAddress(runtime.ipv4MacAddress) : null;
+    if (!preferences.ipv6Enabled) return { ...preferences, ipv4Network, ipv4MacAddress, ipv6Driver: null, ipv6MacAddress: null, ipv6Prefix: null, ipv6Address: null, ipv6Network: null };
     const ipv6Driver = runtime.ipv6Driver || this.config.ipv6Driver;
     const ipv6Suffix = ipv6Driver === 'macvlan' ? normalizeIpv6Eui64Suffix(preferences.ipv6Suffix) : preferences.ipv6Suffix;
     const ipv6Prefix = normalizeIpv6Prefix(runtime.ipv6Prefix);
@@ -385,6 +426,7 @@ export class DockerContainerAdapter {
     return {
       ...preferences,
       ipv4Network,
+      ipv4MacAddress,
       ipv6Suffix,
       ipv6Driver,
       ipv6MacAddress: ipv6Driver === 'macvlan' ? macAddressFromIpv6Eui64Suffix(ipv6Suffix) : null,
@@ -560,10 +602,11 @@ export class DockerContainerAdapter {
     // Keep legacy attachment evidence from this ownership-attested inspect, so
     // a name swap cannot make an empty post-reboot endpoint look trustworthy.
     const legacyAttachedNetworks = new Set(canonicalForLegacy.networkNames);
-    const desired = await this.resolveDesiredNetwork(name, container.runtime, {
+    let desired = await this.resolveDesiredNetwork(name, container.runtime, {
       legacyAttachedNetworks,
       legacyCanonicalDockerId: canonicalForLegacy.dockerId,
       legacyCanonicalRunning: canonicalForLegacy.running,
+      measuredIpv4MacAddress: canonicalForLegacy.ipv4MacAddress,
     });
     let actual = {};
     const currentMatches = async () => {
@@ -591,6 +634,10 @@ export class DockerContainerAdapter {
     // A repair may correct runtime drift, but only a stable WAR identity can be
     // stopped or renamed. Use its immutable Docker ID to close name reuse races.
     const canonical = await this.inspectCanonicalOwnership(name, container, approvedImage, { allowRecoveredDigest: true });
+    desired = { ...desired, ipv4MacAddress: desired.ipv4MacAddress || canonical.ipv4MacAddress };
+    if (desired.ipv4Enabled && desired.ipv4Network !== 'bridge' && !desired.ipv4MacAddress) {
+      throw new Error('Managed container IPv4 MAC address is unavailable for replacement');
+    }
     const wasRunning = (await this.docker(['inspect', '-f', '{{.State.Running}}', canonical.dockerId])).stdout.trim() === 'true';
     const displacedName = recovery?.backup ? networkRecoveryHoldName(name) : networkBackupName(name);
     if (recovery?.hold) {
@@ -730,6 +777,7 @@ export class DockerContainerAdapter {
       dockerId,
       running: inspection.State?.Running,
       networkNames: Object.keys(inspection.NetworkSettings?.Networks || {}),
+      ipv4MacAddress: ipv4MacAddressFromInspection(inspection),
     };
   }
 
@@ -810,7 +858,7 @@ export class DockerContainerAdapter {
   async scanManagedContainers() {
     const listed = await this.docker(['ps', '-a', '--filter', `label=managed-by=${MANAGED_LABEL}`, '--format', '{{.Names}}']);
     const names = [...new Set(String(listed.stdout || '').split(/\r?\n/).map((value) => value.trim()).filter((value) => NAME_PATTERN.test(value)))];
-    const approvedImage = this.config.image || DEFAULT_IMAGE;
+    const approvedImage = this.approvedImage();
     const approvedImageId = await this.imageId(approvedImage);
     const containers = [];
     const rejected = [];
@@ -819,7 +867,12 @@ export class DockerContainerAdapter {
         const inspection = await this.inspectContainer(name);
         if (inspection.Config?.Labels?.['managed-by'] !== MANAGED_LABEL) throw new Error('managed label missing');
         const network = runtimeNetworkFromInspection(inspection, this.config);
-        const runtime = await this.inspectRuntime(name, dataVolume(name), { approvedImage, approvedImageId, network });
+        const runtime = await this.inspectRuntime(name, dataVolume(name), {
+          approvedImage,
+          approvedImageId,
+          network,
+          allowStoppedIpv4MacDiscoveryGap: true,
+        });
         const env = parseEnvironment(inspection.Config?.Env);
         const labels = inspection.Config?.Labels || {};
         const credential = await this.readCredential(name, dataVolume(name), approvedImageId);
@@ -843,7 +896,7 @@ export class DockerContainerAdapter {
     return { containers, rejected };
   }
 
-  async readCredential(name, volume, approvedImage = this.config.image || DEFAULT_IMAGE) {
+  async readCredential(name, volume, approvedImage = this.approvedImage()) {
     const result = await this.docker([
       'run', '--rm', ...this.helperContainerArgs(), '--user', 'war',
       '-v', `${volume}:/data:ro`, '--entrypoint', '/bin/sh', approvedImage,
@@ -978,20 +1031,38 @@ export class DockerContainerAdapter {
     }
   }
 
-  async inspectRuntime(name, volume, { approvedImage, approvedImageId, network = this.networkFromRuntime({}), allowControllerEndpointDrift = false, allowRecoveredDigest = false, container = null, expectedDockerId = null } = {}) {
+  async inspectRuntime(name, volume, { approvedImage, approvedImageId, network = this.networkFromRuntime({}), allowControllerEndpointDrift = false, allowRecoveredDigest = false, allowStoppedIpv4MacDiscoveryGap = false, container = null, expectedDockerId = null } = {}) {
+    const resolvedApprovedImageId = approvedImage
+      ? (approvedImageId || await this.imageId(approvedImage))
+      : null;
+    const imageEnvironment = resolvedApprovedImageId
+      ? await this.imageEnvironment(resolvedApprovedImageId)
+      : null;
     const inspection = await this.inspectContainer(name);
     const host = inspection.HostConfig || {};
     const config = inspection.Config || {};
     const stopped = inspection.State?.Running === false;
     const actualNetworks = inspection.NetworkSettings?.Networks || {};
+    const measuredIpv4MacAddress = network.ipv4Enabled && network.ipv4Network !== 'bridge'
+      ? normalizeOptionalIpv4MacAddress(actualNetworks[network.ipv4Network]?.MacAddress)
+      : null;
+    const ipv4MacAddress = measuredIpv4MacAddress || network.ipv4MacAddress;
     const actualNetworkNames = Object.keys(actualNetworks);
     const binds = Array.isArray(host.Binds) ? host.Binds : [];
     const securityOptions = Array.isArray(host.SecurityOpt) ? host.SecurityOpt : [];
-    const portBindings = host.PortBindings?.[`${CONTROL_PORT}/tcp`] || [];
+    const portBindings = host.PortBindings;
     const expectedWssUrl = this.controllerWssUrl();
     const environment = parseEnvironment(config.Env);
+    const expectedRuntimeEnvironment = imageEnvironment
+      ? this.expectedRuntimeEnvironment({ config, environment, container, imageEnvironment, expectedWssUrl, allowControllerEndpointDrift })
+      : null;
     const safe = config.User === 'war'
       && host.Privileged === false
+      && hasExactlyAllCapabilities(host.CapDrop)
+      && hasNoCapabilitiesAdded(host.CapAdd)
+      && hasNoDeviceAccess(host)
+      && hasNoHostNamespaces(host)
+      && hasExpectedMounts(inspection.Mounts, volume, this.config.controllerCaPath)
       && host.NetworkMode !== 'host'
       && actualNetworkNames.length > 0
       && actualNetworkNames.every((name) => name === network.ipv4Network || name === 'bridge' || name === network.ipv6Network)
@@ -999,23 +1070,26 @@ export class DockerContainerAdapter {
       // Docker clears assigned addresses after stop; keep validating membership and
       // security while allowing a stopped container to have no live endpoint.
       && (!network.ipv4Enabled || network.ipv4Network === 'bridge' || actualNetworks[network.ipv4Network]?.IPAddress || stopped)
+      && (!network.ipv4Enabled
+        || network.ipv4Network === 'bridge'
+        || matchesIpv4EndpointMacAddress(actualNetworks[network.ipv4Network], network.ipv4MacAddress, { stopped })
+        || (allowStoppedIpv4MacDiscoveryGap && stopped && !measuredIpv4MacAddress && !network.ipv4MacAddress))
       && (!network.ipv6Enabled || matchesIpv6Endpoint(actualNetworks[network.ipv6Network], network.ipv6Address) || stopped)
       && (!network.ipv6Enabled || actualNetworks[network.ipv6Network]?.GlobalIPv6PrefixLen === 64 || stopped)
-      && securityOptions.includes('apparmor=war-browser-agent')
-      && matchesApprovedSeccompSecurityOption(securityOptions)
+      && hasApprovedSecurityOptions(securityOptions)
       && host.Memory === 2 * 1024 * 1024 * 1024
       && host.NanoCpus === 2_000_000_000
       && host.PidsLimit === 512
       && binds.some((bind) => bind === `${volume}:/data`)
       && binds.every((bind) => safeBind(bind, volume, this.config.controllerCaPath))
-      && portBindings.length > 0
-      && portBindings.every((binding) => binding.HostIp === '127.0.0.1')
+      && hasNoPublishedPorts(portBindings)
       && config.Labels?.['managed-by'] === MANAGED_LABEL
       && (!container?.id || config.Labels?.[MANAGED_CONTAINER_ID_LABEL] === safeLabel(container.id))
       && (!container?.name || config.Labels?.[MANAGED_CONTAINER_NAME_LABEL] === safeLabel(container.name))
       && (!container?.deviceId || config.Labels?.['war-device-id'] === safeLabel(container.deviceId))
+      && matchesRuntimeEnvironment(environment, expectedRuntimeEnvironment)
       && (allowControllerEndpointDrift || !expectedWssUrl || environment.WAR_CONTROLLER_WSS_URL === expectedWssUrl)
-      && (!approvedImage || matchesApprovedImage(config.Image, inspection.Image, approvedImage, approvedImageId, { allowRecoveredDigest }))
+      && (!approvedImage || matchesApprovedImage(config.Image, inspection.Image, approvedImage, resolvedApprovedImageId, { allowRecoveredDigest }))
       && (!expectedDockerId || inspection.Id === expectedDockerId);
     if (!safe) throw new Error('Managed container runtime security policy failed');
     return {
@@ -1027,10 +1101,10 @@ export class DockerContainerAdapter {
       memoryBytes: host.Memory,
       nanoCpus: host.NanoCpus,
       pidsLimit: host.PidsLimit,
-      controlPort: parsePortBinding(portBindings),
       host: this.config.hostLabel,
       ipv4Enabled: network.ipv4Enabled,
       ipv4Network: network.ipv4Network === 'bridge' ? null : network.ipv4Network,
+      ipv4MacAddress,
       ipv6Enabled: network.ipv6Enabled,
       ipv6Suffix: network.ipv6Suffix,
       ipv6Driver: network.ipv6Driver,
@@ -1040,6 +1114,21 @@ export class DockerContainerAdapter {
       ipv6Network: network.ipv6Network,
       ipv6PrefixChanged: false,
     };
+  }
+
+  expectedRuntimeEnvironment({ config, environment, container, imageEnvironment, expectedWssUrl, allowControllerEndpointDrift }) {
+    const labelDeviceId = safeIdentifier(config.Labels?.['war-device-id']);
+    const deviceId = container?.deviceId || labelDeviceId;
+    if (!safeIdentifier(deviceId)) return null;
+    const entries = this.environment({ deviceId }).entries;
+    if (allowControllerEndpointDrift && expectedWssUrl) {
+      const actualWssUrl = environment?.WAR_CONTROLLER_WSS_URL;
+      if (!isRecoverableControllerWssUrl(actualWssUrl)) return null;
+      const index = entries.findIndex(([key]) => key === 'WAR_CONTROLLER_WSS_URL');
+      if (index < 0) return null;
+      entries[index] = ['WAR_CONTROLLER_WSS_URL', actualWssUrl];
+    }
+    return runtimeEnvironmentBaseline(imageEnvironment, entries);
   }
 
   async resourceUsage(name) {
@@ -1122,8 +1211,9 @@ export class DockerContainerAdapter {
       '-o', 'IdentitiesOnly=yes',
       '-o', 'BatchMode=yes',
       '-o', 'ConnectTimeout=10',
+      '--',
       this.config.sshTarget,
-      '--', command,
+      command,
     ];
   }
 }
@@ -1356,7 +1446,11 @@ function networkLabelArgs(labels) {
 
 function containerNetworkArgs(network) {
   const args = [];
-  if (network.ipv4Enabled) args.push('--network', `name=${network.ipv4Network}`);
+  if (network.ipv4Enabled) {
+    const options = [`name=${network.ipv4Network}`];
+    if (network.ipv4MacAddress) options.push(`mac-address=${network.ipv4MacAddress}`);
+    args.push('--network', options.join(','));
+  }
   if (network.ipv6Enabled) {
     const options = [`name=${network.ipv6Network}`, `ip6=${network.ipv6Address}`];
     if (network.ipv6MacAddress) options.push(`mac-address=${network.ipv6MacAddress}`);
@@ -1369,12 +1463,39 @@ function networkMatches(actual, desired, { stopped = false } = {}) {
   const expected = new Set([desired.ipv4Enabled ? desired.ipv4Network : null, desired.ipv6Enabled ? desired.ipv6Network : null].filter(Boolean));
   const names = Object.keys(actual);
   if (names.length !== expected.size || names.some((name) => !expected.has(name))) return false;
+  if (desired.ipv4Enabled && desired.ipv4Network !== 'bridge'
+    && !matchesIpv4EndpointMacAddress(actual[desired.ipv4Network], desired.ipv4MacAddress, { stopped })) return false;
   if (desired.ipv6Enabled && !matchesIpv6Endpoint(actual[desired.ipv6Network], desired.ipv6Address, { allowConfigured: stopped })) return false;
   if (desired.ipv6Enabled && desired.ipv6Driver === 'macvlan') {
     const liveMacAddress = actual[desired.ipv6Network]?.MacAddress?.toLowerCase();
     if ((!stopped || liveMacAddress) && liveMacAddress !== desired.ipv6MacAddress) return false;
   }
   return true;
+}
+
+function ipv4MacAddressFromInspection(inspection) {
+  const endpoints = Object.entries(inspection?.NetworkSettings?.Networks || {})
+    .filter(([name]) => isManagedIpv4Network(name));
+  if (endpoints.length > 1) throw new Error('Managed container IPv4 endpoint is ambiguous');
+  return normalizeOptionalIpv4MacAddress(endpoints[0]?.[1]?.MacAddress);
+}
+
+function matchesIpv4EndpointMacAddress(network, desiredMacAddress, { stopped = false } = {}) {
+  const measuredMacAddress = normalizeOptionalIpv4MacAddress(network?.MacAddress);
+  if (measuredMacAddress) return desiredMacAddress ? measuredMacAddress === desiredMacAddress : true;
+  return stopped && Boolean(desiredMacAddress);
+}
+
+function normalizeOptionalIpv4MacAddress(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const text = String(value).toLowerCase();
+  if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(text)
+    || (Number.parseInt(text.slice(0, 2), 16) & 1) === 1
+    || text === '00:00:00:00:00:00'
+    || text === 'ff:ff:ff:ff:ff:ff') {
+    throw new Error('Managed container IPv4 MAC address is invalid');
+  }
+  return text;
 }
 
 function isManagedIpv6Network(name) {
@@ -1411,6 +1532,7 @@ function runtimeNetworkFromInspection(inspection, config) {
     ? (ipv6Entry[1].GlobalIPv6Address || (stopped ? ipv6Entry[1].IPAMConfig?.IPv6Address : null))
     : null;
   const ipv6Address = ipv6AddressValue ? normalizeIpv6Address(ipv6AddressValue) : null;
+  const ipv4MacAddress = ipv4Entry ? normalizeOptionalIpv4MacAddress(ipv4Entry[1]?.MacAddress) : null;
   const ipv6MacAddress = ipv6Entry?.[1]?.MacAddress ? String(ipv6Entry[1].MacAddress).toLowerCase() : null;
   const ipv6Suffix = ipv6Entry
     ? (ipv6MacAddress ? ipv6Eui64SuffixFromMacAddress(ipv6MacAddress) : ipv6Address.split(':').slice(4).join(':'))
@@ -1418,6 +1540,7 @@ function runtimeNetworkFromInspection(inspection, config) {
   return {
     ipv4Enabled: Boolean(ipv4Entry),
     ipv4Network: ipv4Entry?.[0] || null,
+    ipv4MacAddress,
     ipv6Enabled: Boolean(ipv6Entry),
     ipv6Suffix,
     ipv6Driver: ipv6Entry ? (config.ipv6Driver === 'bridge' ? 'bridge' : 'macvlan') : null,
@@ -1428,15 +1551,90 @@ function runtimeNetworkFromInspection(inspection, config) {
   };
 }
 
+function hasExactlyAllCapabilities(capDrop) {
+  return Array.isArray(capDrop) && capDrop.length === 1 && capDrop[0] === 'ALL';
+}
+
+function hasNoCapabilitiesAdded(capAdd) {
+  return capAdd == null || (Array.isArray(capAdd) && capAdd.length === 0);
+}
+
+function hasNoDeviceAccess(host) {
+  return (host.Devices == null || (Array.isArray(host.Devices) && host.Devices.length === 0))
+    && (host.DeviceRequests == null || (Array.isArray(host.DeviceRequests) && host.DeviceRequests.length === 0));
+}
+
+function hasNoHostNamespaces(host) {
+  return host.PidMode === ''
+    && host.IpcMode === 'private'
+    && host.UTSMode === ''
+    && host.CgroupnsMode === 'private'
+    && host.UsernsMode === '';
+}
+
+function hasExpectedMounts(mounts, volume, controllerCaPath) {
+  if (!Array.isArray(mounts)) return false;
+  const expectedCount = controllerCaPath ? 2 : 1;
+  if (mounts.length !== expectedCount) return false;
+  const dataMount = mounts.find((mount) => mount?.Destination === '/data');
+  const caMount = mounts.find((mount) => mount?.Destination === '/run/war/controller-ca.pem');
+  return dataMount?.Type === 'volume'
+    && dataMount.Name === volume
+    && dataMount.RW === true
+    && (controllerCaPath
+      ? caMount?.Type === 'bind' && caMount.Source === controllerCaPath && caMount.RW === false
+      : !caMount);
+}
+
+function hasApprovedSecurityOptions(securityOptions) {
+  return Array.isArray(securityOptions)
+    && securityOptions.length === 2
+    && securityOptions.filter((value) => value === 'apparmor=war-browser-agent').length === 1
+    && securityOptions.filter((value) => String(value).startsWith('seccomp=')).length === 1
+    && matchesApprovedSeccompSecurityOption(securityOptions);
+}
+
 function parseEnvironment(entries) {
+  if (!Array.isArray(entries)) return null;
   const result = {};
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const separator = String(entry).indexOf('=');
-    if (separator <= 0) continue;
-    const key = String(entry).slice(0, separator);
-    if (/^[A-Z0-9_]{1,80}$/.test(key)) result[key] = String(entry).slice(separator + 1);
+  for (const entry of entries) {
+    if (typeof entry !== 'string') return null;
+    const separator = entry.indexOf('=');
+    if (separator <= 0) return null;
+    const key = entry.slice(0, separator);
+    if (!/^[A-Z0-9_]{1,80}$/.test(key) || Object.hasOwn(result, key)) return null;
+    result[key] = entry.slice(separator + 1);
   }
   return result;
+}
+
+function runtimeEnvironmentBaseline(imageEnvironment, runtimeEntries) {
+  const expected = new Map(Object.entries(imageEnvironment));
+  for (const [key, value] of runtimeEntries) {
+    if (expected.has(key)) throw new Error('Approved Docker image environment conflicts with managed runtime environment');
+    expected.set(key, value);
+  }
+  return expected;
+}
+
+function matchesRuntimeEnvironment(environment, expectedRuntimeEnvironment) {
+  if (!environment) return false;
+  if (!expectedRuntimeEnvironment) return false;
+  for (const [key, value] of expectedRuntimeEnvironment) {
+    if (environment[key] !== value) return false;
+  }
+  return Object.keys(environment).length === expectedRuntimeEnvironment.size;
+}
+
+function isRecoverableControllerWssUrl(value) {
+  if (typeof value !== 'string' || value.length > 512 || /[\r\n]/.test(value)) return false;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'wss:' || parsed.username || parsed.password || parsed.pathname !== '/v1/agent-session' || parsed.search || parsed.hash) return false;
+    return Boolean(normalizeControllerHost(parsed.hostname));
+  } catch {
+    return false;
+  }
 }
 
 function safeIdentifier(value) {
@@ -1460,14 +1658,14 @@ function parsePort(value) {
   return match ? Number(match[1]) : null;
 }
 
-function parsePortBinding(bindings) {
-  const value = bindings[0]?.HostPort;
-  return /^\d+$/.test(String(value || '')) ? Number(value) : null;
-}
-
 function safeBind(bind, volume, controllerCaPath) {
   if (bind === `${volume}:/data`) return true;
   return Boolean(controllerCaPath && bind === `${controllerCaPath}:/run/war/controller-ca.pem:ro`);
+}
+
+function hasNoPublishedPorts(portBindings) {
+  return portBindings == null
+    || (typeof portBindings === 'object' && !Array.isArray(portBindings) && Object.keys(portBindings).length === 0);
 }
 
 function parsePercent(value) {

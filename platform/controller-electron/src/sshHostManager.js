@@ -4,51 +4,39 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createDockerContainerAdapter } from './containerAdapter.js';
 import { normalizeControllerHost, requireControllerHost } from './controllerHost.js';
+import { isImmutableImagePin } from './runtimeProfileStore.js';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_IMAGE = 'war-browser-agent:phase1';
 const DEFAULT_CA_PATH = '/etc/war/controller-ca.pem';
 const DEFAULT_SECCOMP_PATH = '/etc/war/security/chromium-userns-seccomp.json';
 const DEFAULT_APPARMOR_PATH = '/etc/apparmor.d/war-browser-agent';
-const DEFAULT_SOURCE_ROOT = '/opt/war/web-action-recorder-extension-v4';
-const SOURCE_REPOSITORY = 'https://github.com/tai0huynh-ux/web-action-recorder-extension-v4.git';
-const APPROVED_APPARMOR_SHA256 = '0d28cf5e412992d3cb1bc8759bb6cf9cf1602e9aee54ebef52046f3f9b9b710d';
-const APPROVED_SECCOMP_SHA256 = 'e11ad80b10af89cdade31962005da51dae8cd8828c0d9c02dadf67008aa5181d';
+const APPROVED_APPARMOR_SHA256 = 'b6182de92e8ed7cf31350969042be50352136b3d1e5dccaf6d02aebfbcf2be08';
+const APPROVED_SECCOMP_SHA256 = '6b0e60321eb4b9d774eb4eee0baa7b03d0c6b6141a593b5312e42356cf510c67';
 const REMOTE_CONTROL_IMAGE_LABEL = 'v1';
+const BROWSER_ENGINE_IMAGE_LABEL = 'cloakbrowser';
+const BROWSER_ENGINE_VERSION_LABEL = '0.5.5';
+const BROWSER_BINARY_VERSION_LABEL = '146.0.7680.177.5';
+const BROWSER_ARCHIVE_SHA256_LABEL = '4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d705216670e';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const PROBE_SCRIPT = [
   'set +e',
   'printf "ssh=1\\n"',
   'if command -v docker >/dev/null 2>&1 && docker version --format "{{.Server.Version}}" >/dev/null 2>&1; then printf "docker=1\\n"; else printf "docker=0\\n"; fi',
   'if docker image inspect "$WAR_IMAGE" >/dev/null 2>&1; then printf "image=1\\n"; else printf "image=0\\n"; fi',
-  'if test -f "$WAR_SOURCE/platform/browser-agent/Dockerfile"; then printf "source=1\\n"; else printf "source=0\\n"; fi',
-  'SOURCE_REVISION=$(git -C "$WAR_SOURCE" rev-parse --verify HEAD 2>/dev/null || true)',
+  'IMAGE_ID=$(docker image inspect "$WAR_IMAGE" --format "{{.Id}}" 2>/dev/null || true)',
+  'IMAGE_REPO_DIGESTS=$(docker image inspect "$WAR_IMAGE" --format "{{join .RepoDigests \\"\\n\\"}}" 2>/dev/null || true)',
+  'if test "$WAR_IMAGE" = "$IMAGE_ID" || printf "%s\\n" "$IMAGE_REPO_DIGESTS" | grep -Fxq "$WAR_IMAGE"; then printf "imagePin=1\\n"; else printf "imagePin=0\\n"; fi',
   'IMAGE_REVISION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}" 2>/dev/null || true)',
   'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
-  `if test -n "$SOURCE_REVISION" && test "$IMAGE_REVISION" = "$SOURCE_REVISION" && test "$IMAGE_REMOTE_CONTROL" = "${REMOTE_CONTROL_IMAGE_LABEL}"; then printf "imageCurrent=1\\n"; else printf "imageCurrent=0\\n"; fi`,
-  `if test -f ${DEFAULT_SECCOMP_PATH} && test ! -L ${DEFAULT_SECCOMP_PATH} && test "$(stat -c %U:%G ${DEFAULT_SECCOMP_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_SECCOMP_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_SECCOMP_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_SECCOMP_SHA256} && python3 -m json.tool ${DEFAULT_SECCOMP_PATH} >/dev/null 2>&1; then printf "seccomp=1\\n"; else printf "seccomp=0\\n"; fi`,
-  `if aa-enabled >/dev/null 2>&1 && test -f ${DEFAULT_APPARMOR_PATH} && test ! -L ${DEFAULT_APPARMOR_PATH} && test "$(stat -c %U:%G ${DEFAULT_APPARMOR_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_APPARMOR_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_APPARMOR_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_APPARMOR_SHA256} && grep -Fxq "war-browser-agent (enforce)" /sys/kernel/security/apparmor/profiles 2>/dev/null; then printf "apparmor=1\\n"; else printf "apparmor=0\\n"; fi`,
+  'IMAGE_BROWSER_ENGINE=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.browser-engine\\"}}" 2>/dev/null || true)',
+  'IMAGE_BROWSER_ENGINE_VERSION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.browser-engine-version\\"}}" 2>/dev/null || true)',
+  'IMAGE_BROWSER_BINARY_VERSION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.browser-binary-version\\"}}" 2>/dev/null || true)',
+  'IMAGE_BROWSER_ARCHIVE_SHA256=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.browser-archive-sha256\\"}}" 2>/dev/null || true)',
+  `if test "\${#IMAGE_REVISION}" -eq 40 && test -z "$(printf %s "$IMAGE_REVISION" | tr -d '0-9a-f')" && test "$IMAGE_REMOTE_CONTROL" = "${REMOTE_CONTROL_IMAGE_LABEL}" && test "$IMAGE_BROWSER_ENGINE" = "${BROWSER_ENGINE_IMAGE_LABEL}" && test "$IMAGE_BROWSER_ENGINE_VERSION" = "${BROWSER_ENGINE_VERSION_LABEL}" && test "$IMAGE_BROWSER_BINARY_VERSION" = "${BROWSER_BINARY_VERSION_LABEL}" && test "$IMAGE_BROWSER_ARCHIVE_SHA256" = "${BROWSER_ARCHIVE_SHA256_LABEL}"; then printf "imageCurrent=1\\n"; else printf "imageCurrent=0\\n"; fi`,
+  `if test -f ${DEFAULT_SECCOMP_PATH} && test ! -L ${DEFAULT_SECCOMP_PATH} && test "$(stat -c %U:%G ${DEFAULT_SECCOMP_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_SECCOMP_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_SECCOMP_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_SECCOMP_SHA256}; then printf "seccomp=1\\n"; else printf "seccomp=0\\n"; fi`,
+  `if aa-enabled >/dev/null 2>&1 && test -f ${DEFAULT_APPARMOR_PATH} && test ! -L ${DEFAULT_APPARMOR_PATH} && test "$(stat -c %U:%G ${DEFAULT_APPARMOR_PATH} 2>/dev/null)" = root:root && test -z "$(find ${DEFAULT_APPARMOR_PATH} -perm /022 -print -quit 2>/dev/null)" && test "$(sha256sum ${DEFAULT_APPARMOR_PATH} 2>/dev/null | awk '{print $1}')" = ${APPROVED_APPARMOR_SHA256} && grep -Fxq 'war-browser-agent (enforce)' /sys/kernel/security/apparmor/profiles 2>/dev/null && grep -Fxq 'war-browser-agent//cloakbrowser-launcher (enforce)' /sys/kernel/security/apparmor/profiles 2>/dev/null && grep -Fxq 'war-browser-agent//cloakbrowser-launcher//war-native-host (enforce)' /sys/kernel/security/apparmor/profiles 2>/dev/null; then printf "apparmor=1\\n"; else printf "apparmor=0\\n"; fi`,
   'if test -f "$WAR_CA_PATH" && test ! -L "$WAR_CA_PATH" && test "$(stat -c %U:%G "$WAR_CA_PATH" 2>/dev/null)" = root:root && test -z "$(find "$WAR_CA_PATH" -perm /022 -print -quit 2>/dev/null)"; then printf "ca=1\\n"; else printf "ca=0\\n"; fi',
   'printf "done=1\\n"',
-].join('; ');
-
-const REPAIR_SCRIPT = [
-  'set -eu',
-  'if [ "$(id -u)" -eq 0 ]; then SUDO=""; elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then SUDO="sudo -n"; else printf "ROOT_OR_PASSWORDLESS_SUDO_REQUIRED\\n" >&2; exit 20; fi',
-  'if ! command -v git >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1 || ! command -v apparmor_parser >/dev/null 2>&1 || ! command -v aa-status >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then $SUDO apt-get update; DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y --no-install-recommends git docker.io apparmor apparmor-utils python3; fi',
-  '$SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true',
-  '$SUDO mkdir -p /opt/war',
-  `if test -d ${DEFAULT_SOURCE_ROOT}/.git; then if test "$(git -C ${DEFAULT_SOURCE_ROOT} rev-parse --is-shallow-repository 2>/dev/null || true)" = true; then git -C ${DEFAULT_SOURCE_ROOT} fetch --unshallow origin main >/dev/null 2>&1; else git -C ${DEFAULT_SOURCE_ROOT} fetch origin main >/dev/null 2>&1; fi; git -C ${DEFAULT_SOURCE_ROOT} merge --ff-only FETCH_HEAD >/dev/null 2>&1; else if test -e ${DEFAULT_SOURCE_ROOT}; then $SUDO mv ${DEFAULT_SOURCE_ROOT} ${DEFAULT_SOURCE_ROOT}.backup.$(date +%s); fi; $SUDO git clone --depth 1 ${SOURCE_REPOSITORY} ${DEFAULT_SOURCE_ROOT}; fi`,
-  `APPARMOR_SOURCE=${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor; SECCOMP_SOURCE=${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json; if ! test -f "$APPARMOR_SOURCE" || test -L "$APPARMOR_SOURCE" || test "$(sha256sum "$APPARMOR_SOURCE" 2>/dev/null | awk '{print $1}')" != ${APPROVED_APPARMOR_SHA256} || ! test -f "$SECCOMP_SOURCE" || test -L "$SECCOMP_SOURCE" || test "$(sha256sum "$SECCOMP_SOURCE" 2>/dev/null | awk '{print $1}')" != ${APPROVED_SECCOMP_SHA256} || ! python3 -m json.tool "$SECCOMP_SOURCE" >/dev/null 2>&1; then printf "APPROVED_SECURITY_PROFILE_SOURCE_REQUIRED\\n" >&2; exit 21; fi`,
-  `$SUDO mkdir -p /etc/apparmor.d ${DEFAULT_SECCOMP_PATH.substring(0, DEFAULT_SECCOMP_PATH.lastIndexOf('/'))}`,
-  `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/war-browser-agent.apparmor ${DEFAULT_APPARMOR_PATH}`,
-  `$SUDO install -o root -g root -m 0644 ${DEFAULT_SOURCE_ROOT}/platform/container/security/chromium-userns-seccomp.json ${DEFAULT_SECCOMP_PATH}`,
-  `$SUDO apparmor_parser -r -W ${DEFAULT_APPARMOR_PATH}`,
-  'SOURCE_REVISION=$(git -C "$WAR_SOURCE" rev-parse --verify HEAD)',
-  'IMAGE_REVISION=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"org.opencontainers.image.revision\\"}}" 2>/dev/null || true)',
-  'IMAGE_REMOTE_CONTROL=$(docker image inspect "$WAR_IMAGE" --format "{{index .Config.Labels \\"com.web-action-recorder.remote-control\\"}}" 2>/dev/null || true)',
-  `if test "$IMAGE_REVISION" != "$SOURCE_REVISION" || test "$IMAGE_REMOTE_CONTROL" != "${REMOTE_CONTROL_IMAGE_LABEL}"; then $SUDO docker build --pull=false --build-arg WAR_SOURCE_REVISION="$SOURCE_REVISION" -f ${DEFAULT_SOURCE_ROOT}/platform/browser-agent/Dockerfile -t "$WAR_IMAGE" ${DEFAULT_SOURCE_ROOT}; fi`,
-  'printf "repair=1\\n"',
 ].join('; ');
 
 export class SshContainerHostManager {
@@ -68,11 +56,12 @@ export class SshContainerHostManager {
 
   async load() {
     const settings = await this.settingsStore?.get?.() || {};
-    this.hosts = new Map((settings.containerHosts || []).map((host) => [host.id, structuredClone(host)]));
+    this.hosts = new Map((settings.containerHosts || []).map((host) => [host.id, withMainProcessImagePin(host, this.config)]));
     this.trashedHosts = new Map((settings.trashedContainerHosts || []).map((host) => [host.id, structuredClone(host)]));
     this.purgedHostIds = new Set(settings.purgedContainerHostIds || []);
     const legacy = legacyHost(this.config);
-    if (legacy && !this.hosts.has(legacy.id) && !this.trashedHosts.has(legacy.id) && !this.purgedHostIds.has(legacy.id)) this.hosts.set(legacy.id, legacy);
+    const matchingPersistedTarget = legacy && [...this.hosts.values()].some((host) => host.target === legacy.target);
+    if (legacy && !matchingPersistedTarget && !this.hosts.has(legacy.id) && !this.trashedHosts.has(legacy.id) && !this.purgedHostIds.has(legacy.id)) this.hosts.set(legacy.id, legacy);
     return { status: this.hosts.size ? 'configured' : 'unavailable', hosts: [...this.hosts.values()].map(publicHost) };
   }
 
@@ -87,7 +76,7 @@ export class SshContainerHostManager {
   }
 
   async addHost(payload = {}) {
-    const host = normalizeHostPayload(payload);
+    const host = normalizeHostPayload(payload, null, this.configuredImagePin());
     this.assertIdentity(host.identityFile);
     const settings = await this.settingsStore.get();
     const existing = (settings.containerHosts || []).filter((item) => item.id !== host.id);
@@ -109,11 +98,11 @@ export class SshContainerHostManager {
       controllerHost: payload.controllerHost ?? current.controllerHost,
       controllerCaPath: payload.controllerCaPath ?? current.controllerCaPath,
       seccompProfilePath: payload.seccompProfilePath ?? current.seccompProfilePath,
-      image: payload.image ?? current.image,
+      image: payload.image ?? current.imagePin ?? current.image,
       ipv6Interface: payload.ipv6Interface ?? current.ipv6Interface,
       ipv6Prefix: payload.ipv6Prefix ?? current.ipv6Prefix,
       ipv6Driver: payload.ipv6Driver ?? current.ipv6Driver,
-    }, hostId);
+    }, hostId, this.configuredImagePin());
     this.assertIdentity(host.identityFile);
     const duplicate = [...this.hosts.values()].find((item) => item.id !== hostId && item.target === host.target);
     if (duplicate) throw Object.assign(new Error('SSH target is already configured'), { code: 'CONTAINER_HOST_TARGET_EXISTS' });
@@ -204,8 +193,7 @@ export class SshContainerHostManager {
   async performRepairHost(hostId) {
     const host = this.requireHost(hostId);
     this.assertIdentity(host.identityFile);
-    await this.remote(host, withEnvironment(REPAIR_SCRIPT, host.image, host.controllerCaPath), 'repair');
-    const checked = await this.describeHost(host);
+    const checked = await this.describeHost(host, { rethrowTransportError: true });
     const diagnostics = checked.diagnostics || {};
     if (!diagnostics.ssh) {
       throw codedError('SSH_HOST_REPAIR_VERIFY_FAILED', diagnostics.error || 'Linux host could not be verified after repair');
@@ -213,9 +201,10 @@ export class SshContainerHostManager {
     if (!diagnostics.wss) {
       throw codedError('CONTROLLER_WSS_NOT_CONFIGURED', 'Controller WSS is not configured for this Linux host');
     }
-    const failedChecks = ['docker', 'image', 'imageCurrent', 'source', 'apparmor', 'seccomp', 'ca'].filter((key) => diagnostics[key] !== true);
+    const imageCheck = host.imagePin ? 'imagePin' : 'imageCurrent';
+    const failedChecks = ['docker', 'image', imageCheck, 'apparmor', 'seccomp', 'ca'].filter((key) => diagnostics[key] !== true);
     if (failedChecks.length) {
-      throw codedError('SSH_HOST_REPAIR_INCOMPLETE', `Linux repair completed but checks still fail: ${failedChecks.join(', ')}`, { failedChecks });
+      throw codedError('HOST_PROVISIONING_REQUIRED', `Linux host needs the approved immutable image and security prerequisites: ${failedChecks.join(', ')}`, { failedChecks });
     }
     return checked;
   }
@@ -255,7 +244,8 @@ export class SshContainerHostManager {
         controllerHost: host.controllerHost || this.config.wss?.host || null,
         controllerCaPath: host.controllerCaPath,
         seccompProfilePath: host.seccompProfilePath,
-        image: host.image,
+        image: host.imagePin || host.image,
+        imagePin: host.imagePin || null,
         ipv6Interface: host.ipv6Interface,
         ipv6Prefix: host.ipv6Prefix,
         ipv6Driver: host.ipv6Driver,
@@ -263,13 +253,16 @@ export class SshContainerHostManager {
     };
   }
 
-  async describeHost(host) {
+  async describeHost(host, { rethrowTransportError = false } = {}) {
     const base = publicHost(host);
     try {
       this.assertIdentity(host.identityFile);
-      const result = await this.remote(host, withEnvironment(PROBE_SCRIPT, host.image, host.controllerCaPath), 'probe');
+      const imagePin = this.hostImagePin(host);
+      const result = await this.remote(host, withEnvironment(PROBE_SCRIPT, imagePin, host.controllerCaPath));
       const diagnostics = parseProbe(result.stdout);
-      const linuxReady = diagnostics.ready === true;
+      // Image labels describe the build but cannot authorize it. Pinned hosts
+      // require the exact local ID or registry digest evidence from the probe.
+      const linuxReady = diagnostics.ready === true && (!host.imagePin || diagnostics.imagePin === true);
       diagnostics.linuxReady = linuxReady;
       diagnostics.wss = Boolean(this.config.wss?.enabled && this.config.wss?.port && (host.controllerHost || this.config.wss.host));
       diagnostics.ready = linuxReady && diagnostics.wss;
@@ -277,24 +270,26 @@ export class SshContainerHostManager {
       const status = diagnostics.ready ? 'ready' : (linuxReady && !diagnostics.wss ? 'controller-required' : 'repair-required');
       return { ...base, connected: diagnostics.ready === true, status, diagnostics, checkedAt: this.now() };
     } catch (error) {
+      if (rethrowTransportError) throw error;
       return { ...base, connected: false, status: 'unavailable', diagnostics: { ssh: false, ready: false, error: sanitizeError(error) }, checkedAt: this.now() };
     }
   }
 
-  async remote(host, command, operation = 'probe') {
+  async remote(host, command) {
     const args = [
       '-F', 'NUL',
       '-i', host.identityFile,
       '-o', 'IdentitiesOnly=yes',
       '-o', 'BatchMode=yes',
       '-o', 'ConnectTimeout=10',
+      '--',
       host.target,
-      '--', command,
+      command,
     ];
     try {
-      return await this.execFile('ssh', args, { timeout: 15 * 60 * 1000, maxBuffer: MAX_OUTPUT_BYTES, env: { ...process.env, WAR_IMAGE: host.image, WAR_SOURCE: DEFAULT_SOURCE_ROOT } });
+      return await this.execFile('ssh', args, { timeout: 15 * 60 * 1000, maxBuffer: MAX_OUTPUT_BYTES, env: { ...process.env, WAR_IMAGE: this.hostImagePin(host) } });
     } catch (error) {
-      throw mapSshCommandError(error, operation);
+      throw mapSshCommandError(error);
     }
   }
 
@@ -305,6 +300,18 @@ export class SshContainerHostManager {
     if (!stat.isFile()) throw codedError('SSH_IDENTITY_NOT_FILE', 'SSH private key path is not a regular file');
   }
 
+  configuredImagePin() {
+    const imagePin = this.config?.containers?.imagePin;
+    if (this.config?.containers?.enabled && !isImmutableImagePin(imagePin)) throw new Error('Managed SSH host requires an immutable image pin');
+    return isImmutableImagePin(imagePin) ? imagePin : null;
+  }
+
+  hostImagePin(host) {
+    const imagePin = host?.imagePin || (!this.config?.containers?.enabled ? host?.image : null);
+    if (!isImmutableImagePin(imagePin)) throw new Error('Managed SSH host requires an immutable image pin');
+    return imagePin;
+  }
+
   requireHost(hostId) {
     const host = this.getHost(hostId);
     if (!host) throw Object.assign(new Error('SSH host not found'), { code: 'CONTAINER_HOST_NOT_FOUND' });
@@ -312,20 +319,23 @@ export class SshContainerHostManager {
   }
 }
 
-function normalizeHostPayload(payload, fixedId = null) {
+function normalizeHostPayload(payload, fixedId = null, mainProcessImagePin = null) {
   const name = requiredText(payload.name, 1, 80);
   const target = requiredText(payload.target, 3, 255);
   const identityFile = requiredText(payload.identityFile, 1, 1024);
   if (!/^(?:[A-Za-z0-9._-]+@)?(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(target)) throw new Error('SSH target is invalid');
   const id = fixedId || `ssh-${crypto.createHash('sha256').update(target).digest('hex').slice(0, 16)}`;
-  const image = requiredText(payload.image || DEFAULT_IMAGE, 1, 256);
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(image)) throw new Error('Docker image is invalid');
+  const suppliedImage = payload.image;
+  if (mainProcessImagePin && suppliedImage !== undefined && suppliedImage !== mainProcessImagePin) throw new Error('Managed SSH host requires an immutable image pin');
+  if (!mainProcessImagePin) throw new Error('Managed SSH host requires an immutable image pin');
+  const image = mainProcessImagePin;
   return {
     id,
     name,
     target,
     identityFile,
     image,
+    ...(mainProcessImagePin ? { imagePin: mainProcessImagePin } : {}),
     controllerHost: requireControllerHost(payload.controllerHost),
     controllerCaPath: remotePath(payload.controllerCaPath, DEFAULT_CA_PATH),
     seccompProfilePath: remotePath(payload.seccompProfilePath, DEFAULT_SECCOMP_PATH),
@@ -339,12 +349,15 @@ function legacyHost(config) {
   const containers = config.containers;
   if (!containers?.enabled || containers.runtime !== 'ssh-docker' || !containers.sshTarget || !containers.sshIdentityFile) return null;
   const controllerHost = normalizeControllerHost(containers.controllerHost);
+  const imagePin = containers.imagePin;
+  if (!isImmutableImagePin(imagePin)) return null;
   return {
     id: containers.hostId || 'configured-docker-host',
     name: containers.hostDisplayName || 'Configured Linux host',
     target: containers.sshTarget,
     identityFile: containers.sshIdentityFile,
-    image: containers.image || DEFAULT_IMAGE,
+    image: imagePin,
+    imagePin,
     controllerHost,
     controllerCaPath: containers.controllerCaPath || DEFAULT_CA_PATH,
     seccompProfilePath: containers.seccompProfilePath || DEFAULT_SECCOMP_PATH,
@@ -361,7 +374,7 @@ function publicHost(host) {
     name: host.name,
     target: host.target,
     runtime: 'ssh-docker',
-    image: host.image,
+    image: host.imagePin || host.image,
     identityConfigured: Boolean(host.identityFile),
     connected: false,
     ...(host.deletedAt ? { deletedAt: host.deletedAt } : {}),
@@ -369,17 +382,24 @@ function publicHost(host) {
 }
 
 function withEnvironment(command, image, caPath) {
-  return `WAR_IMAGE=${shellQuote(image)} WAR_SOURCE=${shellQuote(DEFAULT_SOURCE_ROOT)} WAR_CA_PATH=${shellQuote(caPath)} sh -c ${shellQuote(command)}`;
+  return `WAR_IMAGE=${shellQuote(image)} WAR_CA_PATH=${shellQuote(caPath)} sh -c ${shellQuote(command)}`;
 }
 
 function parseProbe(output = '') {
-  const result = { ssh: false, docker: false, image: false, imageCurrent: false, source: false, apparmor: false, seccomp: false, ca: false, ready: false };
+  const result = { ssh: false, docker: false, image: false, imagePin: false, imageCurrent: false, apparmor: false, seccomp: false, ca: false, ready: false };
   for (const line of String(output).split(/\r?\n/)) {
     const [key, value] = line.split('=', 2);
     if (Object.hasOwn(result, key)) result[key] = value === '1';
   }
-  result.ready = result.ssh && result.docker && result.image && result.imageCurrent && result.source && result.apparmor && result.seccomp && result.ca;
+  result.ready = result.ssh && result.docker && result.image && (result.imagePin || result.imageCurrent) && result.apparmor && result.seccomp && result.ca;
   return result;
+}
+
+function withMainProcessImagePin(host, config) {
+  const copy = structuredClone(host);
+  const imagePin = config?.containers?.imagePin;
+  if (!isImmutableImagePin(imagePin)) return copy;
+  return { ...copy, image: imagePin, imagePin };
 }
 
 function requiredText(value, min, max) {
@@ -405,7 +425,7 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
-function mapSshCommandError(error, operation) {
+function mapSshCommandError(error) {
   const raw = `${error?.stderr || ''} ${error?.message || ''}`.toLowerCase();
   if (error?.code === 'ENOENT') return codedError('SSH_CLIENT_MISSING', 'The ssh client is not available on the Controller');
   if (error?.code === 'ETIMEDOUT' || error?.killed || error?.signal === 'SIGTERM' || raw.includes('timed out')) {
@@ -419,12 +439,6 @@ function mapSshCommandError(error, operation) {
   }
   if (raw.includes('connection refused') || raw.includes('no route to host') || raw.includes('network is unreachable') || raw.includes('unknown error')) {
     return codedError('SSH_UNREACHABLE', 'The Linux host is unreachable on the network');
-  }
-  if (operation === 'repair' && raw.includes('root_or_passwordless_sudo_required')) {
-    return codedError('SSH_SUDO_REQUIRED', 'Repair requires root or passwordless sudo on the Linux host');
-  }
-  if (operation === 'repair') {
-    return codedError('SSH_REPAIR_COMMAND_FAILED', 'The remote repair command failed; verify package, Docker, and repository access');
   }
   return codedError('SSH_HOST_COMMAND_FAILED', 'The remote Linux host check failed');
 }

@@ -12,6 +12,7 @@ test('Chromium child environment excludes credential-like values', () => {
     DISPLAY: ':99',
     WAR_CONTROLLER_SESSION_CREDENTIAL: 'credential-value',
     API_TOKEN: 'token-value',
+    LICENSE_KEY: 'license-value',
     NODE_EXTRA_CA_CERTS: '/run/war/controller-ca.pem',
   }), {
     PATH: '/usr/bin',
@@ -76,6 +77,44 @@ test('target ID is stable after navigate', async () => {
   page._url = 'https://fixture.local/b';
   const tabs = await controller.listTabs();
   assert.equal(tabs[0].targetId, targetId);
+});
+
+test('browser state reports the default pinned CloakBrowser engine metadata', async () => {
+  const controller = fakeController();
+
+  const state = await controller.getState();
+
+  assert.deepEqual(state.engine, {
+    name: 'cloakbrowser',
+    version: '0.5.5',
+    pinnedVersion: '146.0.7680.177.5',
+  });
+});
+
+test('tab back, forward, reload, and home invoke the exact active Chromium page operation', async () => {
+  const controller = fakeController();
+  const calls = [];
+  const page = fakePage('https://fixture.local/current', {
+    goBack: async () => { calls.push(['back']); page._url = 'https://fixture.local/back'; },
+    goForward: async () => { calls.push(['forward']); page._url = 'https://fixture.local/forward'; },
+    reload: async () => { calls.push(['reload']); },
+    goto: async (url) => { calls.push(['home', url]); page._url = url; },
+  });
+  controller.context._pages.push(page);
+  const targetId = controller.registerPage(page);
+
+  await controller.backTab(targetId);
+  await controller.forwardTab(targetId);
+  await controller.reloadTab(targetId);
+  const home = await controller.homeTab(targetId);
+
+  assert.deepEqual(calls, [
+    ['back'],
+    ['forward'],
+    ['reload'],
+    ['home', 'chrome://newtab/'],
+  ]);
+  assert.equal(home.url, 'chrome://newtab/');
 });
 
 test('activate updates exactly one active tab', async () => {
@@ -181,7 +220,7 @@ test('extension detection works when service worker is asleep but extension page
   });
   const status = await controller.refreshExtensionStatus();
   assert.equal(status.loaded, true);
-  assert.equal(status.extensionId, 'abc123');
+  assert.equal(status.extensionId, 'edoicfpldmlabgdalemfgflpldiijdmm');
 });
 
 test('remote frame capture returns a bounded JPEG for the active Chromium viewport', async () => {
@@ -202,7 +241,7 @@ test('remote frame capture returns a bounded JPEG for the active Chromium viewpo
   assert.equal(frame.height, 720);
 });
 
-test('native bridge manifest creation wakes extension polling after load', async () => {
+test('extension verification never mutates the native messaging manifest or extension settings', async () => {
   const extensionDir = tempExtension();
   const hostPath = path.join(os.tmpdir(), `war-native-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const previousHostPath = process.env.WAR_NATIVE_HOST_PATH;
@@ -210,7 +249,6 @@ test('native bridge manifest creation wakes extension polling after load', async
   let evaluated = false;
   try {
     const controller = fakeController({ extensionDir });
-    controller.extensionStatus.extensionId = 'abc123';
     controller.context._newPage = async () => fakePage('about:blank', {
       goto: async function goto(url) {
         this._url = url;
@@ -222,11 +260,6 @@ test('native bridge manifest creation wakes extension polling after load', async
     const status = await controller.refreshExtensionStatus();
     assert.equal(status.loaded, true);
     assert.equal(evaluated, false);
-    assert.equal(controller.pendingNativeBridgeRestartFor, 'abc123');
-    controller.pendingNativeBridgeRestartFor = null;
-    await controller.refreshExtensionStatus();
-    assert.equal(evaluated, true);
-    assert.equal(controller.nativeBridgePollTriggeredFor.has('abc123'), true);
   } finally {
     if (previousHostPath === undefined) delete process.env.WAR_NATIVE_HOST_PATH;
     else process.env.WAR_NATIVE_HOST_PATH = previousHostPath;
@@ -255,7 +288,8 @@ function fakeController(overrides = {}) {
     paths: { profileDir: '/tmp/profile', downloadsDir: '/tmp/downloads' },
     width: 800,
     height: 600,
-    chromiumExecutable: '/usr/bin/chromium',
+    browserEngine: { name: 'cloakbrowser', version: '0.5.5', pinnedVersion: '146.0.7680.177.5', executable: '/opt/war/cloakbrowser/chromium-146.0.7680.177.5/chrome' },
+    extensionId: overrides.extensionId || 'edoicfpldmlabgdalemfgflpldiijdmm',
     headless: false,
     locale: 'en-US',
     timezone: 'UTC',
@@ -290,6 +324,9 @@ function fakePage(url, methods = {}) {
   page.goto = methods.goto || (async (nextUrl) => {
     page._url = nextUrl;
   });
+  page.goBack = methods.goBack || (async () => undefined);
+  page.goForward = methods.goForward || (async () => undefined);
+  page.reload = methods.reload || (async () => undefined);
   page.setContent = methods.setContent || (async (content) => {
     page._content = content;
     page._setContentCalls += 1;

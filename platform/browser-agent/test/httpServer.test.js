@@ -132,6 +132,33 @@ test('loopback control responses redact URL fragments', async () => {
   assert.match(body.url, /safe=1/);
 });
 
+test('HTTP control rejects privileged clipboard commands before dispatcher execution without leaking text', async () => {
+  const secret = 'synthetic-clipboard-http-secret';
+  const calls = [];
+  const logs = [];
+  const fixture = await startFixture({}, {
+    dispatch: async (body) => {
+      calls.push(body);
+      return { ok: true };
+    },
+  }, undefined, (...args) => logs.push(args));
+
+  for (const type of ['clipboard.copySelection', 'clipboard.pasteText']) {
+    const response = await fetch(`${fixture.baseUrl}/v1/control`, {
+      method: 'POST',
+      body: JSON.stringify({ type, payload: { text: secret } }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.deepEqual(body, { error: { code: 'forbidden', message: 'Request denied' } });
+    assert.equal(JSON.stringify(body).includes(secret), false);
+  }
+  fixture.server.close();
+
+  assert.deepEqual(calls, []);
+  assert.equal(JSON.stringify(logs).includes(secret), false);
+});
+
 test('remote state responses redact fragments and omit local profile paths', async () => {
   const secret = 'synthetic-remote-state-secret';
   const token = '123456789012345678901234';

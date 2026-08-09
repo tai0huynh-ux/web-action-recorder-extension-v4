@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { ControllerSessionClient, createWebSocketConnector } from '../src/controllerSessionClient.js';
+import { ControllerSessionClient, buildDeviceDescriptor, createWebSocketConnector } from '../src/controllerSessionClient.js';
 
 test('real WebSocket connector sends Authorization header during opening handshake', async () => {
   let authorization;
@@ -75,6 +75,27 @@ test('controller restart triggers deterministic reconnect with jitter and no zer
   assert.equal(scheduler.timers[0].ms, 500);
 });
 
+test('device descriptor advertises clipboard text and a safely supplied browser version', () => {
+  const descriptor = buildDeviceDescriptor({ deviceId: 'dev-a', browserVersion: 'CloakBrowser 146.0.7680.177.5' }, '0.5.5', () => '2026-07-16T00:00:00.000Z');
+  assert.equal(descriptor.capabilities.clipboardText, true);
+  assert.equal(descriptor.browserVersion, 'CloakBrowser 146.0.7680.177.5');
+});
+
+test('transient remote-control responses are never queued while the session is offline', () => {
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => new FakeSocket(),
+    scheduler: fakeScheduler(),
+  });
+  assert.throws(() => client.sendRemoteControlResponse({ messageId: 'clipboard-request' }, {
+    ok: true,
+    result: { type: 'clipboard.copySelection', result: { copied: true, text: 'secret', bytes: 6 } }
+  }, { transient: true }), /transient/);
+  assert.equal(client.queue.length, 0);
+});
+
 test('error and close from one socket schedule only one reconnect timer', () => {
   const scheduler = fakeScheduler();
   const sockets = [];
@@ -120,6 +141,63 @@ test('late stale socket error does not move the active socket back to reconnecti
   assert.equal(scheduler.timers.length, 1);
 });
 
+test('timed-out outbound connect is retired before one prompt reconnect can authenticate', () => {
+  const scheduler = fakeScheduler();
+  const sockets = [];
+  const remoteControls = [];
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    scheduler,
+    random: () => 0,
+    minReconnectMs: 500,
+    maxReconnectMs: 2000,
+    connectTimeoutMs: 5000
+  });
+  client.on('remoteControl', (request) => remoteControls.push(request));
+
+  client.start();
+  assert.equal(scheduler.timers.length, 1);
+  assert.equal(scheduler.timers[0].ms, 5000);
+
+  scheduler.runNext();
+  assert.equal(sockets[0].closed, true);
+  assert.equal(client.status, 'reconnecting');
+  assert.equal(scheduler.timers.length, 1);
+  assert.equal(scheduler.timers[0].ms, 500);
+
+  // Timed-out sockets must be unable to win the reconnect race.
+  sockets[0].emit('open');
+  sockets[0].emit('error', new Error('late timed-out socket error'));
+  sockets[0].emit('close');
+  assert.equal(client.status, 'reconnecting');
+  assert.equal(sockets[0].sent.length, 0);
+  assert.equal(scheduler.timers.length, 1);
+
+  scheduler.runNext();
+  sockets[1].emit('open');
+  assert.equal(client.status, 'online');
+  assert.deepEqual(sockets[1].sent.map((message) => JSON.parse(message).type), ['agent.hello']);
+  const session = authenticate(sockets[1]);
+
+  sockets[0].emit('message', JSON.stringify(controllerRequest({
+    type: 'remote.control.request',
+    messageId: 'late-timed-out-request',
+    session,
+    deadline: '2026-07-16T00:00:10.000Z',
+    idempotencyKey: 'late-timed-out-request',
+    payload: { command: 'input.shortcut', payload: { keys: 'CTRL+T' } }
+  })));
+  assert.deepEqual(remoteControls, []);
+  assert.equal(scheduler.timers.length, 1);
+});
+
 test('agent restart sends fresh hello, receives replay dispatch, and shutdown clears timers/listeners', () => {
   const scheduler = fakeScheduler();
   const socket = new FakeSocket();
@@ -136,7 +214,10 @@ test('agent restart sends fresh hello, receives replay dispatch, and shutdown cl
   client.start();
   socket.emit('open');
   assert.equal(JSON.parse(socket.sent[0]).type, 'agent.hello');
-  socket.emit('message', JSON.stringify({ correlationId: 'hello', payload: { replay: [{ jobId: 'job-1' }] } }));
+  socket.emit('message', JSON.stringify(controllerResponse({
+    correlationId: JSON.parse(socket.sent[0]).messageId,
+    replay: [{ jobId: 'job-1' }]
+  })));
   assert.deepEqual(dispatches, [{ jobId: 'job-1' }]);
   assert.ok(scheduler.timers.length > 0);
   client.gracefulShutdown();
@@ -160,8 +241,15 @@ test('controller session tracks session, emits cancel, and sends execution event
   client.on('cancel', (item) => cancels.push(item));
   client.start();
   socket.emit('open');
-  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
-  socket.emit('message', JSON.stringify({ type: 'execution.cancel', payload: { jobId: 'job-1' } }));
+  const session = authenticate(socket);
+  socket.emit('message', JSON.stringify(controllerRequest({
+    type: 'execution.cancel',
+    messageId: 'cancel-a',
+    session,
+    deadline: '2026-07-16T00:00:10.000Z',
+    idempotencyKey: 'cancel-a',
+    payload: { jobId: 'job-1' }
+  })));
   client.sendExecutionEvent({ jobId: 'job-1', eventType: 'job_started', idempotencyKey: 'job-1-started' });
   const sent = JSON.parse(socket.sent.at(-1));
   assert.deepEqual(cancels, [{ jobId: 'job-1' }]);
@@ -185,11 +273,11 @@ test('terminal execution send waits for correlated Controller acknowledgement', 
   client.on('authenticated', (session) => authenticated.push(session));
   client.start();
   socket.emit('open');
-  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
+  const session = authenticate(socket);
   const pending = client.sendExecutionEvent({ jobId: 'job-1', eventType: 'job_succeeded', result: { ok: true } });
   const sent = JSON.parse(socket.sent.at(-1));
   assert.equal(client.pending.size, 1);
-  socket.emit('message', JSON.stringify({ correlationId: sent.messageId, payload: { ok: true } }));
+  socket.emit('message', JSON.stringify(controllerResponse({ correlationId: sent.messageId, session })));
   const response = await pending;
   assert.equal(response.payload.ok, true);
   assert.equal(client.pending.size, 0);
@@ -237,14 +325,13 @@ test('controller session handles origin sync requests and sends correlated respo
   client.on('originInventoryRequest', (request) => requests.push(request));
   client.start();
   socket.emit('open');
-  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
-  socket.emit('message', JSON.stringify({
-    protocolVersion: 'war-control.v2',
-    messageId: 'origin-request-a',
+  const session = authenticate(socket);
+  socket.emit('message', JSON.stringify(controllerRequest({
     type: 'origin.inventory.request',
-    sentAt: '2026-07-16T00:00:00.000Z',
+    messageId: 'origin-request-a',
+    session,
     payload: { entityTypes: ['workflows'] }
-  }));
+  })));
 
   client.sendOriginResponse(requests[0], { workflows: [], counts: { workflows: 0 } });
 
@@ -269,16 +356,15 @@ test('controller session receives remote control and returns a correlated respon
   client.on('remoteControl', (request) => requests.push(request));
   client.start();
   socket.emit('open');
-  socket.emit('message', JSON.stringify({ payload: { session: { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' } } }));
-  socket.emit('message', JSON.stringify({
-    protocolVersion: 'war-control.v2',
-    messageId: 'remote-request-a',
+  const session = authenticate(socket);
+  socket.emit('message', JSON.stringify(controllerRequest({
     type: 'remote.control.request',
-    sentAt: '2026-07-16T00:00:00.000Z',
+    messageId: 'remote-request-a',
+    session,
     deadline: '2026-07-16T00:00:10.000Z',
     idempotencyKey: 'remote-a',
     payload: { command: 'input.shortcut', payload: { keys: 'CTRL+T' } }
-  }));
+  })));
 
   client.sendRemoteControlResponse(requests[0], { ok: true, requestId: 'remote-a', result: { executed: true } });
 
@@ -287,6 +373,43 @@ test('controller session receives remote control and returns a correlated respon
   assert.equal(sent.type, 'remote.control.response');
   assert.equal(sent.correlationId, 'remote-request-a');
   assert.equal(sent.sessionId, 'session-1');
+});
+
+test('controller session emits remote control only for a valid current-session request', () => {
+  const socket = new FakeSocket();
+  const client = new ControllerSessionClient({
+    url: 'wss://controller.example/session',
+    credential: 'secret',
+    identity: { deviceId: 'dev-a' },
+    connector: () => socket,
+    scheduler: fakeScheduler(),
+    now: () => '2026-07-16T00:00:00.000Z'
+  });
+  const requests = [];
+  client.on('remoteControl', (request) => requests.push(request));
+  client.start();
+  socket.emit('open');
+  client.setSession({ sessionId: 'session-a', generation: 1, deviceId: 'dev-a' });
+
+  const valid = (overrides = {}) => ({
+    protocolVersion: 'war-control.v2',
+    messageId: 'remote-valid',
+    type: 'remote.control.request',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    deadline: '2026-07-16T00:00:10.000Z',
+    idempotencyKey: 'remote-valid',
+    deviceId: 'dev-a',
+    sessionId: 'session-a',
+    payload: { command: 'input.shortcut', payload: { keys: 'CTRL+T' } },
+    ...overrides
+  });
+  socket.emit('message', JSON.stringify(valid({ messageId: 'remote-wrong-device', deviceId: 'dev-b' })));
+  socket.emit('message', JSON.stringify(valid({ messageId: 'remote-wrong-session', sessionId: 'session-b' })));
+  socket.emit('message', JSON.stringify(valid({ messageId: 'remote-expired', deadline: '2026-07-15T23:59:59.000Z' })));
+  socket.emit('message', JSON.stringify({ type: 'remote.control.request', payload: {} }));
+  socket.emit('message', JSON.stringify(valid()));
+
+  assert.deepEqual(requests.map((request) => request.messageId), ['remote-valid']);
 });
 
 class FakeSocket extends EventEmitter {
@@ -323,6 +446,43 @@ function fakeScheduler() {
       const timer = timers.shift();
       timer?.fn();
     }
+  };
+}
+
+function authenticate(socket, session = fixtureSession()) {
+  const hello = JSON.parse(socket.sent.at(-1));
+  socket.emit('message', JSON.stringify(controllerResponse({ correlationId: hello.messageId, session })));
+  return session;
+}
+
+function fixtureSession() {
+  return { sessionId: 'session-1', generation: 1, deviceId: 'dev-a' };
+}
+
+function controllerResponse({ correlationId, session = fixtureSession(), replay = [] } = {}) {
+  return {
+    protocolVersion: 'war-control.v2',
+    messageId: `controller-response-${correlationId}`,
+    type: 'native.bridge.response',
+    sentAt: '2026-07-16T00:00:00.000Z',
+    correlationId,
+    deviceId: session.deviceId,
+    sessionId: session.sessionId,
+    payload: { ok: true, session, replay }
+  };
+}
+
+function controllerRequest({ type, messageId, session = fixtureSession(), deadline, idempotencyKey, payload } = {}) {
+  return {
+    protocolVersion: 'war-control.v2',
+    messageId,
+    type,
+    sentAt: '2026-07-16T00:00:00.000Z',
+    deviceId: session.deviceId,
+    sessionId: session.sessionId,
+    ...(deadline ? { deadline } : {}),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+    payload
   };
 }
 

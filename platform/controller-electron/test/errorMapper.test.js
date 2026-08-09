@@ -11,6 +11,14 @@ test('error mapper preserves known codes and IPC validation codes', () => {
   assert.equal(result.error.message, 'Invalid request');
 });
 
+test('error mapper preserves immutable host provisioning requirements', () => {
+  const error = new Error('Host prerequisites are missing');
+  error.code = 'HOST_PROVISIONING_REQUIRED';
+  const result = mapErrorToIpcResult(error);
+  assert.equal(result.error.code, 'HOST_PROVISIONING_REQUIRED');
+  assert.equal(result.error.message, 'Request rejected');
+});
+
 test('error mapper never exposes raw known-error messages or details', () => {
   const secret = 'synthetic-ipc-secret';
   const error = new Error(`credential=${secret} C:\\private\\controller.key`);

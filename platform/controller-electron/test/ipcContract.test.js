@@ -33,6 +33,13 @@ test('request and event channels do not overlap', () => {
   assert.equal(REQUEST_CHANNELS.some((channel) => eventChannels.has(channel)), false);
 });
 
+test('remote clipboard channels are explicit allowlisted request channels', () => {
+  assert.equal(IPC_CHANNELS.remote.clipboardCopy, 'war-controller:v1:remote:clipboard-copy');
+  assert.equal(IPC_CHANNELS.remote.clipboardPaste, 'war-controller:v1:remote:clipboard-paste');
+  assert.equal(REQUEST_CHANNELS.includes(IPC_CHANNELS.remote.clipboardCopy), true);
+  assert.equal(REQUEST_CHANNELS.includes(IPC_CHANNELS.remote.clipboardPaste), true);
+});
+
 test('contract and channel collections are immutable', () => {
   assert.equal(Object.isFrozen(IPC_CHANNELS), true);
   assert.equal(Object.isFrozen(IPC_CHANNELS.jobs), true);
@@ -54,6 +61,41 @@ test('unknown property is rejected', () => {
   assertErrorCode(
     () => validateIpcPayload(IPC_CHANNELS.devices.get, { deviceId: 'device-1', extra: true }),
     'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
+test('remote clipboard payloads identify devices without accepting renderer clipboard text', () => {
+  assert.deepEqual(validateIpcPayload(IPC_CHANNELS.remote.clipboardCopy, { deviceId: 'device-1' }), { deviceId: 'device-1' });
+  assert.deepEqual(
+    validateIpcPayload(IPC_CHANNELS.remote.clipboardPaste, { deviceIds: ['device-1', 'device-2'], synchronized: true }),
+    { deviceIds: ['device-1', 'device-2'], synchronized: true },
+  );
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.remote.clipboardCopy, { deviceId: 'device-1', text: 'clipboard-secret' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.remote.clipboardPaste, { deviceIds: ['device-1'], text: 'clipboard-secret' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
+test('remote control accepts a bounded per-device browser target map', () => {
+  assert.deepEqual(
+    validateIpcPayload(IPC_CHANNELS.remote.control, {
+      deviceIds: ['device-1', 'device-2'],
+      command: 'input.shortcut',
+      payload: { keys: 'CTRL+L', space: 'browser' },
+      targetIds: { 'device-1': 'tab-1', 'device-2': 'tab-2' },
+      synchronized: true,
+    }),
+    {
+      deviceIds: ['device-1', 'device-2'],
+      command: 'input.shortcut',
+      payload: { keys: 'CTRL+L', space: 'browser' },
+      targetIds: { 'device-1': 'tab-1', 'device-2': 'tab-2' },
+      synchronized: true,
+    },
   );
 });
 

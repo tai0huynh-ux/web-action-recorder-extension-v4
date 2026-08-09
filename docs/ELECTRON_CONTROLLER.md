@@ -59,11 +59,11 @@ Controller-to-Extension Workflow Execution Downlink and E2E Gate: PASS. When WSS
 
 ## Lightweight Live Control
 
-Open **Điều khiển trực tiếp** to view and control managed Chromium containers whose Agent session is online. The Controller requests bounded JPEG viewport frames over the existing authenticated WSS session; it does not expose VNC, noVNC, WebRTC, arbitrary CDP, remote shell, or a new public Agent listener.
+Open **Điều khiển trực tiếp** to view and control managed CloakBrowser containers whose Agent session is online. The Controller requests bounded JPEG viewport frames over the existing authenticated WSS session; it does not expose VNC, noVNC, WebRTC, arbitrary CDP, remote shell, or a new public Agent listener.
 
 Up to eight containers can be selected. With synchronization disabled, mouse and keyboard input is sent only to the active screen. With synchronization enabled, the same bounded command is fanned out concurrently and carries a shared execution timestamp. The view supports pointer movement, click/drag, wheel input, normal text entry, and the allowlisted shortcuts `Ctrl+T`, `Ctrl+C`, `Ctrl+V`, `Ctrl+L`, `Ctrl+W`, `Ctrl+R`, `Ctrl+Shift+T`, `Alt+Left/Right`, `F5`, and `Escape`.
 
-Frame rate is user-selectable from 1, 3, or 6 FPS. Higher rates reduce JPEG quality to limit LAN bandwidth. `Ctrl+V` reads local text from the renderer clipboard when permission is available and sends it as typed text; full bidirectional clipboard synchronization remains disabled and is not advertised as an Agent capability.
+Frame rate is user-selectable from 1, 3, or 6 FPS. Higher rates reduce JPEG quality to limit LAN bandwidth. **Copy from browser** requests the current selection from exactly one active device and writes it in the Electron main process to the Controller OS clipboard. **Paste to browser** reads that OS clipboard only in the main process and sends bounded text to the explicitly selected devices. The renderer receives only byte-count metadata; clipboard text is not persisted, logged, cached, or continuously synchronized.
 
 ## Diagnostics
 

@@ -70,30 +70,53 @@ export class RawInputController {
     this.queue = new InputQueue({ maxQueue: this.limits.inputMaxQueue });
     this.heldKeys = new Set();
     this.heldButtons = new Set();
+    this.focusLeaseTargetId = undefined;
     this.x11 = x11;
     this.log = log;
     emergencyStop?.onStop(() => this.stopAll());
   }
 
-  async execute(type, payload) {
+  async execute(type, payload, { deadlineAt, now = () => Date.now() } = {}) {
     if (type === 'input.stopAll') return this.stopAll();
     if (type === 'input.getState') return this.getState();
-    return this.queue.enqueue(async () => this.executeNow(type, payload));
+    return this.queue.enqueue(async () => {
+      assertDeadline(deadlineAt, now);
+      return this.executeNow(type, payload, { deadlineAt, now });
+    });
   }
 
-  async executeNow(type, payload) {
+  async executeCompound(task, { deadlineAt, now = () => Date.now() } = {}) {
+    if (typeof task !== 'function') throw new AgentError('invalid_payload', 'Raw input compound task is invalid');
+    return this.queue.enqueue(async () => {
+      assertDeadline(deadlineAt, now);
+      return task({
+        execute: async (type, payload) => {
+          assertDeadline(deadlineAt, now);
+          return this.executeNow(type, payload, { deadlineAt, now });
+        }
+      });
+    });
+  }
+
+  async executeNow(type, payload, timing = {}) {
     const space = validateSpace(payload.space);
     const backend = space === 'browser' || type === 'browser.focusWindow' ? 'x11' : 'cdp';
     const started = Date.now();
     let result;
-    if (backend === 'cdp') result = await this.executeCdp(type, payload);
-    else result = await this.executeX11(type, payload);
+    try {
+      if (backend === 'cdp') result = await this.executeCdp(type, payload, timing);
+      else result = await this.executeX11(type, payload, timing);
+    } catch (error) {
+      if (backend === 'x11') this.invalidateFocusLease();
+      throw error;
+    }
     return { backend, executed: true, duration: Date.now() - started, ...result };
   }
 
-  async executeCdp(type, payload) {
+  async executeCdp(type, payload, timing) {
     const page = await this.activePage();
     this.mapper.updateFromPage(page);
+    assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
     switch (type) {
       case 'input.mouseMove': {
         const point = this.mapper.validatePoint(payload, 'viewport');
@@ -155,65 +178,88 @@ export class RawInputController {
     }
   }
 
-  async executeX11(type, payload) {
+  async executeX11(type, payload, timing) {
+    const nativeTiming = { deadlineAt: timing.deadlineAt };
     switch (type) {
       case 'browser.focusWindow':
-        await this.x11.focusChromium();
-        return {};
+        return { targetId: await this.focusBrowserTarget(payload.targetId, { ...timing, force: true }) };
       case 'input.mouseMove': {
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         const point = this.mapper.validatePoint(payload, 'browser');
-        await this.x11.mouseMove(point);
+        await this.x11.mouseMove(point, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         return { point };
       }
       case 'input.click': {
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         const point = this.mapper.validatePoint(payload, 'browser');
-        await this.x11.clickAt(point, validateButton(payload.button), validateClickCount(payload.clickCount));
+        await this.x11.clickAt(point, validateButton(payload.button), validateClickCount(payload.clickCount), nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         return { point };
       }
       case 'input.mouseDown': {
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         const button = validateButton(payload.button);
-        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'));
-        await this.x11.mouseDown(button);
+        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'), nativeTiming);
+        await this.x11.mouseDown(button, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         this.heldButtons.add(button);
         return { button };
       }
       case 'input.mouseUp': {
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         const button = validateButton(payload.button);
-        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'));
-        await this.x11.mouseUp(button);
+        if (payload.x !== undefined || payload.y !== undefined) await this.x11.mouseMove(this.mapper.validatePoint(payload, 'browser'), nativeTiming);
+        await this.x11.mouseUp(button, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         this.heldButtons.delete(button);
         return { button };
       }
       case 'input.wheel': {
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         const point = this.mapper.validatePoint(payload, 'browser');
-        await this.x11.mouseMove(point);
-        await this.x11.wheel(validateDelta(payload.deltaY ?? 0, this.limits));
+        await this.x11.mouseMove(point, nativeTiming);
+        await this.x11.wheel(validateDelta(payload.deltaY ?? 0, this.limits), nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         return { point };
       }
       case 'input.shortcut': {
         const shortcut = validateShortcut(payload.keys);
-        await this.x11.focusChromium();
-        await this.x11.shortcut(shortcut);
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
+        await this.x11.shortcut(shortcut, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         return { shortcut };
       }
       case 'input.keyDown': {
         const key = validateKey(payload.key);
-        await this.x11.focusChromium();
-        await this.x11.keyDown(key);
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
+        await this.x11.keyDown(key, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         this.heldKeys.add(key);
         return { key };
       }
       case 'input.keyUp': {
         const key = validateKey(payload.key);
-        await this.x11.focusChromium();
-        await this.x11.keyUp(key);
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
+        await this.x11.keyUp(key, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         this.heldKeys.delete(key);
         return { key };
       }
       case 'input.insertText':
         requireString(payload.text, 'text', { max: this.limits.inputMaxTextLength });
-        await this.x11.focusChromium();
-        await this.x11.typeText(payload.text);
+        await this.focusBrowserTarget(payload.targetId, timing);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
+        await this.x11.typeText(payload.text, nativeTiming);
+        assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         return { inserted: true };
       default:
         throw new AgentError('unsupported_command', 'Unsupported browser-space input command');
@@ -257,9 +303,29 @@ export class RawInputController {
     return this.browserController.findPage(targetId);
   }
 
+  async focusBrowserTarget(targetId, { force = false, deadlineAt, now = () => Date.now() } = {}) {
+    requireString(targetId, 'targetId');
+    await this.browserController.assertSingleWindowForRawInput(targetId);
+    assertDeadline(deadlineAt, now);
+    if (!force && this.focusLeaseTargetId === targetId) return targetId;
+
+    // Bring the selected Playwright target forward before focusing its X11 window.
+    await this.browserController.activateTab(targetId);
+    assertDeadline(deadlineAt, now);
+    await this.x11.focusChromium({ deadlineAt });
+    assertDeadline(deadlineAt, now);
+    this.focusLeaseTargetId = targetId;
+    return targetId;
+  }
+
+  invalidateFocusLease() {
+    this.focusLeaseTargetId = undefined;
+  }
+
   async stopAll() {
     return this.queue.runPriority(async () => {
       this.queue.clear();
+      this.invalidateFocusLease();
       await this.x11.releaseAll?.({ priority: true }).catch(() => {});
       const page = await this.activePage().catch(() => undefined);
       for (const button of [...this.heldButtons]) {
@@ -354,6 +420,12 @@ export class X11Backend {
 function validateSpace(space = 'viewport') {
   if (space !== 'viewport' && space !== 'browser') throw new AgentError('invalid_payload', 'space must be viewport or browser');
   return space;
+}
+
+function assertDeadline(deadlineAt, now) {
+  if (deadlineAt !== undefined && deadlineAt <= now()) {
+    throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);
+  }
 }
 
 function validateDelta(value, limits) {

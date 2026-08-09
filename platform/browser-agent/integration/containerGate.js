@@ -5,12 +5,17 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 
-const IMAGE = 'war-browser-agent:phase1';
+const REQUESTED_IMAGE = process.env.WAR_BROWSER_AGENT_IMAGE || 'war-browser-agent:phase1';
+const APPARMOR_PROFILE = process.env.WAR_BROWSER_AGENT_APPARMOR_PROFILE || 'war-browser-agent';
+const IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const SECCOMP_PROFILE = path.resolve('platform/container/security/chromium-userns-seccomp.json');
+const CLOAKBROWSER_EXECUTABLE = '/opt/war/cloakbrowser/chromium-146.0.7680.177.5/chrome';
 const CONTROL_PORT = '3766/tcp';
 const ARTIFACT_DIR = path.resolve('artifacts/browser-agent');
 
 export async function runContainerSmoke({ keepArtifact = true } = {}) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+  const runtime = await resolveRuntimeTarget();
   const fixture = await startFixture();
   const suffix = `${Date.now()}-${process.pid}`;
   const container = `war-browser-agent-smoke-${suffix}`;
@@ -21,6 +26,7 @@ export async function runContainerSmoke({ keepArtifact = true } = {}) {
     fixturePort: fixture.port,
     commands: [],
     persistence: {},
+    runtime,
     cleanup: {}
   };
   try {
@@ -33,6 +39,14 @@ export async function runContainerSmoke({ keepArtifact = true } = {}) {
       '-d',
       '--name', container,
       '--shm-size', '1g',
+      '--memory', '2g',
+      '--cpus', '2',
+      '--pids-limit', '512',
+      '--user', 'war',
+      '--cap-drop', 'ALL',
+      '--security-opt', `apparmor=${runtime.appArmor}`,
+      '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
+      '--network', 'bridge',
       '-p', '127.0.0.1::3766',
       '--add-host', 'host.docker.internal:host-gateway',
       '-e', 'WAR_AGENT_HOST=0.0.0.0',
@@ -41,7 +55,7 @@ export async function runContainerSmoke({ keepArtifact = true } = {}) {
       '-e', `WAR_AGENT_ALLOW=${allow}`,
       '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
-      IMAGE
+      runtime.imageId
     ]);
     let baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
@@ -110,6 +124,7 @@ export async function runContainerSmoke({ keepArtifact = true } = {}) {
 
 export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'phase2-smoke' } = {}) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+  const runtime = await resolveRuntimeTarget();
   const fixture = await startFixture();
   const suffix = `${Date.now()}-${process.pid}`;
   const container = `war-browser-agent-phase2-${suffix}`;
@@ -120,6 +135,7 @@ export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'pha
     fixturePort: fixture.port,
     commands: [],
     performance: {},
+    runtime,
     cleanup: {}
   };
   try {
@@ -132,6 +148,14 @@ export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'pha
       '-d',
       '--name', container,
       '--shm-size', '1g',
+      '--memory', '2g',
+      '--cpus', '2',
+      '--pids-limit', '512',
+      '--user', 'war',
+      '--cap-drop', 'ALL',
+      '--security-opt', `apparmor=${runtime.appArmor}`,
+      '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
+      '--network', 'bridge',
       '-p', '127.0.0.1::3766',
       '--add-host', 'host.docker.internal:host-gateway',
       '-e', 'WAR_AGENT_HOST=0.0.0.0',
@@ -140,7 +164,7 @@ export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'pha
       '-e', `WAR_AGENT_ALLOW=${allow}`,
       '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
-      IMAGE
+      runtime.imageId
     ]);
     const baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
@@ -180,15 +204,15 @@ export async function runPhase2ContainerSmoke({ keepArtifact = true, mode = 'pha
       }
     }
     await timedCommand(artifact, baseUrl, health.deviceId, 'input.insertText', { space: 'viewport', text: 'raw text' }, token);
-    await timedCommand(artifact, baseUrl, health.deviceId, 'browser.focusWindow', {}, token);
-    await timedCommand(artifact, baseUrl, health.deviceId, 'input.click', { space: 'browser', x: 10, y: 10, button: 'left', clickCount: 1 }, token);
+    await timedCommand(artifact, baseUrl, health.deviceId, 'browser.focusWindow', { targetId }, token);
+    await timedCommand(artifact, baseUrl, health.deviceId, 'input.click', { targetId, space: 'browser', x: 10, y: 10, button: 'left', clickCount: 1 }, token);
     if (artifact.mode === 'phase2-performance') {
       for (let index = 0; index < 199; index += 1) {
-        await timedCommand(artifact, baseUrl, health.deviceId, 'input.click', { space: 'browser', x: 10, y: 10, button: 'left', clickCount: 1 }, token);
+        await timedCommand(artifact, baseUrl, health.deviceId, 'input.click', { targetId, space: 'browser', x: 10, y: 10, button: 'left', clickCount: 1 }, token);
       }
       for (let index = 0; index < 200; index += 1) {
-        await timedCommand(artifact, baseUrl, health.deviceId, 'input.keyDown', { space: 'browser', key: 'Enter' }, token);
-        await timedCommand(artifact, baseUrl, health.deviceId, 'input.keyUp', { space: 'browser', key: 'Enter' }, token);
+        await timedCommand(artifact, baseUrl, health.deviceId, 'input.keyDown', { targetId, space: 'browser', key: 'Enter' }, token);
+        await timedCommand(artifact, baseUrl, health.deviceId, 'input.keyUp', { targetId, space: 'browser', key: 'Enter' }, token);
       }
     }
     await timedCommand(artifact, baseUrl, health.deviceId, 'input.shortcut', { space: 'viewport', keys: ['CTRL', 'L'] }, token);
@@ -226,6 +250,7 @@ export async function runPhase2Performance({ gate = false } = {}) {
 
 export async function runTabSoak({ iterations = 100 } = {}) {
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+  const runtime = await resolveRuntimeTarget();
   const fixture = await startFixture();
   const suffix = `${Date.now()}-${process.pid}`;
   const container = `war-browser-agent-soak-${suffix}`;
@@ -236,7 +261,8 @@ export async function runTabSoak({ iterations = 100 } = {}) {
     startedAt: new Date().toISOString(),
     latenciesMs: [],
     errors: 0,
-    timeouts: 0
+    timeouts: 0,
+    runtime,
   };
   try {
     const token = crypto.randomBytes(24).toString('hex');
@@ -247,6 +273,14 @@ export async function runTabSoak({ iterations = 100 } = {}) {
       '-d',
       '--name', container,
       '--shm-size', '1g',
+      '--memory', '2g',
+      '--cpus', '2',
+      '--pids-limit', '512',
+      '--user', 'war',
+      '--cap-drop', 'ALL',
+      '--security-opt', `apparmor=${runtime.appArmor}`,
+      '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
+      '--network', 'bridge',
       '-p', '127.0.0.1::3766',
       '--add-host', 'host.docker.internal:host-gateway',
       '-e', 'WAR_AGENT_HOST=0.0.0.0',
@@ -255,7 +289,7 @@ export async function runTabSoak({ iterations = 100 } = {}) {
       '-e', `WAR_AGENT_ALLOW=${allow}`,
       '-e', `WAR_BROWSER_NO_SANDBOX=${process.env.WAR_BROWSER_NO_SANDBOX || '0'}`,
       '-v', `${volume}:/data`,
-      IMAGE
+      runtime.imageId
     ]);
     const baseUrl = await getContainerBaseUrl(container);
     const health = await waitForHealth(baseUrl);
@@ -356,14 +390,24 @@ async function getContainerBaseUrl(container) {
   throw new Error('container port was not published on 127.0.0.1');
 }
 
+async function resolveRuntimeTarget() {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(REQUESTED_IMAGE)) throw new Error('Browser Agent image selection is invalid');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(APPARMOR_PROFILE)) throw new Error('Browser Agent AppArmor profile selection is invalid');
+  const result = await docker(['image', 'inspect', '--format', '{{.Id}}', REQUESTED_IMAGE]);
+  const imageId = result.stdout.trim();
+  if (!IMAGE_ID_PATTERN.test(imageId)) throw new Error('Browser Agent image did not resolve to an immutable sha256: ID');
+  return { requestedImage: REQUESTED_IMAGE, imageId: imageId, appArmor: APPARMOR_PROFILE };
+}
+
 async function collectVersions(container) {
-  const [chromium, node, playwright] = await Promise.all([
-    docker(['exec', container, 'chromium', '--version']),
+  const [browser, node, playwright] = await Promise.all([
+    docker(['exec', container, CLOAKBROWSER_EXECUTABLE, '--version']),
     docker(['exec', container, 'node', '--version']),
     docker(['exec', container, 'node', '-p', "require('./node_modules/playwright-core/package.json').version"])
   ]);
   return {
-    chromium: chromium.stdout.trim(),
+    browserEngine: 'cloakbrowser',
+    browser: browser.stdout.trim(),
     node: node.stdout.trim(),
     playwrightCore: playwright.stdout.trim()
   };

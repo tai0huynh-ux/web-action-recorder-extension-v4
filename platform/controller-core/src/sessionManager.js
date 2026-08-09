@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { PROTOCOL_VERSION, validateAgentEnvelope, validateEnvelope } from '../../protocol/src/protocolV2.js';
 import { requireDevice } from './deviceRegistry.js';
 import { domainError, ERROR_CODES } from './errors.js';
@@ -8,7 +9,7 @@ const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_IDEMPOTENCY = 1000;
 
 export class SessionManager {
-  constructor({ core, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${Date.now()}`, heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS, maxSessions = DEFAULT_MAX_SESSIONS, maxIdempotency = DEFAULT_MAX_IDEMPOTENCY } = {}) {
+  constructor({ core, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}`, heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS, maxSessions = DEFAULT_MAX_SESSIONS, maxIdempotency = DEFAULT_MAX_IDEMPOTENCY } = {}) {
     this.core = core;
     this.now = now;
     this.id = id;
@@ -24,6 +25,7 @@ export class SessionManager {
     if (!validation.ok) throw domainError(ERROR_CODES.INVALID_TARGET, 'Invalid AgentHello envelope', 400, validation.errors);
     if (envelope.payload.protocolVersion !== PROTOCOL_VERSION) throw domainError(ERROR_CODES.INVALID_TARGET, 'Protocol version rejected', 426);
     const device = envelope.payload.device;
+    if (envelope.deviceId !== undefined && envelope.deviceId !== device.deviceId) throw domainError(ERROR_CODES.INVALID_TARGET, 'AgentHello device identity mismatch', 409);
     this.core.pairing.verifyCredential(device.deviceId, credential);
     if (this.sessions.size >= this.maxSessions && !this.sessions.has(device.deviceId)) throw domainError(ERROR_CODES.CAPACITY_EXCEEDED, 'Session registry limit exceeded', 413);
     const previous = this.sessions.get(device.deviceId);
@@ -53,6 +55,7 @@ export class SessionManager {
     const validation = validateAgentEnvelope(envelope);
     if (!validation.ok) throw domainError(ERROR_CODES.INVALID_TARGET, 'Invalid presence envelope', 400, validation.errors);
     const session = this.requireSession(envelope.deviceId || envelope.payload.deviceId, sessionGeneration(envelope));
+    if (envelope.sessionId !== undefined && envelope.sessionId !== session.sessionId) throw domainError(ERROR_CODES.INVALID_TARGET, 'Stale session event rejected', 409);
     session.status = envelope.payload.status;
     session.lastSeenAt = envelope.payload.lastSeenAt;
     await this.core.devices.heartbeat(session.deviceId, { status: envelope.payload.status });

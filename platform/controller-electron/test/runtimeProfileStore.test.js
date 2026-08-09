@@ -17,6 +17,8 @@ const PROFILE = Object.freeze({
   },
 });
 
+const IMAGE_PIN = `sha256:${'a'.repeat(64)}`;
+
 test('runtime profile persists only validated WSS metadata without TLS contents', async () => {
   const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'war-runtime-profile-')), 'controller-runtime.json');
   const store = createControllerRuntimeProfileStore({ fs, path, filePath });
@@ -45,4 +47,14 @@ test('runtime profile rejects corrupt JSON and unknown schema visibly', async ()
   const unknownSchema = await store.load();
   assert.equal(unknownSchema.status, 'invalid');
   assert.match(unknownSchema.error, /schema/i);
+});
+
+test('runtime profile persists a main-process immutable image pin and rejects a mutable replacement', async () => {
+  const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'war-runtime-profile-')), 'controller-runtime.json');
+  const store = createControllerRuntimeProfileStore({ fs, path, filePath });
+  const profile = { ...PROFILE, imagePin: IMAGE_PIN };
+
+  await store.save(profile);
+  assert.deepEqual((await store.load()).profile, profile);
+  await assert.rejects(() => store.save({ ...PROFILE, imagePin: 'war-browser-agent:phase1' }), /immutable.*image.*pin/i);
 });

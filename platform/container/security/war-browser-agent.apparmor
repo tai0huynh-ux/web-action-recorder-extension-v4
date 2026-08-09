@@ -1,4 +1,4 @@
-# Based on Moby's docker-default profile with a single exact Chromium transition.
+# Based on Moby's docker-default profile with exact reviewed browser transitions.
 abi <abi/4.0>,
 #include <tunables/global>
 
@@ -13,7 +13,8 @@ profile war-browser-agent flags=(attach_disconnected,mediate_deleted) {
   signal (receive) peer=runc,
   signal (receive) peer=crun,
   signal (receive) peer=dockerd,
-  signal (send,receive) peer=war-browser-agent,
+  signal (send,receive) peer=@{profile_name},
+  signal (send,receive) peer=war-browser-agent//cloakbrowser-launcher,
 
   deny @{PROC}/* w,
   deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
@@ -32,10 +33,88 @@ profile war-browser-agent flags=(attach_disconnected,mediate_deleted) {
   deny /sys/devices/virtual/powercap/** rwklx,
   deny /sys/kernel/security/** rwklx,
 
-  ptrace (trace,tracedby,read,readby) peer=war-browser-agent,
+  ptrace (trace,tracedby,read,readby) peer=@{profile_name},
 
-  /usr/lib/chromium/chromium cx -> chromium,
-  profile chromium flags=(default_allow) {
+  /usr/local/bin/war-cloakbrowser-sandbox-launcher Cx -> cloakbrowser-launcher,
+  profile cloakbrowser-launcher flags=(attach_disconnected,mediate_deleted) {
+    network,
+    network unix,
+    deny network alg,
+    capability,
+    file,
+    umount,
+    signal (receive) peer=unconfined,
+    signal (receive) peer=runc,
+    signal (receive) peer=crun,
+    signal (receive) peer=dockerd,
+    signal (send,receive) peer=@{profile_name},
+    signal (send,receive) peer=war-browser-agent,
+
+    # Browser and native-host processes never need the Agent identity or WSS credential.
+    audit deny /data/device/ r,
+    audit deny /data/device/** rwklmx,
+    audit deny /data/workflows/ r,
+    audit deny /data/workflows/** rwklmx,
+    audit deny /data/terminal-outbox.json rwkl,
+    # AF_UNIX pathname operations are authorized by file rules, not network unix.
+    audit deny /data/run/ rwkl,
+    audit deny /data/run/** rwkl,
+    audit deny /run/war/x11-input.sock rwkl,
+    audit deny /run/war/ rwkl,
+    audit deny /run/war/** rwkl,
+    audit deny /usr/bin/xclip rmx,
+    audit deny /usr/local/bin/war-xclip-sensitive rmx,
+
+    deny @{PROC}/* w,
+    deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+    deny @{PROC}/sys/[^k]** w,
+    deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+    deny @{PROC}/sysrq-trigger rwklx,
+    deny @{PROC}/kcore rwklx,
+
+    deny mount,
+    deny /sys/[^f]*/** wklx,
+    deny /sys/f[^s]*/** wklx,
+    deny /sys/fs/[^c]*/** wklx,
+    deny /sys/fs/c[^g]*/** wklx,
+    deny /sys/fs/cg[^r]*/** wklx,
+    deny /sys/firmware/** rwklx,
+    deny /sys/devices/virtual/powercap/** rwklx,
+    deny /sys/kernel/security/** rwklx,
+
+    ptrace (trace,tracedby,read,readby) peer=@{profile_name},
+    # Cx resolves relative to the current child; Px addresses the reviewed
+    # fully qualified native-host profile while scrubbing the environment.
+    /usr/local/bin/war-native-host Px -> war-browser-agent//cloakbrowser-launcher//war-native-host,
+    /opt/war/cloakbrowser/chromium-146.0.7680.177.5/chrome ix,
     userns,
+
+    # The native messaging host can only connect to the Agent bridge it needs.
+    profile war-native-host flags=(attach_disconnected,mediate_deleted) {
+      network unix,
+
+      /usr/local/bin/war-native-host r,
+      /bin/dash ix,
+      /usr/bin/node rix,
+      /usr/local/bin/node rix,
+      /etc/ssl/openssl.cnf r,
+      /etc/ld.so.cache r,
+      /lib/** mr,
+      /usr/lib/** mr,
+      /app/native-host/** r,
+      /app/platform/protocol/src/protocolV2.js r,
+
+      /data/run/native-bridge.sock rw,
+
+      audit deny /data/device/ r,
+      audit deny /data/device/** rwklmx,
+      audit deny /data/workflows/ r,
+      audit deny /data/workflows/** rwklmx,
+      audit deny /data/terminal-outbox.json rwkl,
+      audit deny /run/war/ rwkl,
+      audit deny /run/war/** rwkl,
+      audit deny /usr/bin/xclip rmx,
+      audit deny /usr/local/bin/war-xclip-sensitive rmx,
+    }
   }
 }

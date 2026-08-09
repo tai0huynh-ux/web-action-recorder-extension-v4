@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  browserStateFromRemoteResult,
   normalizeRemoteSelection,
+  normalizeOmniboxInput,
+  normalizedBrowserTabs,
   pointForRemoteFrame,
   pollIntervalForFps,
   printableTextForKeyboardEvent,
@@ -38,4 +41,17 @@ test('remote frame pacing trades quality for refresh rate', () => {
   assert.equal(pollIntervalForFps(6), 167);
   assert.equal(qualityForFps(1), 55);
   assert.equal(qualityForFps(6), 35);
+});
+
+test('omnibox resolves addresses and searches without renderer navigation', () => {
+  assert.equal(normalizeOmniboxInput('example.test/path'), 'https://example.test/path');
+  assert.equal(normalizeOmniboxInput('https://example.test/path'), 'https://example.test/path');
+  assert.equal(normalizeOmniboxInput('openai remote browser'), 'https://www.google.com/search?q=openai%20remote%20browser');
+});
+
+test('browser state unwraps the Controller target dispatcher envelope', () => {
+  const browser = { activeTabId: 'tab-2', tabs: [{ id: 'tab-2', title: 'Example', url: 'https://example.test/' }] };
+  const result = { ok: true, data: { targets: [{ deviceId: 'device-2', ok: true, result: { status: 'succeeded', result: { browser } } }] } };
+  assert.equal(browserStateFromRemoteResult(result, 'device-2'), browser);
+  assert.deepEqual(normalizedBrowserTabs(browser), [{ id: 'tab-2', title: 'Example', url: 'https://example.test/', active: true }]);
 });

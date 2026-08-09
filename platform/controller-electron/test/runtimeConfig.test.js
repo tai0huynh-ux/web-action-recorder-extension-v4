@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { resolveElectronRuntimeConfig, toPublicRuntimeConfig } from '../src/runtimeConfig.js';
 
+const IMAGE_PIN = `sha256:${'a'.repeat(64)}`;
+
 test('runtime config defaults to local disabled WSS and userData state', () => {
   const config = resolveElectronRuntimeConfig({ app: fakeApp('C:/Users/a/AppData/Roaming/War') , env: {} });
   assert.equal(config.storePath, path.join('C:/Users/a/AppData/Roaming/War', 'controller-state.json'));
@@ -125,6 +127,23 @@ test('managed container runtime requires explicit supported Docker configuration
   assert.equal(missingSsh.containers.enabled, false);
 });
 
+test('managed runtime accepts only an immutable local image ID from the main-process environment', () => {
+  const shared = {
+    WAR_CONTROLLER_WSS_ENABLED: '1',
+    WAR_CONTROLLER_TLS_CERT_PATH: 'C:/tls/controller.crt',
+    WAR_CONTROLLER_TLS_KEY_PATH: 'C:/tls/controller.key',
+    WAR_CONTAINER_RUNTIME: 'local-docker',
+    WAR_CONTAINER_SECCOMP_PROFILE_PATH: 'C:/war/security/chromium-userns-seccomp.json',
+  };
+  const mutable = resolveElectronRuntimeConfig({ app: fakeApp('C:/data'), env: { ...shared, WAR_CONTAINER_IMAGE: 'war-browser-agent:phase1' }, fs: readableFs() });
+  const pinned = resolveElectronRuntimeConfig({ app: fakeApp('C:/data'), env: { ...shared, WAR_CONTAINER_IMAGE: IMAGE_PIN }, fs: readableFs() });
+
+  assert.equal(mutable.containers.enabled, false, 'a mutable Docker tag must require explicit reconfiguration');
+  assert.match(mutable.errors.join(' '), /immutable.*image.*pin/i);
+  assert.equal(pinned.containers.enabled, true);
+  assert.equal(pinned.containers.imagePin, IMAGE_PIN);
+});
+
 test('public runtime config redacts managed container paths and target details', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'war-config-'));
   const cert = path.join(dir, 'cert.pem');
@@ -146,6 +165,7 @@ test('public runtime config redacts managed container paths and target details',
       WAR_CONTAINER_SSH_TARGET: 'root@192.0.2.20',
       WAR_CONTAINER_SSH_IDENTITY_FILE: identity,
       WAR_CONTAINER_CONTROLLER_CA_PATH: ca,
+      WAR_CONTAINER_IMAGE: IMAGE_PIN,
       WAR_CONTAINER_SECCOMP_PROFILE_PATH: '/etc/war/security/chromium-userns-seccomp.json',
       WAR_CONTAINER_IPV6_INTERFACE: 'eth0',
     },

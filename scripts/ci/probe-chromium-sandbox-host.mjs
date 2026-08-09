@@ -6,9 +6,13 @@ import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 const execFileP = promisify(execFile);
-const IMAGE = process.env.WAR_SANDBOX_PROBE_IMAGE || 'war-browser-agent:phase1';
+const REQUESTED_IMAGE = process.env.WAR_SANDBOX_PROBE_IMAGE || process.env.WAR_BROWSER_AGENT_IMAGE || 'war-browser-agent:phase1';
+const APPARMOR_PROFILE = process.env.WAR_SANDBOX_PROBE_APPARMOR_PROFILE || process.env.WAR_BROWSER_AGENT_APPARMOR_PROFILE || 'war-browser-agent';
+const IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const ARTIFACT = path.resolve('artifacts/container-real-world/sandbox-host-capability.json');
 const SECCOMP_PROFILE = path.resolve('platform/container/security/chromium-userns-seccomp.json');
+const CLOAKBROWSER_EXECUTABLE = '/opt/war/cloakbrowser/chromium-146.0.7680.177.5/chrome';
+const CLOAKBROWSER_SANDBOX_LAUNCHER = '/usr/local/bin/war-cloakbrowser-sandbox-launcher';
 const NAMESPACE_CASES = Object.freeze({
   user: ['--user', '--map-root-user', '/bin/true'],
   pid: ['--user', '--map-root-user', '--pid', '--fork', '/bin/true'],
@@ -28,14 +32,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 
 export async function probeChromiumSandboxHost() {
+  const runtimeTarget = await resolveRuntimeTarget();
   const host = await collectHostEvidence();
   const docker = await collectDockerEvidence();
-  const runtime = await collectRuntimeEvidence();
+  const runtime = await collectRuntimeEvidence(runtimeTarget);
   const namespaces = {};
   for (const [name, args] of Object.entries(NAMESPACE_CASES)) {
-    namespaces[name] = await runNamespaceCase(args);
+    namespaces[name] = await runNamespaceCase(runtimeTarget, args);
   }
-  const chromium = await runChromiumCase();
+  const chromium = await runChromiumCase(runtimeTarget);
   const evidence = { host, docker, runtime, namespaces, chromium };
   const classification = classifySandboxCapability(evidence);
   const report = {
@@ -44,13 +49,14 @@ export async function probeChromiumSandboxHost() {
     host,
     docker,
     runtimePolicy: {
-      image: IMAGE,
+      requestedImage: runtimeTarget.requestedImage,
+      imageId: runtimeTarget.imageId,
       user: 'war',
       privileged: false,
       networkMode: 'bridge',
       noNewPrivileges: false,
       seccomp: 'chromium-userns-seccomp',
-      appArmor: 'war-browser-agent',
+      appArmor: runtimeTarget.appArmor,
       addedCapabilities: [],
       dockerSocketMounted: false,
       hostHomeMounted: false,
@@ -66,7 +72,7 @@ export async function probeChromiumSandboxHost() {
 export function classifySandboxCapability(evidence) {
   const { host = {}, runtime = {}, namespaces = {}, chromium = {} } = evidence || {};
   const fail = (code, reason) => ({ code, supported: false, reason });
-  const exactChromiumProfile = String(runtime.appArmorProfile || '').startsWith('war-browser-agent');
+  const exactChromiumProfile = String(runtime.appArmorProfile || '').startsWith(runtime.expectedAppArmorProfile || 'war-browser-agent');
   if (chromium.forbiddenFlagsPresent) return fail('CHROMIUM_CONFIG_INVALID', 'Forbidden Chromium sandbox flags are configured.');
   if (host.containerized && !namespaces.combined?.ok) return fail('RUNNER_NESTING_UNSUPPORTED', 'The outer runner is containerized and blocks the combined namespace operation.');
   if (host.unprivilegedUsernsClone === 0 || host.maxUserNamespaces === 0) return fail('HOST_USERNS_RESTRICTED', 'Host user namespaces are disabled.');
@@ -123,18 +129,18 @@ async function collectDockerEvidence() {
   };
 }
 
-async function collectRuntimeEvidence() {
+async function collectRuntimeEvidence(runtimeTarget) {
   const script = [
     "const fs=require('fs')",
     "const status=fs.readFileSync('/proc/self/status','utf8')",
     "const field=(name)=>status.match(new RegExp('^'+name+':\\\\s+(.*)$','m'))?.[1]?.trim()",
-    "const helper=['/usr/lib/chromium/chrome-sandbox','/usr/lib/chromium/chromium-sandbox'].find((item)=>fs.existsSync(item))",
+    "const helper=['/opt/war/cloakbrowser/chromium-146.0.7680.177.5/chrome-sandbox','/usr/lib/chromium/chrome-sandbox','/usr/lib/chromium/chromium-sandbox'].find((item)=>fs.existsSync(item))",
     "const stat=helper?fs.statSync(helper):null",
     "const mode=stat?(stat.mode&0o7777):null",
     "const profile=(()=>{try{return fs.readFileSync('/proc/self/attr/current','utf8').trim()}catch{return 'unavailable'}})()",
     "console.log(JSON.stringify({uid:Number(field('Uid')?.split(/\\s+/)[0]),gid:Number(field('Gid')?.split(/\\s+/)[0]),noNewPrivileges:field('NoNewPrivs')==='1',seccompMode:Number(field('Seccomp')),appArmorProfile:profile,suidHelper:{present:Boolean(helper),path:helper||null,ownerUid:stat?.uid??null,ownerGid:stat?.gid??null,mode:mode===null?null:mode.toString(8),valid:Boolean(stat&&stat.uid===0&&mode===0o4755)},unsharePresent:fs.existsSync('/usr/bin/unshare')}))",
   ].join(';');
-  const result = await dockerRun(['--entrypoint', 'node', IMAGE, '-e', script]);
+  const result = await dockerRun(runtimeTarget, ['--entrypoint', 'node', runtimeTarget.imageId, '-e', script]);
   if (!result.ok) throw new Error('Container runtime metadata probe failed');
   const parsed = JSON.parse(result.stdout);
   return {
@@ -143,13 +149,14 @@ async function collectRuntimeEvidence() {
     noNewPrivileges: parsed.noNewPrivileges,
     seccompMode: parsed.seccompMode,
     appArmorProfile: safeText(parsed.appArmorProfile),
+    expectedAppArmorProfile: runtimeTarget.appArmor,
     suidHelper: parsed.suidHelper,
     unsharePresent: parsed.unsharePresent,
   };
 }
 
-async function runNamespaceCase(args) {
-  const result = await dockerRun(['--entrypoint', '/usr/bin/unshare', IMAGE, ...args]);
+async function runNamespaceCase(runtimeTarget, args) {
+  const result = await dockerRun(runtimeTarget, ['--entrypoint', '/usr/bin/unshare', runtimeTarget.imageId, ...args]);
   return {
     ok: result.ok,
     exitCode: result.code,
@@ -157,7 +164,7 @@ async function runNamespaceCase(args) {
   };
 }
 
-async function runChromiumCase() {
+async function runChromiumCase(runtimeTarget) {
   const script = [
     "import fs from 'node:fs/promises'",
     "import playwright from '/app/node_modules/playwright-core/index.js'",
@@ -165,16 +172,16 @@ async function runChromiumCase() {
     "const { chromium }=playwright",
     "const profile='/tmp/war-sandbox-probe-'+process.pid",
     "let context",
-    "try{context=await chromium.launchPersistentContext(profile,{executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>document.querySelectorAll('#sandbox-status tr').length>=5&&Boolean(document.querySelector('#evaluation')?.textContent?.trim()),null,{timeout:5000});const snapshot=await page.evaluate(()=>({rows:Array.from(document.querySelectorAll('#sandbox-status tr'),(row)=>Array.from(row.querySelectorAll('td'),(cell)=>cell.textContent?.trim()||'')),evaluation:document.querySelector('#evaluation')?.textContent?.trim()||''}));console.log(JSON.stringify(parseSandboxStatusSnapshot(snapshot)))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}",
+    `try{context=await chromium.launchPersistentContext(profile,{executablePath:'${CLOAKBROWSER_SANDBOX_LAUNCHER}',headless:true,chromiumSandbox:true,ignoreDefaultArgs:['--no-sandbox'],args:['--disable-gpu']});const page=context.pages()[0]||await context.newPage();await page.goto('chrome://sandbox/',{waitUntil:'domcontentloaded',timeout:5000});await page.waitForFunction(()=>document.querySelectorAll('#sandbox-status tr').length>=5&&Boolean(document.querySelector('#evaluation')?.textContent?.trim()),null,{timeout:5000});const snapshot=await page.evaluate(()=>({rows:Array.from(document.querySelectorAll('#sandbox-status tr'),(row)=>Array.from(row.querySelectorAll('td'),(cell)=>cell.textContent?.trim()||'')),evaluation:document.querySelector('#evaluation')?.textContent?.trim()||''}));console.log(JSON.stringify(parseSandboxStatusSnapshot(snapshot)))}finally{await context?.close().catch(()=>{});await fs.rm(profile,{recursive:true,force:true}).catch(()=>{})}`,
   ].join(';');
-  const result = await dockerRun(['--entrypoint', 'node', IMAGE, '--input-type=module', '-e', script], 30000);
+  const result = await dockerRun(runtimeTarget, ['--entrypoint', 'node', runtimeTarget.imageId, '--input-type=module', '-e', script], 30000);
   const combined = `${result.stdout}\n${result.stderr}`;
   let sandboxStatus = null;
   try {
     sandboxStatus = JSON.parse(result.stdout.split(/\r?\n/).filter(Boolean).at(-1));
   } catch {}
   return {
-    executable: '/usr/bin/chromium',
+    executable: CLOAKBROWSER_SANDBOX_LAUNCHER,
     started: result.ok && Boolean(sandboxStatus),
     exitCode: result.code,
     forbiddenFlagsPresent: false,
@@ -190,18 +197,28 @@ async function runChromiumCase() {
   };
 }
 
-function dockerRun(extraArgs, timeout = 15000) {
+function dockerRun(runtimeTarget, extraArgs, timeout = 15000) {
   return command('docker', [
     'run', '--rm',
     '--memory', '2g',
     '--cpus', '2',
     '--pids-limit', '512',
     '--user', 'war',
-    '--security-opt', 'apparmor=war-browser-agent',
+    '--cap-drop', 'ALL',
+    '--security-opt', `apparmor=${runtimeTarget.appArmor}`,
     '--security-opt', `seccomp=${SECCOMP_PROFILE}`,
     '--network', 'bridge',
     ...extraArgs,
   ], timeout);
+}
+
+async function resolveRuntimeTarget() {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/.test(REQUESTED_IMAGE)) throw new Error('Browser Agent image selection is invalid');
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(APPARMOR_PROFILE)) throw new Error('Browser Agent AppArmor profile selection is invalid');
+  const result = await command('docker', ['image', 'inspect', '--format', '{{.Id}}', REQUESTED_IMAGE]);
+  const imageId = result.stdout.trim();
+  if (!result.ok || !IMAGE_ID_PATTERN.test(imageId)) throw new Error('Browser Agent image did not resolve to an immutable sha256: ID');
+  return { requestedImage: REQUESTED_IMAGE, imageId: imageId, appArmor: APPARMOR_PROFILE };
 }
 
 async function command(file, args, timeout = 10000) {

@@ -1,13 +1,14 @@
-# Browser Agent Phase 1
+# Browser Agent container
 
-Phase 1 adds one Linux container per Chromium endpoint:
+The managed Linux runtime uses one container per CloakBrowser endpoint:
 
 - Browser Agent Node.js HTTP control server.
-- Headed Chromium running on Xvfb.
+- Pinned CloakBrowser running headed on Xvfb through `playwright-core`.
 - Persistent profile under `/data/chromium-profile`.
 - The current unpacked Web Action Recorder extension copied to `/app/extension`.
+- Native Messaging, authenticated Controller WSS, bounded JPEG preview, typed input, and explicit clipboard transfer.
 
-There is no streaming, VNC, Native Messaging, Windows app, file transfer, clipboard, remote shell, arbitrary JavaScript, or CDP passthrough in this phase.
+The image does not expose VNC/noVNC, WebRTC, remote shell, arbitrary JavaScript, generic CDP passthrough, or continuous clipboard synchronization.
 
 ## Build
 
@@ -15,7 +16,7 @@ There is no streaming, VNC, Native Messaging, Windows app, file transfer, clipbo
 npm.cmd run container:browser-agent:build
 ```
 
-The Docker image installs system Chromium and uses `playwright-core`; Playwright browser downloads are disabled.
+The Docker image downloads the pinned CloakBrowser binary only during build, verifies the signed checksum manifest and archive digest, and uses `playwright-core` directly at runtime. The production image does not install Debian Chromium, and Playwright browser downloads are disabled.
 
 ## Run One Node
 
@@ -46,7 +47,10 @@ Supported environment variables:
 - `WAR_AGENT_ALLOW_REMOTE`
 - `WAR_AGENT_ALLOW`
 - `WAR_DATA_DIR`
-- `WAR_CHROMIUM_EXECUTABLE`
+- `WAR_BROWSER_ENGINE`
+- `WAR_CLOAKBROWSER_EXECUTABLE`
+- `WAR_CLOAKBROWSER_VERSION`
+- `WAR_CHROMIUM_EXECUTABLE` (explicit compatibility fallback only)
 - `WAR_EXTENSION_DIR`
 - `WAR_BROWSER_HEADLESS`
 - `WAR_BROWSER_NO_SANDBOX`
@@ -58,7 +62,7 @@ Supported environment variables:
 
 Remote bind requires all of: `WAR_AGENT_ALLOW_REMOTE=1`, a `WAR_AGENT_TOKEN` of at least 24 characters, and explicit `WAR_AGENT_ALLOW` IPs. Tokens are never logged.
 
-`WAR_BROWSER_NO_SANDBOX=1` remains an explicit diagnostic compatibility switch, but it is forbidden for managed-container, release, or MVP acceptance. The accepted runtime uses the non-root Chromium user-namespace sandbox with the reviewed AppArmor and seccomp policies; verify it with `npm run probe:chromium-sandbox-host` and the Container Real World Gate.
+`WAR_BROWSER_NO_SANDBOX=1` remains an explicit diagnostic compatibility switch, but it is forbidden for managed-container, release, or MVP acceptance. CloakBrowser uses the Chromium user-namespace sandbox through the root-owned launcher and reviewed AppArmor/seccomp policies; verify it with `npm run probe:chromium-sandbox-host` and the Container Real World Gate.
 
 ## API
 
@@ -99,7 +103,7 @@ Only `http:` and `https:` URLs without credentials are accepted.
 
 ## Extension Status
 
-Chromium starts with:
+CloakBrowser starts with:
 
 - `--disable-extensions-except=/app/extension`
 - `--load-extension=/app/extension`
@@ -150,15 +154,15 @@ Latest Phase 1 gate evidence:
 
 ## Phase 2 Chromium Control
 
-Status: Implemented but Gate Blocked.
+Status: Implemented; acceptance remains bound to the exact immutable image digest used by the current release gate.
 
-Phase 2 extends `/v1/control` with typed semantic and raw browser commands. It still does not expose arbitrary JavaScript, generic CDP passthrough, shell execution, VNC/noVNC, WebRTC streaming, Native Messaging, clipboard sync, or Windows file transfer.
+Phase 2 extends `/v1/control` with typed semantic and raw browser commands. It still does not expose arbitrary JavaScript, generic CDP passthrough, shell execution, VNC/noVNC, WebRTC streaming, continuous clipboard synchronization, or Windows file transfer.
 
 ### Controller Live Control
 
 The authenticated outbound Controller WSS session additionally supports `remote.control.request` / `remote.control.response`. The Agent can return a bounded JPEG viewport frame and execute the existing allowlisted raw-input commands, including pointer drag/wheel, regular typing, and `Ctrl+T`, `Ctrl+C`, and `Ctrl+V`. Multiple-container synchronization is performed by Controller fan-out with a shared `syncAt`; the Agent does not open another listener or expose generic CDP.
 
-This is a lightweight LAN control path with selectable 1/3/6 FPS snapshots, not VNC, noVNC, WebRTC, full desktop capture, or bidirectional clipboard synchronization.
+This is a lightweight LAN control path with selectable 1/3/6 FPS snapshots. Copy is an explicit one-device request into the Controller OS clipboard; paste is an explicit bounded fan-out from that clipboard to the selected devices. Clipboard text is never continuously synchronized or returned to the renderer.
 
 ### Semantic Commands
 

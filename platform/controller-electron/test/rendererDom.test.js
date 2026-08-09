@@ -173,8 +173,12 @@ test('locale defaults to Vietnamese, switches at runtime, persists, and falls ba
   apiState.settingsUpdates = [];
   await i18n.initLocale({ locale: 'vi' });
   assert.equal(i18n.t('navigation.devices'), 'Thiết bị');
+  assert.equal(i18n.t('remote.title'), 'Điều khiển CloakBrowser nhẹ');
+  assert.equal(i18n.t('remote.screen', { name: 'Máy 1' }), 'Màn hình CloakBrowser từ xa của Máy 1');
   await i18n.setLocale('en');
   assert.equal(i18n.t('navigation.devices'), 'Devices');
+  assert.equal(i18n.t('remote.title'), 'Lightweight CloakBrowser control');
+  assert.equal(i18n.t('remote.screen', { name: 'Device 1' }), 'Remote CloakBrowser screen for Device 1');
   assert.deepEqual(apiState.settingsUpdates.at(-1), { locale: 'en' });
   assert.equal(i18n.t('missing.key'), 'missing.key');
   assert.equal(i18n.localeKeysMatch(), true);
@@ -589,10 +593,11 @@ test('initial workspace refresh loads live diagnostics for persisted Linux hosts
   }
 });
 
-test('selecting a Linux host restores saved fields and updates it in place', async () => {
+test('selecting a Linux host restores saved fields, prefers the effective image pin, and updates it in place', async () => {
   resetStore();
   state.store.view = 'workspace';
-  const host = { id: 'ssh-host-1', label: 'Linux da duyet', name: 'Linux da duyet', target: 'root@192.168.1.201', image: 'war-browser-agent:phase1', connected: false, diagnostics: {} };
+  const imagePin = `sha256:${'a'.repeat(64)}`;
+  const host = { id: 'ssh-host-1', label: 'Linux da duyet', name: 'Linux da duyet', target: 'root@192.168.1.201', image: imagePin, connected: false, diagnostics: {} };
   state.store.settings.containerHosts = [{
     id: host.id,
     name: host.name,
@@ -600,7 +605,7 @@ test('selecting a Linux host restores saved fields and updates it in place', asy
     identityFile: 'C:/Users/test/.ssh/id_ed25519',
     controllerHost: '192.168.1.206',
     controllerCaPath: '/opt/war/war-controller-pilot-ca.crt',
-    image: host.image,
+    image: 'war-browser-agent:phase1',
   }];
   state.store.workspace.containerHosts = [host];
   apiState.containerHostsResult = { ok: true, data: { status: 'unavailable', hosts: [host] } };
@@ -616,7 +621,7 @@ test('selecting a Linux host restores saved fields and updates it in place', asy
   assert.equal(inputs[2].value, 'C:/Users/test/.ssh/id_ed25519');
   assert.equal(inputs[3].value, '192.168.1.206');
   assert.equal(inputs[4].value, '/opt/war/war-controller-pilot-ca.crt');
-  assert.equal(inputs[5].value, 'war-browser-agent:phase1');
+  assert.equal(inputs[5].value, imagePin);
 
   inputs[0].value = 'Linux phòng làm việc';
   await fireWithEvent(inputs[0], 'input');
@@ -624,6 +629,7 @@ test('selecting a Linux host restores saved fields and updates it in place', asy
   assert.equal(apiState.hostCalls.update, 1);
   assert.equal(apiState.hostRequests.at(-1).hostId, 'ssh-host-1');
   assert.equal(apiState.hostRequests.at(-1).identityFile, 'C:/Users/test/.ssh/id_ed25519');
+  assert.equal(apiState.hostRequests.at(-1).image, imagePin);
 });
 
 test('Linux host repair surfaces nested IPC errors and can be retried successfully', async () => {
@@ -1626,7 +1632,10 @@ test('remote keyboard control uses the Chromium browser input space', async () =
   state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
   state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
   state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
-  state.store.remote = { selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+  state.store.remote = {
+    selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '',
+    browserStates: { 'managed-device-1': { activeTabId: 'tab-1', tabs: [{ id: 'tab-1', active: true, url: 'https://example.test/' }] } },
+  };
 
   const current = views.renderView(() => {});
   const image = first(current, 'img');
@@ -1636,6 +1645,40 @@ test('remote keyboard control uses the Chromium browser input space', async () =
   assert.deepEqual(apiState.remoteCalls.map((call) => call.payload), [
     { keys: 'CTRL+L', space: 'browser' },
     { key: 'Enter', space: 'browser' },
+  ]);
+  assert.deepEqual(apiState.remoteCalls.map((call) => call.targetIds), [
+    { 'managed-device-1': 'tab-1' },
+    { 'managed-device-1': 'tab-1' },
+  ]);
+});
+
+test('remote browser deck scopes controls and clipboard to its own device when sync is enabled', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [
+    containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' }),
+    containerFixture({ id: 'container-2', deviceId: 'managed-device-2', name: 'Chromium 2', status: 'running' }),
+  ];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1'), deviceFixture('managed-device-2', 'Chromium 2')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }, { deviceId: 'managed-device-2', status: 'online' }];
+  state.store.remote = {
+    selectedDeviceIds: ['managed-device-1', 'managed-device-2'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: true, fps: 3, live: false, frames: {}, pending: {},
+    browserStates: { 'managed-device-1': { activeTabId: 'tab-1', tabs: [{ id: 'tab-1', url: 'https://example.test/' }] } }, browserPending: {}, browserNotices: {}, browserErrors: {}, notice: '', error: '',
+  };
+
+  const current = views.renderView(() => {});
+  const settings = all(current, (node) => node.localName === 'button' && node.textContent === i18n.t('remote.settings'));
+  await settings[1].click();
+  await clickButton(current, i18n.t('remote.copyFromBrowser'));
+  await clickButton(current, i18n.t('remote.pasteToBrowser'));
+  const image = first(current, 'img');
+  await fireWithEvent(image, 'keydown', { key: 'v', ctrlKey: true, preventDefault() {} });
+
+  assert.deepEqual(apiState.remoteCalls.find((call) => call.command === 'browser.openInternalPage'), { deviceIds: ['managed-device-2'], command: 'browser.openInternalPage', payload: { page: 'settings' }, synchronized: false });
+  assert.deepEqual(apiState.remoteClipboardCalls, [
+    { action: 'copy', deviceId: 'managed-device-1' },
+    { action: 'paste', deviceIds: ['managed-device-1'], synchronized: false },
+    { action: 'paste', deviceIds: ['managed-device-1'], synchronized: false },
   ]);
 });
 
@@ -1734,6 +1777,7 @@ function resetStore() {
   apiState.diagnosticsResult = null;
   apiState.diagnosticsRepairResult = null;
   apiState.remoteCalls = [];
+  apiState.remoteClipboardCalls = [];
   Object.assign(state.store, {
     view: 'overview',
     settings: { locale: 'vi', workspace: { leftWidth: 280, centerWidth: 420, graphCollapsed: false } },
@@ -1946,6 +1990,7 @@ const apiState = {
   diagnosticsResult: null,
   diagnosticsRepairResult: null,
   remoteCalls: [],
+  remoteClipboardCalls: [],
 };
 
 function installControllerApi() {
@@ -1984,6 +2029,14 @@ function installControllerApi() {
         control: async (payload) => {
           apiState.remoteCalls.push(structuredClone(payload));
           return { ok: true, data: { command: payload.command, synchronized: payload.synchronized === true, targets: (payload.deviceIds || []).map((deviceId) => ({ deviceId, ok: true })) } };
+        },
+        copyFromBrowser: async ({ deviceId }) => {
+          apiState.remoteClipboardCalls.push({ action: 'copy', deviceId });
+          return { ok: true, data: { deviceId } };
+        },
+        pasteToBrowser: async (payload) => {
+          apiState.remoteClipboardCalls.push({ action: 'paste', ...structuredClone(payload) });
+          return { ok: true, data: { targets: (payload.deviceIds || []).map((deviceId) => ({ deviceId, ok: true })) } };
         },
       },
       containers: {

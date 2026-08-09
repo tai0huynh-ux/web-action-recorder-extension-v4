@@ -22,10 +22,16 @@ const REMOTE_CONTROL_COMMANDS = new Set([
   'browser.getState',
   'browser.focusWindow',
   'tab.list',
+  'tab.new',
   'tab.open',
   'tab.activate',
   'tab.navigate',
   'tab.close',
+  'tab.back',
+  'tab.forward',
+  'tab.reload',
+  'tab.home',
+  'browser.openInternalPage',
   'input.mouseMove',
   'input.mouseDown',
   'input.mouseUp',
@@ -40,6 +46,7 @@ const REMOTE_CONTROL_COMMANDS = new Set([
 ]);
 const MAX_REMOTE_TARGETS = 8;
 const MAX_REMOTE_PAYLOAD_BYTES = 32768;
+const MAX_CLIPBOARD_BYTES = 64 * 1024;
 const REMOTE_AGENT_READY_TIMEOUT_MS = 60000;
 const REMOTE_AGENT_READY_POLL_MS = 250;
 
@@ -203,22 +210,29 @@ export class ControllerApplicationService extends EventEmitter {
     }
     return this.result({ deviceId, frame: response.payload.frame || response.payload.result });
   }
-  async remoteControl({ deviceIds, command, payload = {}, synchronized = false } = {}) {
+  async remoteControl({ deviceIds, command, payload = {}, targetIds = {}, synchronized = false } = {}) {
     if (!REMOTE_CONTROL_COMMANDS.has(command)) throw codedError('REMOTE_COMMAND_NOT_ALLOWED', 'Remote command is not allowed');
     const ids = [...new Set(Array.isArray(deviceIds) ? deviceIds.filter((item) => typeof item === 'string' && item.trim()) : [])];
     if (!ids.length || ids.length > MAX_REMOTE_TARGETS) throw codedError('REMOTE_TARGET_LIMIT', `Select between 1 and ${MAX_REMOTE_TARGETS} online containers`);
     if (!isPlainObject(payload)) throw codedError('REMOTE_INVALID_PAYLOAD', 'Remote command payload must be an object');
+    if (!isPlainObject(targetIds)) throw codedError('REMOTE_INVALID_TARGETS', 'Remote browser target map must be an object');
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_REMOTE_PAYLOAD_BYTES) throw codedError('REMOTE_PAYLOAD_TOO_LARGE', 'Remote command payload is too large');
     if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
+    const browserTargetIds = payload.space === 'browser'
+      ? Object.fromEntries(ids.map((deviceId) => [deviceId, requireRemoteBrowserTargetId(payload.targetId || targetIds[deviceId])]))
+      : null;
     const syncAt = synchronized && ids.length > 1 ? new Date(Date.parse(this.now()) + 80).toISOString() : undefined;
     const results = await Promise.all(ids.map(async (deviceId) => {
       try {
+        const targetPayload = browserTargetIds
+          ? { ...payload, targetId: browserTargetIds[deviceId] }
+          : structuredClone(payload);
         const readiness = await this.prepareRemoteTarget(deviceId);
         if (readiness.status === 'updating') return { deviceId, ok: false, error: { code: 'REMOTE_AGENT_UPDATING', message: 'Browser Agent is updating for remote control' } };
         const session = readiness.session;
         const response = await this.wssTransport.requestRemoteControl(deviceId, session.generation, {
           command,
-          payload: structuredClone(payload),
+          payload: targetPayload,
           requestId: this.id('remote-control'),
           idempotencyKey: this.id('remote-command'),
           ...(syncAt ? { syncAt } : {}),
@@ -231,6 +245,55 @@ export class ControllerApplicationService extends EventEmitter {
       }
     }));
     return this.result({ command, synchronized: Boolean(syncAt), targets: results });
+  }
+  async remoteClipboardCopy({ deviceId } = {}) {
+    if (typeof deviceId !== 'string' || !deviceId.trim()) throw codedError('REMOTE_CLIPBOARD_TARGET_REQUIRED', 'Select one browser to copy from');
+    if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
+    const readiness = await this.prepareRemoteTarget(deviceId);
+    if (readiness.status === 'updating') throw codedError('REMOTE_AGENT_UPDATING', 'Browser Agent is updating for remote control');
+    const response = await this.wssTransport.requestRemoteControl(deviceId, readiness.session.generation, {
+      command: 'clipboard.copySelection',
+      payload: {},
+      requestId: this.id('remote-clipboard-copy'),
+      deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
+    });
+    const dispatch = response?.payload?.result;
+    const clipboard = dispatch?.type === 'clipboard.copySelection' ? dispatch.result : null;
+    if (response?.payload?.ok !== true || clipboard?.copied !== true || typeof clipboard.text !== 'string') {
+      throw codedError('REMOTE_CLIPBOARD_COPY_FAILED', 'Remote clipboard copy failed');
+    }
+    const bytes = Buffer.byteLength(clipboard.text, 'utf8');
+    if (bytes > MAX_CLIPBOARD_BYTES || clipboard.bytes !== bytes) {
+      throw codedError('REMOTE_CLIPBOARD_INVALID', 'Remote clipboard response is invalid');
+    }
+    return this.result({ deviceId, copied: true, bytes, text: clipboard.text });
+  }
+  async remoteClipboardPaste({ deviceIds, synchronized = false, text } = {}) {
+    const ids = normalizeRemoteTargetIds(deviceIds);
+    if (typeof text !== 'string') throw codedError('REMOTE_CLIPBOARD_INVALID', 'Controller clipboard text is invalid');
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes > MAX_CLIPBOARD_BYTES) throw codedError('REMOTE_CLIPBOARD_TOO_LARGE', 'Controller clipboard exceeds 64 KiB');
+    if (!this.wssTransport?.requestRemoteControl) throw codedError('REMOTE_CONTROL_UNAVAILABLE', 'Remote control transport is unavailable');
+    const syncAt = synchronized && ids.length > 1 ? new Date(Date.parse(this.now()) + 80).toISOString() : undefined;
+    const targets = await Promise.all(ids.map(async (deviceId) => {
+      try {
+        const readiness = await this.prepareRemoteTarget(deviceId);
+        if (readiness.status === 'updating') return { deviceId, ok: false, error: { code: 'REMOTE_AGENT_UPDATING', message: 'Browser Agent is updating for remote control' } };
+        const response = await this.wssTransport.requestRemoteControl(deviceId, readiness.session.generation, {
+          command: 'clipboard.pasteText',
+          payload: { text },
+          requestId: this.id('remote-clipboard-paste'),
+          idempotencyKey: this.id('remote-clipboard-paste-command'),
+          ...(syncAt ? { syncAt } : {}),
+          deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
+        });
+        if (response?.payload?.ok !== true) return { deviceId, ok: false, error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' } };
+        return { deviceId, ok: true };
+      } catch {
+        return { deviceId, ok: false, error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' } };
+      }
+    }));
+    return this.result({ pasted: targets.some((target) => target.ok), bytes, synchronized: Boolean(syncAt), targets });
   }
   listContainers() { return this.result(this.core.containers.listContainers()); }
   listContainerTrash() {
@@ -450,7 +513,11 @@ export class ControllerApplicationService extends EventEmitter {
       ...(payload.runtime || {}),
       dockerName: payload.runtime?.dockerName || managedDockerName(payload.name),
     };
-    const image = this.containerHostManager?.getHost(host)?.image || (this.config?.containers?.enabled ? this.config.containers.image : payload.image);
+    const configuredImage = this.containerHostManager?.getHost(host)?.imagePin
+      || (this.config?.containers?.enabled ? this.config.containers.imagePin : payload.image);
+    // Main-process attestation closes the window before pairing creates a credential.
+    const imageAttestation = hostAdapter?.attestImage ? await hostAdapter.attestImage({ image: configuredImage }) : null;
+    const image = imageAttestation?.imagePin || configuredImage;
     const provisioning = await this.core.pairing.provisionManagedAgent({
       device: managedDeviceDescriptor({ deviceId, displayName: payload.name }),
       displayName: payload.name,
@@ -506,6 +573,8 @@ export class ControllerApplicationService extends EventEmitter {
   async duplicateContainer({ containerId, name }) {
     const source = this.core.containers.getContainer(containerId);
     await this.ensureManagedHostReady(source.host);
+    const normalizedSource = this.normalizeContainerImageForAdapter(source, source.host);
+    await attestManagedImage(this.containerAdapterForHost(source.host), normalizedSource.image);
     const deviceId = `managed-${crypto.randomUUID()}`;
     const provisioning = await this.core.pairing.provisionManagedAgent({
       device: managedDeviceDescriptor({ deviceId, displayName: name || `${source.name} copy` }),
@@ -829,6 +898,16 @@ export class ControllerApplicationService extends EventEmitter {
     return this.containerHostManager?.getAdapter(hostId) || this.containerAdapter;
   }
 
+  normalizeContainerImageForAdapter(container, hostId = container?.host) {
+    if (!container || typeof container !== 'object') return container;
+    const imagePin = this.containerHostManager?.getHost?.(hostId)?.imagePin || this.config?.containers?.imagePin;
+    if (!isImmutableImagePin(imagePin)) return container;
+    if (isImmutableImagePin(container.image) && container.image !== imagePin) {
+      throw codedError('CONTAINER_IMAGE_PIN_MISMATCH', 'Persisted container image pin does not match the trusted managed image pin');
+    }
+    return { ...container, image: imagePin };
+  }
+
   async ensureManagedHostReady(hostId) {
     if (!this.containerHostManager || !hostId || typeof this.containerHostManager.ensureReady !== 'function') return null;
     const checked = await this.containerHostManager.ensureReady(hostId);
@@ -887,7 +966,7 @@ export class ControllerApplicationService extends EventEmitter {
     const adapter = this.containerAdapterForHost(hostId);
     if (!adapter?.[action]) return { ok: false, error: 'CONTAINER_ADAPTER_UNAVAILABLE' };
     try {
-      const result = await adapter[action](structuredClone(container));
+      const result = await adapter[action](structuredClone(this.normalizeContainerImageForAdapter(container, hostId)));
       if (result?.ok === false) return { ...result, ok: false, error: sanitizeContainerError(result.error) };
       return { ok: true, ...(result || {}) };
     } catch (error) {
@@ -1208,13 +1287,26 @@ function managedDeviceDescriptor({ deviceId, displayName }) {
       rawBrowserInput: true,
       nativeX11Input: true,
       screenshot: true,
-      clipboardText: false,
+      clipboardText: true,
       remoteVideo: true,
       synchronizedInput: true
     },
     labels: ['managed-container'],
     groupIds: []
   };
+}
+
+function normalizeRemoteTargetIds(deviceIds) {
+  const ids = [...new Set(Array.isArray(deviceIds) ? deviceIds.filter((item) => typeof item === 'string' && item.trim()) : [])];
+  if (!ids.length || ids.length > MAX_REMOTE_TARGETS) throw codedError('REMOTE_TARGET_LIMIT', `Select between 1 and ${MAX_REMOTE_TARGETS} online containers`);
+  return ids;
+}
+
+function requireRemoteBrowserTargetId(targetId) {
+  if (typeof targetId !== 'string' || !targetId.trim()) {
+    throw codedError('REMOTE_BROWSER_TARGET_REQUIRED', 'Select an active browser tab before sending browser input');
+  }
+  return targetId.trim();
 }
 
 function randomIpv6Suffix() {
@@ -1229,6 +1321,18 @@ function isUnprovisionedContainer(container = {}) {
     || container.status === 'deleted'
       && container.trashedFromStatus === 'failed'
       && container.trashedFromDesiredState === 'stopped';
+}
+
+async function attestManagedImage(adapter, image) {
+  if (!adapter?.attestImage) return image;
+  const attestation = await adapter.attestImage({ image });
+  return attestation?.imagePin || image;
+}
+
+function isImmutableImagePin(value) {
+  return typeof value === 'string'
+    && (/^sha256:[a-f0-9]{64}$/i.test(value)
+      || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}@sha256:[a-f0-9]{64}$/i.test(value));
 }
 
 function codedError(code, message, details) {

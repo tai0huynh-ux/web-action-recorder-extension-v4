@@ -16,6 +16,11 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'war-electron-smoke-'));
 const userData = path.join(tempRoot, 'userData');
 const dataPath = path.join(tempRoot, 'state');
 const handled = new Map();
+// Keep smoke execution isolated from the host clipboard and from clipboard text.
+const smokeClipboard = Object.freeze({
+  readText: () => '',
+  writeText: () => {},
+});
 const trackedIpcMain = {
   handle(channel, handler) {
     handled.set(channel, handler);
@@ -34,6 +39,7 @@ const runtime = createElectronControllerRuntime({
   app,
   BrowserWindow,
   dialog,
+  clipboard: smokeClipboard,
   ipcMain: trackedIpcMain,
   protocol,
   session,

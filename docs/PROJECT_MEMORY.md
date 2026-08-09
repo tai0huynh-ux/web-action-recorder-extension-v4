@@ -33,7 +33,7 @@ WAR v5 Phase 1 - Localized Three-Pane Controller Workspace.
 - No Companion HTTP or scheduler runtime behavior changed.
 - Browser Agent HTTP runtime behavior remains unchanged; Native Bridge uses a private local socket.
 - Companion command statuses map through a pure compatibility adapter.
-- Remote live control now uses bounded JPEG viewport frames plus typed raw-input commands over the authenticated WSS session; bidirectional clipboard synchronization remains represented as false.
+- Remote live control uses bounded JPEG viewport frames plus typed raw-input commands over the authenticated WSS session. Clipboard transfer is explicit and bounded: one active device may copy into the Controller OS clipboard, and the Controller may paste to explicitly selected devices; continuous synchronization remains disabled.
 - `legacyCompanionPollingEnabled` defaults to true for existing compatibility.
 - Companion HTTP is now a compatibility adapter over Controller Core.
 - Controller Core has no HTTP, WebSocket, Electron, Chrome API, or fixed filesystem path dependency.
@@ -57,9 +57,9 @@ WAR v5 Phase 1 - Localized Three-Pane Controller Workspace.
 - Browser Agent, MV3 Extension, and Native Host are released as sidecar packages rather than silently bundled into the Controller installer.
 - Unsigned development release is supported through `WAR_RELEASE_CHANNEL=development`; production signing is only claimed when a real Authenticode certificate validates.
 - Release manifest and `SHA256SUMS.txt` are generated artifacts and are not tracked.
-- Container Chromium requires a system Native Messaging host manifest for the fixed extension id used by the gate; the Dockerfile installs it under `/etc/chromium/native-messaging-hosts/`.
+- Container CloakBrowser requires a system Native Messaging host manifest for the fixed extension id used by the gate; the Dockerfile installs it under both Chromium-compatible system discovery paths.
 - MV3 `job_started` must be emitted at the tab execution boundary before terminal result delivery can race it.
-- Browser Agent must wake Extension Native Bridge polling after native host manifest install and after the one-time Chromium restart used to pick up a newly installed manifest.
+- Browser Agent must wake Extension Native Bridge polling after native host manifest install and after the one-time CloakBrowser restart used to pick up a newly installed manifest.
 - Controller Workspace Phase 1 is Vietnamese-first with English fallback, runtime language switching, and typed IPC settings persistence.
 - The workspace renders real Controller devices but keeps selection and draft input state renderer-only in Phase 1.
 - `Thêm container`, field picker, grouped input execution, and origin synchronization are explicit placeholders only: `NOT_IMPLEMENTED_PHASE_1`.

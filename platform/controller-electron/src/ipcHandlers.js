@@ -13,6 +13,7 @@ export function registerControllerIpcHandlers({
   dialog,
   fs,
   path,
+  clipboard,
   openRemoteWindow,
   allowedWindows,
 } = {}) {
@@ -28,7 +29,7 @@ export function registerControllerIpcHandlers({
     }
   };
 
-  const methodMap = buildMethodMap(application, { dialog, fs, path, openRemoteWindow });
+  const methodMap = buildMethodMap(application, { dialog, fs, path, clipboard, openRemoteWindow });
   for (const channel of REQUEST_CHANNELS) {
     const method = methodMap.get(channel);
     if (!method) continue;
@@ -76,6 +77,21 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.sessions.list, () => application.listSessions()],
     [IPC_CHANNELS.remote.capture, (payload) => application.remoteCapture(payload)],
     [IPC_CHANNELS.remote.control, (payload) => application.remoteControl(payload)],
+    [IPC_CHANNELS.remote.clipboardCopy, async (payload) => {
+      if (typeof dependencies.clipboard?.writeText !== 'function') throw codedError('REMOTE_CLIPBOARD_UNAVAILABLE', 'Controller clipboard is unavailable');
+      const result = await application.remoteClipboardCopy(payload);
+      const data = unwrapApplicationResult(result);
+      if (typeof data?.text !== 'string' || data.copied !== true || !Number.isInteger(data.bytes)) {
+        throw codedError('REMOTE_CLIPBOARD_INVALID', 'Remote clipboard response is invalid');
+      }
+      dependencies.clipboard.writeText(data.text, 'clipboard');
+      return { deviceId: data.deviceId, copied: true, bytes: data.bytes };
+    }],
+    [IPC_CHANNELS.remote.clipboardPaste, async (payload) => {
+      if (typeof dependencies.clipboard?.readText !== 'function') throw codedError('REMOTE_CLIPBOARD_UNAVAILABLE', 'Controller clipboard is unavailable');
+      const text = dependencies.clipboard.readText('clipboard');
+      return application.remoteClipboardPaste({ ...payload, text });
+    }],
     [IPC_CHANNELS.remote.openWindow, (payload) => {
       if (typeof dependencies.openRemoteWindow !== 'function') throw codedError('REMOTE_WINDOW_UNAVAILABLE', 'Remote window support is unavailable');
       return dependencies.openRemoteWindow(payload);
@@ -190,4 +206,8 @@ function codedError(code, message, details) {
   error.code = code;
   if (details !== undefined) error.details = details;
   return error;
+}
+
+function unwrapApplicationResult(result) {
+  return result?.ok === true && Object.hasOwn(result, 'data') ? result.data : result;
 }

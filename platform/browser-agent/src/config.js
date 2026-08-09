@@ -7,7 +7,9 @@ const DEFAULTS = {
   host: '127.0.0.1',
   port: 3766,
   dataDir: '/data',
+  cloakbrowserExecutable: '/usr/local/bin/war-cloakbrowser-sandbox-launcher',
   chromiumExecutable: '/usr/bin/chromium',
+  extensionId: 'edoicfpldmlabgdalemfgflpldiijdmm',
   extensionDir: '/app/extension',
   headless: false,
   noSandbox: false,
@@ -28,7 +30,8 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     allowRemote: readBool(env.WAR_AGENT_ALLOW_REMOTE, DEFAULTS.allowRemote, 'WAR_AGENT_ALLOW_REMOTE'),
     allow: readList(env.WAR_AGENT_ALLOW),
     dataDir: resolvePath(env.WAR_DATA_DIR || DEFAULTS.dataDir, cwd),
-    chromiumExecutable: resolvePath(env.WAR_CHROMIUM_EXECUTABLE || DEFAULTS.chromiumExecutable, cwd),
+    browserEngine: readBrowserEngine(env, cwd),
+    extensionId: DEFAULTS.extensionId,
     extensionDir: resolvePath(env.WAR_EXTENSION_DIR || DEFAULTS.extensionDir, cwd),
     headless: readBool(env.WAR_BROWSER_HEADLESS, DEFAULTS.headless, 'WAR_BROWSER_HEADLESS'),
     noSandbox: readBool(env.WAR_BROWSER_NO_SANDBOX, DEFAULTS.noSandbox, 'WAR_BROWSER_NO_SANDBOX'),
@@ -140,6 +143,27 @@ function readOptionalString(value) {
   return value === undefined || value === '' ? undefined : String(value);
 }
 
+function readBrowserEngine(env, cwd) {
+  const name = readString(env.WAR_BROWSER_ENGINE, 'cloakbrowser').toLowerCase();
+  if (name === 'cloakbrowser') {
+    return {
+      name,
+      version: '0.5.5',
+      pinnedVersion: '146.0.7680.177.5',
+      executable: resolveRuntimePath(env.WAR_CLOAKBROWSER_EXECUTABLE || DEFAULTS.cloakbrowserExecutable, cwd),
+    };
+  }
+  if (name === 'chromium') {
+    return {
+      name,
+      version: 'chromium',
+      pinnedVersion: undefined,
+      executable: resolveRuntimePath(env.WAR_CHROMIUM_EXECUTABLE || DEFAULTS.chromiumExecutable, cwd),
+    };
+  }
+  throw new AgentError('invalid_config', 'WAR_BROWSER_ENGINE must be cloakbrowser or chromium');
+}
+
 function readControllerCredential(env, cwd) {
   const inline = readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL);
   const fileValue = readOptionalString(env.WAR_CONTROLLER_SESSION_CREDENTIAL_FILE);
@@ -191,4 +215,8 @@ function readInt(value, fallback, min, max, name) {
 
 function resolvePath(value, cwd) {
   return path.resolve(cwd, value);
+}
+
+function resolveRuntimePath(value, cwd) {
+  return String(value).startsWith('/') ? String(value) : resolvePath(value, cwd);
 }

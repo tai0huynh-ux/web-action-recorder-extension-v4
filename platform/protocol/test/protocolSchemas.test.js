@@ -178,6 +178,47 @@ test('remote control request and bounded JPEG response validate', () => {
   assert.equal(validateEnvelope({ ...response, payload: { ...response.payload, frame: { ...response.payload.frame, data: 'A'.repeat(700001) } } }).ok, false);
 });
 
+test('remote clipboard exceptions allow only exact bounded paste and copy shapes', () => {
+  const text = 'x'.repeat(64 * 1024);
+  const paste = {
+    ...agentEnvelope(),
+    type: 'remote.control.request',
+    deadline: '2026-07-14T00:00:10.000Z',
+    idempotencyKey: 'clipboard-paste',
+    payload: { command: 'clipboard.pasteText', payload: { text } }
+  };
+  assert.equal(validateEnvelope(paste).ok, true);
+  assert.equal(validateEnvelope({ ...paste, payload: { ...paste.payload, payload: { text, extra: true } } }).ok, false);
+  assert.equal(validateEnvelope({ ...paste, payload: { ...paste.payload, extra: true } }).ok, false);
+  assert.equal(validateEnvelope({ ...paste, payload: { ...paste.payload, payload: { text: `${text}x` } } }).ok, false);
+
+  const copy = {
+    ...agentEnvelope(),
+    type: 'remote.control.response',
+    correlationId: 'clipboard-request',
+    payload: {
+      ok: true,
+      result: {
+        protocol: 'war-control.v1',
+        messageId: 'clipboard-copy',
+        type: 'clipboard.copySelection',
+        status: 'succeeded',
+        deviceId: 'dev-a',
+        startedAt: '2026-07-14T00:00:00.000Z',
+        finishedAt: '2026-07-14T00:00:01.000Z',
+        durationMs: 1000,
+        result: { copied: true, text, bytes: Buffer.byteLength(text, 'utf8') }
+      }
+    }
+  };
+  assert.equal(validateEnvelope(copy).ok, true);
+  assert.equal(validateEnvelope({ ...copy, payload: { ...copy.payload, result: { ...copy.payload.result, result: { copied: true, text, bytes: 1 } } } }).ok, false);
+  assert.equal(validateEnvelope({ ...copy, payload: { ...copy.payload, result: { ...copy.payload.result, result: { text, bytes: Buffer.byteLength(text, 'utf8') } } } }).ok, false);
+  assert.equal(validateEnvelope({ ...copy, payload: { ...copy.payload, result: { ...copy.payload.result, result: { copied: false, text, bytes: Buffer.byteLength(text, 'utf8') } } } }).ok, false);
+  assert.equal(validateEnvelope({ ...copy, payload: { ...copy.payload, extra: true } }).ok, false);
+  assert.equal(validateEnvelope({ ...copy, payload: { ...copy.payload, result: { ...copy.payload.result, result: { copied: true, text, bytes: Buffer.byteLength(text, 'utf8'), extra: true } } } }).ok, false);
+});
+
 test('companion status compatibility mapping normalizes leased commands', () => {
   assert.equal(mapCompanionStatusToExecutionJobStatus('leased'), 'dispatched');
   const job = createExecutionJobFromCompanionCommand({

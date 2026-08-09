@@ -1233,6 +1233,151 @@ body.remote-popout .content {
   margin-bottom: 8px;
 }
 
+.remote-browser-chrome {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 9px;
+  padding: 7px;
+  border: 1px solid #344a5d;
+  border-radius: 7px;
+  background: #172633;
+}
+
+.remote-browser-tab-row,
+.remote-browser-nav-row,
+.remote-browser-app-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.remote-browser-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.remote-browser-tab {
+  display: inline-flex;
+  flex: 0 0 min(165px, 44vw);
+  min-width: 96px;
+  overflow: hidden;
+  border: 1px solid #40576a;
+  border-radius: 5px 5px 0 0;
+  background: #213342;
+}
+
+.remote-browser-tab.active {
+  border-color: #66c8e8;
+  background: #2c4659;
+}
+
+.remote-browser-tab-button,
+.remote-browser-tab-close {
+  min-height: 28px;
+  border: 0;
+  color: #eaf6fb;
+  background: transparent;
+  cursor: pointer;
+}
+
+.remote-browser-tab-button {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-browser-tab-close {
+  flex: 0 0 29px;
+  font-size: 0;
+}
+
+.remote-browser-tab-close::after {
+  content: 'x';
+  font-size: 16px;
+}
+
+.remote-browser-tab-button:hover,
+.remote-browser-tab-close:hover,
+.remote-browser-tab-button:focus-visible,
+.remote-browser-tab-close:focus-visible {
+  background: rgba(122, 210, 235, .18);
+  outline: none;
+}
+
+.remote-browser-tab-empty {
+  padding: 5px 7px;
+  color: #9db5c4;
+  font-size: .82rem;
+}
+
+.remote-browser-new,
+.remote-nav-button,
+.remote-go {
+  white-space: nowrap;
+}
+
+.remote-browser-nav-row .button,
+.remote-browser-app-row .button,
+.remote-browser-new {
+  min-height: 30px;
+  padding: 5px 8px;
+  color: #dcecf3;
+  border-color: #465e70;
+  background: #223644;
+}
+
+.remote-browser-nav-row .button:hover:not(:disabled),
+.remote-browser-app-row .button:hover:not(:disabled),
+.remote-browser-new:hover:not(:disabled) {
+  background: #315166;
+}
+
+.remote-omnibox {
+  flex: 1 1 180px;
+  min-width: 100px;
+  height: 30px;
+  padding: 5px 9px;
+  border: 1px solid #537084;
+  border-radius: 15px;
+  color: #f0f8fb;
+  background: #0c1821;
+}
+
+.remote-omnibox:focus-visible {
+  border-color: #71d2ef;
+  outline: 2px solid rgba(113, 210, 239, .35);
+  outline-offset: 1px;
+}
+
+.remote-browser-app-row {
+  flex-wrap: wrap;
+}
+
+.remote-browser-status {
+  min-height: 1.1em;
+  margin: 0;
+  color: #99d4a4;
+  font-size: .82rem;
+}
+
+.remote-browser-status.pending {
+  color: #f4cf7b;
+}
+
+.remote-browser-status.error {
+  color: #ffb4aa;
+}
+
 .remote-screen-wrap {
   position: relative;
   display: grid;
@@ -1298,6 +1443,14 @@ body.remote-popout .content {
   .remote-screen-wrap,
   .remote-screen {
     min-height: 180px;
+  }
+
+  .remote-browser-nav-row {
+    flex-wrap: wrap;
+  }
+
+  .remote-omnibox {
+    flex-basis: calc(100% - 54px);
   }
 }
 

@@ -2,12 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { createDockerContainerAdapter } from '../src/containerAdapter.js';
+import { createDockerContainerAdapter as createDockerContainerAdapterBase } from '../src/containerAdapter.js';
 
 const IMAGE_ID = `sha256:${'a'.repeat(64)}`;
 const OLD_IMAGE_ID = `sha256:${'b'.repeat(64)}`;
 const PRIMARY_DOCKER_ID = '1'.repeat(64);
+const IPV4_ENDPOINT_MAC = 'aa:68:a4:33:03:ce';
 const APPROVED_SECCOMP_OPTION = `seccomp=${JSON.stringify(JSON.parse(fs.readFileSync(new URL('../../container/security/chromium-userns-seccomp.json', import.meta.url), 'utf8')))}`;
+const APPROVED_IMAGE_ENV = Object.freeze(['LANG=C.UTF-8', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin']);
+const MANAGED_RUNTIME_ENV = Object.freeze([
+  'WAR_MANAGED_DEVICE_ID=managed-device-1',
+  'WAR_CONTROLLER_SESSION_CREDENTIAL_FILE=/data/device/controller-session.credential',
+  'WAR_CONTROLLER_WSS_URL=wss://controller.example:47651/v1/agent-session',
+]);
+const EXPECTED_CONTAINER_ENV = Object.freeze([...APPROVED_IMAGE_ENV, ...MANAGED_RUNTIME_ENV]);
+
+function createDockerContainerAdapter({ execFileImpl, approvedImageEnvironment = APPROVED_IMAGE_ENV, ...options }) {
+  return createDockerContainerAdapterBase({
+    ...options,
+    execFileImpl: async (file, args, execOptions) => {
+      if (isImageEnvironmentInspection(args)) return { stdout: `${JSON.stringify(approvedImageEnvironment)}\n`, stderr: '' };
+      return execFileImpl(file, args, execOptions);
+    },
+  });
+}
 
 test('managed Docker adapter probes the bounded Docker server version', async () => {
   const calls = [];
@@ -74,7 +92,67 @@ test('managed Docker adapter isolates credentials and verifies the approved runt
   assert.equal(result.runtime.privileged, false);
   assert.equal(result.runtime.nonRootUser, 'war');
   assert.equal(result.runtime.networkMode, ipv4NetworkName());
-  assert.equal(result.runtime.controlPort, 49000);
+  assert.equal(Object.hasOwn(result.runtime, 'controlPort'), false);
+});
+
+test('managed Docker launch never publishes the Browser Agent control port to the host', async () => {
+  const calls = [];
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      return { stdout: `${PRIMARY_DOCKER_ID}\n`, stderr: '' };
+    },
+  });
+  const managed = container();
+
+  await adapter.launchContainer(managed, adapter.networkFromRuntime(managed.runtime), { approvedImage: IMAGE_ID });
+
+  const launch = calls.find((args) => args[0] === 'run');
+  assert.ok(launch, 'managed launch must invoke Docker run');
+  assert.equal(launch.includes('-p'), false, 'Agent HTTP control must remain inside the managed Docker network');
+  assert.equal(launch.some((arg) => String(arg).includes('3766/tcp')), false, 'managed launch must not publish the control port under any Docker syntax');
+  assert.equal(launch.includes('--add-host'), false, 'LAN Controller endpoints must not expose the Docker host gateway');
+});
+
+test('managed Docker adds the host gateway only for an explicit host.docker.internal Controller endpoint', async () => {
+  const calls = [];
+  const base = managedConfig('local-docker');
+  const adapter = createDockerContainerAdapter({
+    config: { ...base, containers: { ...base.containers, controllerHost: 'host.docker.internal' } },
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      return { stdout: `${PRIMARY_DOCKER_ID}\n`, stderr: '' };
+    },
+  });
+  const managed = container();
+
+  await adapter.launchContainer(managed, adapter.networkFromRuntime(managed.runtime), { approvedImage: IMAGE_ID });
+
+  const launch = calls.find((args) => args[0] === 'run');
+  const addHostIndex = launch.indexOf('--add-host');
+  assert.ok(addHostIndex > 0);
+  assert.equal(launch[addHostIndex + 1], 'host.docker.internal:host-gateway');
+});
+
+test('managed Docker attestation rejects a legacy runtime with a published Agent control port', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'running\n', stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection({
+        HostConfig: { PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] } },
+      }))}\n`, stderr: '' };
+      if (args[0] === 'stats') return { stdout: '', stderr: '' };
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  await assert.rejects(
+    () => adapter.status(container({ runtime: { ipv4Network: ipv4NetworkName() } })),
+    /runtime security policy failed/
+  );
 });
 
 test('managed Docker adapter rejects renderer-selected images', async () => {
@@ -84,6 +162,34 @@ test('managed Docker adapter rejects renderer-selected images', async () => {
   });
 
   await assert.rejects(() => adapter.create(container({ image: 'unreviewed/image:latest' })), /not approved/);
+});
+
+test('managed Docker rejects mutable configured tags before Docker or credential-helper activity', () => {
+  const calls = [];
+  const config = managedConfig('local-docker');
+  const adapter = createDockerContainerAdapter({
+    config: { ...config, containers: { ...config.containers, image: 'war-browser-agent:phase1', imagePin: null } },
+    execFileImpl: async (_file, args) => { calls.push(args); return { stdout: '', stderr: '' }; },
+  });
+
+  assert.equal(calls.length, 0);
+  assert.throws(() => adapter.approvedImage(container({ image: 'war-browser-agent:phase1' })), /immutable.*image.*pin/i);
+  assert.equal(calls.length, 0);
+});
+
+test('managed Docker accepts a registry digest but rejects a local pin when inspect resolves another image', async () => {
+  const registryDigest = `registry.example/war/browser@sha256:${'b'.repeat(64)}`;
+  const registryAdapter = createDockerContainerAdapter({
+    config: { ...managedConfig('local-docker'), containers: { ...managedConfig('local-docker').containers, imagePin: registryDigest } },
+    execFileImpl: async () => ({ stdout: '', stderr: '' }),
+  });
+  const localAdapter = createDockerContainerAdapter({
+    config: { ...managedConfig('local-docker'), containers: { ...managedConfig('local-docker').containers, imagePin: IMAGE_ID } },
+    execFileImpl: async () => ({ stdout: `${OLD_IMAGE_ID}\n`, stderr: '' }),
+  });
+
+  assert.equal(registryAdapter.approvedImage({ image: registryDigest }), registryDigest);
+  await assert.rejects(() => localAdapter.imageId(IMAGE_ID), /does not match.*configured.*pin/i);
 });
 
 test('managed Docker adapter rejects an unsafe Controller destination at the WSS URL sink', () => {
@@ -397,6 +503,104 @@ test('managed Docker adapter rejects altered measured seccomp policy', async () 
   await assert.rejects(() => adapter.create(container()), /security policy failed/);
 });
 
+test('managed Docker adapter rejects injected runtime environment and host privilege fields', async (t) => {
+  const safeRuntimeEnv = EXPECTED_CONTAINER_ENV;
+  const cases = [
+    { name: 'disables the CloakBrowser sandbox', inspection: { Config: { Env: [...safeRuntimeEnv, 'WAR_BROWSER_NO_SANDBOX=1'] } } },
+    { name: 'overrides the CloakBrowser executable from writable data', inspection: { Config: { Env: [...safeRuntimeEnv, 'WAR_CLOAKBROWSER_EXECUTABLE=/data/device/browser'] } } },
+    { name: 'switches the native X11 backend to xdotool', inspection: { Config: { Env: [...safeRuntimeEnv, 'WAR_X11_BACKEND=xdotool'] } } },
+    { name: 'adds Linux capabilities', inspection: { HostConfig: { CapAdd: ['SYS_ADMIN'] } } },
+    { name: 'adds a host device', inspection: { HostConfig: { Devices: [{ PathOnHost: '/dev/fuse', PathInContainer: '/dev/fuse', CgroupPermissions: 'rwm' }] } } },
+    { name: 'requests a host device capability', inspection: { HostConfig: { DeviceRequests: [{ Driver: 'nvidia', Capabilities: [['gpu']] }] } } },
+    { name: 'joins the host PID namespace', inspection: { HostConfig: { PidMode: 'host' } } },
+    { name: 'joins the host IPC namespace', inspection: { HostConfig: { IpcMode: 'host' } } },
+    { name: 'joins the host UTS namespace', inspection: { HostConfig: { UTSMode: 'host' } } },
+    { name: 'adds an unapproved security option', inspection: { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION, 'no-new-privileges:true'] } } },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      let inspections = 0;
+      const adapter = createDockerContainerAdapter({
+        config: managedConfig('local-docker'),
+        execFileImpl: async (_file, args) => {
+          if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+          if (args[0] === 'volume' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedVolumeInspection())}\n`, stderr: '' };
+          if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+          if (args[0] === 'run') return { stdout: `${PRIMARY_DOCKER_ID}\n`, stderr: '' };
+          if (args[0] === 'inspect') {
+            inspections += 1;
+            return { stdout: `${JSON.stringify(managedIpv4Inspection(inspections === 3 ? scenario.inspection : {}))}\n`, stderr: '' };
+          }
+          return { stdout: '', stderr: '' };
+        },
+        spawnImpl: fakeSpawn([]),
+      });
+
+      await assert.rejects(() => adapter.create(container()), /security policy failed/);
+    });
+  }
+});
+
+test('managed Docker adapter requires the exact attested image and managed runtime environment', async (t) => {
+  const cases = [
+    { name: 'duplicate runtime key', environment: [...EXPECTED_CONTAINER_ENV, 'WAR_MANAGED_DEVICE_ID=managed-device-1'] },
+    { name: 'malformed entry', environment: [...EXPECTED_CONTAINER_ENV, 'NOT_AN_ENVIRONMENT_ENTRY'] },
+    { name: 'missing managed credential path', environment: EXPECTED_CONTAINER_ENV.filter((entry) => !entry.startsWith('WAR_CONTROLLER_SESSION_CREDENTIAL_FILE=')) },
+    { name: 'extra runtime key', environment: [...EXPECTED_CONTAINER_ENV, 'WAR_X11_BACKEND=xdotool'] },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      let inspections = 0;
+      const adapter = createDockerContainerAdapter({
+        config: managedConfig('local-docker'),
+        execFileImpl: async (_file, args) => {
+          if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+          if (args[0] === 'volume' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedVolumeInspection())}\n`, stderr: '' };
+          if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+          if (args[0] === 'run') return { stdout: `${PRIMARY_DOCKER_ID}\n`, stderr: '' };
+          if (args[0] === 'inspect') {
+            inspections += 1;
+            return { stdout: `${JSON.stringify(managedIpv4Inspection(inspections === 3 ? { Config: { Env: scenario.environment } } : {}))}\n`, stderr: '' };
+          }
+          return { stdout: '', stderr: '' };
+        },
+        spawnImpl: fakeSpawn([]),
+      });
+
+      await assert.rejects(() => adapter.create(container()), /security policy failed/);
+    });
+  }
+});
+
+test('managed Docker adapter rejects malformed or duplicate approved image environment attestation', async (t) => {
+  const cases = [
+    { name: 'duplicate image key', imageEnvironment: ['PATH=/bin', 'PATH=/usr/bin'] },
+    { name: 'malformed image entry', imageEnvironment: ['NOT_AN_ENVIRONMENT_ENTRY'] },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const adapter = createDockerContainerAdapter({
+        config: managedConfig('local-docker'),
+        approvedImageEnvironment: scenario.imageEnvironment,
+        execFileImpl: async (_file, args) => {
+          if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+          if (args[0] === 'volume' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedVolumeInspection())}\n`, stderr: '' };
+          if (args[0] === 'network' && args[1] === 'inspect') throw Object.assign(new Error('No such network'), { stderr: 'No such network' });
+          if (args[0] === 'run') return { stdout: `${PRIMARY_DOCKER_ID}\n`, stderr: '' };
+          if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection())}\n`, stderr: '' };
+          return { stdout: '', stderr: '' };
+        },
+        spawnImpl: fakeSpawn([]),
+      });
+
+      await assert.rejects(() => adapter.create(container()), /Approved Docker image environment is invalid/);
+    });
+  }
+});
+
 test('managed Docker restart recreates a stale image container while preserving its data volume and security policy', async () => {
   const calls = [];
   const recreatedId = dockerIdFor('stale-image-replacement');
@@ -433,6 +637,75 @@ test('managed Docker restart recreates a stale image container while preserving 
   assert.equal(result.status, 'running');
 });
 
+test('managed Docker repair preserves the measured IPv4 endpoint MAC when recreating a stale image', async () => {
+  const calls = [];
+  const ipv4MacAddress = IPV4_ENDPOINT_MAC;
+  const replacementId = dockerIdFor('ipv4-mac-replacement');
+  let recreated = false;
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedNetworkInspection(args.at(-1)))}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: String(args[2]).includes('State.Status') ? 'running\n' : 'true\n', stderr: '' };
+      if (args[0] === 'inspect') {
+        const id = args.at(-1)?.includes('network-backup') ? PRIMARY_DOCKER_ID : recreated ? replacementId : PRIMARY_DOCKER_ID;
+        return { stdout: `${JSON.stringify(managedIpv4Inspection({
+          Id: id,
+          Image: recreated ? IMAGE_ID : OLD_IMAGE_ID,
+          NetworkSettings: { Networks: {
+            [ipv4NetworkName()]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0, MacAddress: ipv4MacAddress },
+          } },
+        }))}\n`, stderr: '' };
+      }
+      if (args[0] === 'run') {
+        recreated = true;
+        return { stdout: `${replacementId}\n`, stderr: '' };
+      }
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  const result = await adapter.repair(container());
+
+  const run = calls.find((args) => args[0] === 'run' && args.includes('--name'));
+  assert.ok(run, 'stale image attestation must recreate the trusted canonical container');
+  const networkIndex = run.indexOf('--network');
+  assert.deepEqual(run.slice(networkIndex, networkIndex + 2), ['--network', `name=${ipv4NetworkName()},mac-address=${ipv4MacAddress}`]);
+  assert.equal(run.includes('--mac-address'), false, 'the IPv4 MAC belongs to the Docker network endpoint argument');
+  assert.equal(result.runtime.ipv4MacAddress, ipv4MacAddress);
+});
+
+test('managed Docker rejects an IPv4 replacement without a persisted or measured endpoint MAC before mutation', async () => {
+  const calls = [];
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'ps') return { stdout: '', stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedNetworkInspection(args.at(-1)))}\n`, stderr: '' };
+      if (args[0] === 'inspect') {
+        return { stdout: `${JSON.stringify(managedIpv4Inspection({
+          Image: OLD_IMAGE_ID,
+          NetworkSettings: { Networks: {
+            [ipv4NetworkName()]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0, MacAddress: '' },
+          } },
+        }))}\n`, stderr: '' };
+      }
+      throw new Error(`Unexpected Docker command: ${args.join(' ')}`);
+    },
+  });
+
+  await assert.rejects(
+    () => adapter.repair(container({ runtime: { ipv4Enabled: true, ipv4Network: ipv4NetworkName(), ipv6Enabled: false } })),
+    /IPv4 MAC address is unavailable for replacement/
+  );
+
+  assert.equal(calls.some((args) => ['stop', 'rename', 'run'].includes(args[0])), false, 'an unpinned IPv4 identity must fail before replacing the managed container');
+});
+
 test('managed Docker repair restores the secure runtime without deleting the data volume', async () => {
   const calls = [];
   let inspected = 0;
@@ -465,6 +738,43 @@ test('managed Docker repair restores the secure runtime without deleting the dat
   assert.equal(calls.some((args) => args[0] === 'volume' && args[1] === 'rm'), false);
 });
 
+test('managed Docker repair removes a legacy published control port while preserving its data volume', async () => {
+  const calls = [];
+  const replacementId = dockerIdFor('published-port-replacement');
+  let recreated = false;
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'network' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedNetworkInspection(args.at(-1)))}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: String(args[2]).includes('State.Status') ? 'running\n' : 'true\n', stderr: '' };
+      if (args[0] === 'inspect') {
+        const target = args.at(-1);
+        const id = target?.includes('network-backup') ? PRIMARY_DOCKER_ID : recreated ? replacementId : PRIMARY_DOCKER_ID;
+        const HostConfig = recreated ? { PortBindings: {} } : {
+          PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
+        };
+        return { stdout: `${JSON.stringify(managedIpv4Inspection({ Id: id, HostConfig }))}\n`, stderr: '' };
+      }
+      if (args[0] === 'run') {
+        recreated = true;
+        return { stdout: `${replacementId}\n`, stderr: '' };
+      }
+      return { stdout: 'ok\n', stderr: '' };
+    },
+  });
+
+  const result = await adapter.repair(container());
+
+  const run = calls.find((args) => args[0] === 'run' && args.includes('--name'));
+  assert.equal(result.status, 'running');
+  assert.ok(run, 'legacy published-port drift must recreate the managed container');
+  assert.equal(run.includes('-p'), false);
+  assert.ok(run.includes('war-agent-one-data:/data'));
+  assert.equal(calls.some((args) => args[0] === 'volume' && args[1] === 'rm'), false);
+});
+
 test('managed Docker repair recreates a running container whose Controller WSS endpoint drifted while preserving its data volume', async () => {
   const calls = [];
   let recreated = false;
@@ -481,7 +791,11 @@ test('managed Docker repair recreates a running container whose Controller WSS e
       if (args[0] === 'network' && args[1] === 'inspect') return { stdout: `${JSON.stringify(managedNetworkInspection(args.at(-1)))}\n`, stderr: '' };
       if (args[0] === 'inspect' && args[1] === '-f') return { stdout: String(args[2]).includes('State.Status') ? 'running\n' : 'true\n', stderr: '' };
       if (args[0] === 'inspect') {
-        const env = recreated ? [`WAR_CONTROLLER_WSS_URL=${expectedWssUrl}`] : ['WAR_CONTROLLER_WSS_URL=wss://192.168.1.207:9443/v1/agent-session'];
+        const wssUrl = recreated ? expectedWssUrl : 'wss://192.168.1.207:9443/v1/agent-session';
+        const env = [
+          ...EXPECTED_CONTAINER_ENV.filter((entry) => !entry.startsWith('WAR_CONTROLLER_WSS_URL=')),
+          `WAR_CONTROLLER_WSS_URL=${wssUrl}`,
+        ];
         const id = args.at(-1)?.includes('network-backup') ? PRIMARY_DOCKER_ID : recreated ? replacementId : PRIMARY_DOCKER_ID;
         return { stdout: `${JSON.stringify(managedIpv4Inspection({ Id: id, Config: { Env: env } }))}\n`, stderr: '' };
       }
@@ -740,6 +1054,7 @@ test('recovery accepts the exact primary missing-container signature', async () 
     config: managedConfig('local-docker'),
     execFileImpl: async (_file, args) => {
       calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
       if (args[0] === 'ps') return { stdout: String(args.find((value) => String(value).startsWith('name='))).includes(backupName) ? `${backupName}\n` : '', stderr: '' };
       if (args[0] === 'inspect' && args.at(-1) === name && !primaryPresent) {
         throw Object.assign(new Error(`No such container: ${name}`), { stderr: `Error: No such container: ${name}` });
@@ -800,6 +1115,7 @@ test('interrupted stopped IPv6 backup recovery uses the persisted endpoint after
     dockerName: 'war-agent-one',
     ipv4Enabled: true,
     ipv4Network: ipv4NetworkName(),
+    ipv4MacAddress: IPV4_ENDPOINT_MAC,
     ipv6Enabled: true,
     ipv6Suffix: 'a8bb:ccff:fedd:eeff',
     ipv6Driver: 'bridge',
@@ -811,6 +1127,7 @@ test('interrupted stopped IPv6 backup recovery uses the persisted endpoint after
     config: { ...managedConfig('local-docker'), containers: { ...managedConfig('local-docker').containers, ipv6Driver: 'bridge' } },
     execFileImpl: async (_file, args) => {
       calls.push([...args]);
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
       if (args[0] === 'ps') return { stdout: backupPresent && String(args.find((value) => String(value).startsWith('name='))).includes(backupName) ? `${backupName}\n` : '', stderr: '' };
       if (args[0] === 'inspect' && args.at(-1) === 'war-agent-one' && !primaryPresent) throw Object.assign(new Error('No such container: war-agent-one'), { stderr: 'No such container: war-agent-one' });
       if (args[0] === 'inspect' && args.at(-1) === backupName) {
@@ -873,6 +1190,7 @@ test('managed Docker scan accepts a stopped IPv6 container from its configured I
   assert.deepEqual(result.rejected, []);
   assert.equal(result.containers.length, 1);
   assert.equal(result.containers[0].status, 'stopped');
+  assert.equal(result.containers[0].runtime.ipv4MacAddress, null);
   assert.equal(result.containers[0].runtime.ipv6Address, ipv6Address);
   assert.equal(result.containers[0].runtime.ipv6Suffix, 'a8bb:ccff:fedd:eeff');
 });
@@ -901,7 +1219,7 @@ test('managed Docker adapter creates an IPv6 network with a stable suffix and ke
       if (args[0] === 'run') return { stdout: `${createdId}\n`, stderr: '' };
       if (args[0] === 'inspect') {
         return { stdout: `${JSON.stringify(safeInspection({ Id: createdId, NetworkSettings: { Networks: {
-          [ipv4NetworkNameSeen]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 },
+          [ipv4NetworkNameSeen]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0, MacAddress: IPV4_ENDPOINT_MAC },
           [ipv6NetworkName]: { GlobalIPv6Address: '2001:db8:1:2:a8bb:ccff:fedd:eeff', GlobalIPv6PrefixLen: 64 },
         } }, HostConfig: { NetworkMode: ipv4NetworkNameSeen } }))}\n`, stderr: '' };
       }
@@ -979,6 +1297,7 @@ test('managed Docker restart refreshes a stopped macvlan IPv6 prefix while prese
   const result = await adapter.restart(container({ runtime: {
     ipv4Enabled: true,
     ipv4Network: ipv4NetworkName(),
+    ipv4MacAddress: IPV4_ENDPOINT_MAC,
     ipv6Enabled: true,
     ipv6Driver: 'macvlan',
     ipv6Prefix: oldPrefix,
@@ -1258,6 +1577,7 @@ test('managed Docker start reuses empty post-reboot legacy endpoints only for th
   const result = await adapter.start(container({ runtime: {
     ipv4Enabled: true,
     ipv4Network: legacyIpv4Network,
+    ipv4MacAddress: IPV4_ENDPOINT_MAC,
     ipv6Enabled: true,
     ipv6Driver: 'macvlan',
     ipv6Prefix: prefix,
@@ -1356,6 +1676,7 @@ test('managed Docker start waits for a macvlan live endpoint only after starting
     const result = await adapter.start(container({ runtime: {
       ipv4Enabled: true,
       ipv4Network: ipv4NetworkName(),
+      ipv4MacAddress: IPV4_ENDPOINT_MAC,
       ipv6Enabled: true,
       ipv6Driver: 'macvlan',
       ipv6Prefix: '2001:db8:1:2::/64',
@@ -1378,25 +1699,44 @@ test('managed Docker adapter uses bounded SSH Docker commands', async () => {
     config: managedConfig('ssh-docker'),
     execFileImpl: async (file, args) => {
       calls.push({ file, args });
+      if (args.at(-1)?.includes("'image' 'inspect'")) return { stdout: `${IMAGE_ID}\n`, stderr: '' };
       if (args.at(-1)?.includes("'{{.State.Status}}'")) return { stdout: 'running\n', stderr: '' };
       return { stdout: `${JSON.stringify(safeInspection(remoteSecurityOptions()))}\n`, stderr: '' };
     },
   });
 
-  await adapter.status({ id: 'container-1', runtime: { dockerName: 'war-agent-one' } });
+  await adapter.status(container({ runtime: { dockerName: 'war-agent-one' } }));
 
-  assert.equal(calls[0].file, 'ssh');
+  assert.ok(calls.length >= 3, 'status must attest the image ID, image environment, and runtime');
+  assert.ok(calls.every((call) => call.file === 'ssh'));
   assert.deepEqual(calls[0].args.slice(0, -1), [
     '-F', 'NUL',
     '-i', 'C:/Users/operator/.ssh/id_ed25519',
     '-o', 'IdentitiesOnly=yes',
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=10',
-    'operator@agent.example',
     '--',
+    'operator@agent.example',
   ]);
-  assert.ok(calls[0].args.at(-1).includes("'docker' 'inspect'"));
-  assert.equal(calls[0].args.at(-1).includes(';'), false);
+  assert.equal(calls[0].args.indexOf('--'), calls[0].args.indexOf('operator@agent.example') - 1, 'SSH option terminator must precede the destination');
+  const commands = calls.map((call) => call.args.at(-1));
+  assert.ok(commands.some((command) => command.includes("'docker' 'image' 'inspect'")));
+  assert.ok(commands.some((command) => command.includes("'docker' 'inspect'")));
+  assert.equal(commands.some((command) => command.includes(';')), false);
+});
+
+test('managed Docker status rejects a container whose image swaps after immutable attestation', async () => {
+  const adapter = createDockerContainerAdapter({
+    config: managedConfig('local-docker'),
+    execFileImpl: async (_file, args) => {
+      if (args[0] === 'image') return { stdout: `${IMAGE_ID}\n`, stderr: '' };
+      if (args[0] === 'inspect' && args[1] === '-f') return { stdout: 'running\n', stderr: '' };
+      if (args[0] === 'inspect') return { stdout: `${JSON.stringify(managedIpv4Inspection({ Image: OLD_IMAGE_ID }))}\n`, stderr: '' };
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await assert.rejects(() => adapter.status(container({ runtime: { dockerName: 'war-agent-one' } })), /security policy failed/);
 });
 
 test('managed SSH Docker creation streams the credential separately from safe environment', async () => {
@@ -1459,7 +1799,7 @@ test('managed Docker stop accepts an approved immutable image ID after digest-pi
     },
   });
 
-  const result = await adapter.stop(container({ runtime: { ipv4Network: ipv4NetworkName() } }));
+  const result = await adapter.stop(container({ runtime: { ipv4Network: ipv4NetworkName(), ipv4MacAddress: IPV4_ENDPOINT_MAC } }));
 
   assert.equal(result.status, 'stopped');
   assert.ok(calls.some((args) => args[0] === 'stop' && args[3] === PRIMARY_DOCKER_ID));
@@ -1481,7 +1821,7 @@ test('managed Docker stop accepts cleared endpoint addresses while preserving po
     },
   });
 
-  const result = await adapter.stop(container({ runtime: { ipv4Network: ipv4NetworkName() } }));
+  const result = await adapter.stop(container({ runtime: { ipv4Network: ipv4NetworkName(), ipv4MacAddress: IPV4_ENDPOINT_MAC } }));
   assert.equal(result.status, 'stopped');
   assert.equal(result.runtime.nonRootUser, 'war');
 });
@@ -1492,7 +1832,7 @@ function managedConfig(runtime) {
     containers: {
       enabled: true,
       runtime,
-      image: 'war-browser-agent:phase1',
+      imagePin: IMAGE_ID,
       sshTarget: runtime === 'ssh-docker' ? 'operator@agent.example' : undefined,
       sshIdentityFile: runtime === 'ssh-docker' ? 'C:/Users/operator/.ssh/id_ed25519' : undefined,
       timeoutMs: 1000,
@@ -1504,7 +1844,7 @@ function managedConfig(runtime) {
   };
 }
 
-function container({ credential = 'c'.repeat(43), image = 'war-browser-agent:phase1', runtime = {} } = {}) {
+function container({ credential = 'c'.repeat(43), image = IMAGE_ID, runtime = {} } = {}) {
   return {
     id: 'container-1',
     name: 'Agent One',
@@ -1521,25 +1861,32 @@ function safeInspection(overrides = {}) {
     Image: IMAGE_ID,
     Config: {
       User: 'war',
-      Image: 'war-browser-agent:phase1',
+      Image: IMAGE_ID,
       Labels: {
         'managed-by': 'war-controller',
         'war-container-id': 'container-1',
         'war-container-name': 'Agent One',
         'war-device-id': 'managed-device-1',
       },
-      Env: ['WAR_CONTROLLER_WSS_URL=wss://controller.example:47651/v1/agent-session'],
+      Env: [...EXPECTED_CONTAINER_ENV],
     },
     HostConfig: {
       Privileged: false,
+      CapDrop: ['ALL'],
+      PidMode: '',
+      IpcMode: 'private',
+      UTSMode: '',
+      CgroupnsMode: 'private',
+      UsernsMode: '',
       NetworkMode: 'bridge',
       Memory: 2 * 1024 * 1024 * 1024,
       NanoCpus: 2_000_000_000,
       PidsLimit: 512,
       SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION],
       Binds: ['war-agent-one-data:/data'],
-      PortBindings: { '3766/tcp': [{ HostIp: '127.0.0.1', HostPort: '49000' }] },
+      PortBindings: {},
     },
+    Mounts: [{ Type: 'volume', Name: 'war-agent-one-data', Destination: '/data', RW: true }],
   };
   return {
     ...base,
@@ -1557,15 +1904,35 @@ function remoteSecurityOptions() {
   return { HostConfig: { SecurityOpt: ['apparmor=war-browser-agent', APPROVED_SECCOMP_OPTION] } };
 }
 
+function isImageEnvironmentInspection(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg).includes('{{json .Config.Env}}'));
+}
+
 function ipv4NetworkName() {
   return `war-managed-ipv4-${crypto.createHash('sha256').update('war-agent-one').digest('hex').slice(0, 12)}`;
 }
 
 function managedIpv4Inspection(overrides = {}) {
+  const name = ipv4NetworkName();
+  const stopped = overrides.State?.Running === false;
+  const requestedNetworks = overrides.NetworkSettings?.Networks || {};
+  const { [name]: requestedIpv4Endpoint, ...otherNetworks } = requestedNetworks;
   return safeInspection({
     ...overrides,
-    HostConfig: { NetworkMode: ipv4NetworkName(), ...(overrides.HostConfig || {}) },
-    NetworkSettings: { Networks: { [ipv4NetworkName()]: { IPAddress: '172.30.0.2', GlobalIPv6Address: '', GlobalIPv6PrefixLen: 0 } }, ...(overrides.NetworkSettings || {}) },
+    HostConfig: { NetworkMode: name, ...(overrides.HostConfig || {}) },
+    NetworkSettings: {
+      ...(overrides.NetworkSettings || {}),
+      Networks: {
+        [name]: {
+          IPAddress: '172.30.0.2',
+          GlobalIPv6Address: '',
+          GlobalIPv6PrefixLen: 0,
+          ...(stopped ? {} : { MacAddress: IPV4_ENDPOINT_MAC }),
+          ...(requestedIpv4Endpoint || {}),
+        },
+        ...otherNetworks,
+      },
+    },
   });
 }
 

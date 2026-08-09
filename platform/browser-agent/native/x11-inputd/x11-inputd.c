@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MAX_LINE 8192
@@ -30,6 +32,13 @@ static KeyCode held_keys[MAX_HELD];
 static int held_key_count;
 static int held_buttons[8];
 static volatile int last_x_error;
+
+typedef struct {
+  int64_t deadline_at;
+  int64_t monotonic_deadline_at;
+} CommandTiming;
+static CommandTiming active_timing;
+static bool last_guard_deadline;
 
 static void on_signal(int signo) {
   (void)signo;
@@ -64,7 +73,7 @@ static void respond(FILE *out, const char *id, bool ok, const char *error, int h
     json_escape(out, error ? error : "error");
     fprintf(out, "\"");
   }
-  fprintf(out, ",\"heldKeys\":%d,\"heldButtons\":%d,\"state\":{\"heldKeys\":%d,\"heldButtons\":%d}}\n",
+  fprintf(out, ",\"protocol\":2,\"heldKeys\":%d,\"heldButtons\":%d,\"state\":{\"heldKeys\":%d,\"heldButtons\":%d}}\n",
           held_keys_count, held_buttons_count, held_keys_count, held_buttons_count);
   fflush(out);
 }
@@ -166,9 +175,22 @@ static bool fake_key(const char *key, bool down) {
   if (sym == NoSymbol) return false;
   KeyCode code = XKeysymToKeycode(display, sym);
   if (!code) return false;
-  XTestFakeKeyEvent(display, code, down ? True : False, CurrentTime);
+  if (!XTestFakeKeyEvent(display, code, down ? True : False, CurrentTime)) return false;
   XFlush(display);
   track_key(code, down);
+  return true;
+}
+
+static bool fake_button(int button, bool down) {
+  if (button < 1 || button > 7) return false;
+  if (!XTestFakeButtonEvent(display, button, down ? True : False, CurrentTime)) return false;
+  XFlush(display);
+  return true;
+}
+
+static bool fake_motion(int x, int y) {
+  if (!XTestFakeMotionEvent(display, DefaultScreen(display), x, y, CurrentTime)) return false;
+  XFlush(display);
   return true;
 }
 
@@ -212,10 +234,17 @@ static bool fake_text_char(char c) {
   KeyCode code = XKeysymToKeycode(display, sym);
   if (!code) return false;
   KeyCode shift_code = XKeysymToKeycode(display, XK_Shift_L);
-  if (shift) XTestFakeKeyEvent(display, shift_code, True, CurrentTime);
-  XTestFakeKeyEvent(display, code, True, CurrentTime);
-  XTestFakeKeyEvent(display, code, False, CurrentTime);
-  if (shift) XTestFakeKeyEvent(display, shift_code, False, CurrentTime);
+  if (shift && !XTestFakeKeyEvent(display, shift_code, True, CurrentTime)) return false;
+  if (!XTestFakeKeyEvent(display, code, True, CurrentTime)) {
+    if (shift) XTestFakeKeyEvent(display, shift_code, False, CurrentTime);
+    return false;
+  }
+  if (!XTestFakeKeyEvent(display, code, False, CurrentTime)) {
+    if (shift) XTestFakeKeyEvent(display, shift_code, False, CurrentTime);
+    return false;
+  }
+  if (shift && !XTestFakeKeyEvent(display, shift_code, False, CurrentTime)) return false;
+  XFlush(display);
   return true;
 }
 
@@ -229,49 +258,216 @@ static void release_all(void) {
   XFlush(display);
 }
 
-static bool window_has_chromium_class(Window window) {
+static bool get_json_int64(const char *line, const char *key, int64_t *out) {
+  char pattern[64];
+  snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+  const char *p = strstr(line, pattern);
+  if (!p) return false;
+  p = strchr(p + strlen(pattern), ':');
+  if (!p) return false;
+  p++;
+  while (isspace((unsigned char)*p)) p++;
+  if (!isdigit((unsigned char)*p)) return false;
+  errno = 0;
+  char *end = NULL;
+  unsigned long long value = strtoull(p, &end, 10);
+  if (errno == ERANGE || end == p || value > INT64_MAX) return false;
+  if (*end && !isspace((unsigned char)*end) && *end != ',' && *end != '}') return false;
+  *out = (int64_t)value;
+  return true;
+}
+
+static int64_t clock_milliseconds(clockid_t clock_id) {
+  struct timespec value;
+  if (clock_gettime(clock_id, &value) != 0) return -1;
+  return ((int64_t)value.tv_sec * 1000) + (value.tv_nsec / 1000000);
+}
+
+static bool deadline_expired(const CommandTiming *timing) {
+  if (!timing) return true;
+  int64_t now_real = clock_milliseconds(CLOCK_REALTIME);
+  int64_t now_mono = clock_milliseconds(CLOCK_MONOTONIC);
+  return now_real < 0 || now_mono < 0 || timing->deadline_at <= now_real || timing->monotonic_deadline_at <= now_mono;
+}
+
+static bool parse_war2_line(const char *line, const char **json, CommandTiming *timing) {
+  if (strncmp(line, "WAR2 ", 5) != 0) return false;
+  const char *cursor = line + 5;
+  if (!isdigit((unsigned char)*cursor)) return false;
+  errno = 0;
+  char *end = NULL;
+  unsigned long long value = strtoull(cursor, &end, 10);
+  if (errno == ERANGE || end == cursor || value > INT64_MAX || *end != ' ') return false;
+  const char *payload = end + 1;
+  if (*payload != '{') return false;
+  int64_t now_real = clock_milliseconds(CLOCK_REALTIME);
+  int64_t now_mono = clock_milliseconds(CLOCK_MONOTONIC);
+  if (now_real < 0 || now_mono < 0) return false;
+  timing->deadline_at = (int64_t)value;
+  int64_t remaining = timing->deadline_at > now_real ? timing->deadline_at - now_real : 0;
+  if (remaining > INT64_MAX - now_mono) return false;
+  timing->monotonic_deadline_at = now_mono + remaining;
+  *json = payload;
+  return true;
+}
+
+static bool contains_case_insensitive(const char *value, const char *needle) {
+  size_t needle_len = strlen(needle);
+  if (!needle_len) return true;
+  for (const char *candidate = value; *candidate; candidate++) {
+    size_t i = 0;
+    while (i < needle_len && candidate[i] && tolower((unsigned char)candidate[i]) == tolower((unsigned char)needle[i])) i++;
+    if (i == needle_len) return true;
+  }
+  return false;
+}
+
+static bool window_has_browser_class(Window window) {
   XWindowAttributes attrs;
   if (!XGetWindowAttributes(display, window, &attrs) || attrs.map_state != IsViewable) return false;
   XClassHint hint;
   if (!XGetClassHint(display, window, &hint)) return false;
   bool match = false;
-  if (hint.res_class && strstr(hint.res_class, "chromium")) match = true;
-  if (hint.res_name && strstr(hint.res_name, "chromium")) match = true;
+  if (hint.res_class && (contains_case_insensitive(hint.res_class, "chromium") || contains_case_insensitive(hint.res_class, "cloakbrowser"))) match = true;
+  if (hint.res_name && (contains_case_insensitive(hint.res_name, "chromium") || contains_case_insensitive(hint.res_name, "cloakbrowser"))) match = true;
   if (hint.res_name) XFree(hint.res_name);
   if (hint.res_class) XFree(hint.res_class);
   return match;
 }
 
-static Window find_chromium_window(Window root) {
-  if (window_has_chromium_class(root)) return root;
+static unsigned int find_direct_browser_windows(Window root, Window *matched_window) {
   Window parent, *children = NULL, root_return;
   unsigned int nchildren = 0;
   if (!XQueryTree(display, root, &root_return, &parent, &children, &nchildren)) return 0;
   Window found = 0;
-  for (unsigned int i = 0; i < nchildren && !found; i++) found = find_chromium_window(children[i]);
+  unsigned int matches = 0;
+  for (unsigned int i = 0; i < nchildren; i++) {
+    if (!window_has_browser_class(children[i])) continue;
+    found = children[i];
+    matches++;
+  }
   if (children) XFree(children);
-  return found;
+  *matched_window = found;
+  return matches;
 }
 
-static bool focus_window(void) {
+static bool window_is_descendant_of(Window window, Window ancestor) {
+  Window current = window;
+  for (int depth = 0; current && current != PointerRoot && depth < 64; depth++) {
+    if (current == ancestor) return true;
+    Window root_return = 0, parent = 0, *children = NULL;
+    unsigned int nchildren = 0;
+    if (!XQueryTree(display, current, &root_return, &parent, &children, &nchildren)) return false;
+    if (children) XFree(children);
+    current = parent;
+  }
+  return false;
+}
+
+static bool browser_window_owns_focus(Window browser_window) {
+  Window focused = 0;
+  int revert_to = 0;
+  XGetInputFocus(display, &focused, &revert_to);
+  return focused && focused != PointerRoot && window_is_descendant_of(focused, browser_window);
+}
+
+static bool begin_browser_input_guard(int64_t deadline_at) {
+  last_guard_deadline = false;
+  XGrabServer(display);
+  XSync(display, False);
+  if (active_timing.deadline_at != deadline_at || deadline_expired(&active_timing)) {
+    last_guard_deadline = true;
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
   Window root = RootWindow(display, DefaultScreen(display));
-  Window win = find_chromium_window(root);
-  if (!win) return false;
+  Window browser_window = 0;
+  if (find_direct_browser_windows(root, &browser_window) != 1 || !browser_window_owns_focus(browser_window)) {
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
+  if (deadline_expired(&active_timing)) {
+    last_guard_deadline = true;
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
+  last_x_error = 0;
+  return true;
+}
+
+static const char *guard_failure_error(void) {
+  return last_guard_deadline ? "deadline_exceeded" : "focus_failed";
+}
+
+static bool end_browser_input_guard(void) {
+  XSync(display, False);
+  bool ok = last_x_error == 0;
+  XUngrabServer(display);
+  XFlush(display);
+  return ok;
+}
+
+static bool focus_window(int64_t deadline_at) {
+  last_guard_deadline = false;
+  Window root = RootWindow(display, DefaultScreen(display));
+  Window win = 0;
+  unsigned int direct_matches = find_direct_browser_windows(root, &win);
+  if (direct_matches != 1) return false;
+  XGrabServer(display);
+  XSync(display, False);
+  if (active_timing.deadline_at != deadline_at || deadline_expired(&active_timing)) {
+    last_guard_deadline = true;
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
+  direct_matches = find_direct_browser_windows(root, &win);
+  if (direct_matches != 1) {
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
+  if (deadline_expired(&active_timing)) {
+    last_guard_deadline = true;
+    XUngrabServer(display);
+    XFlush(display);
+    return false;
+  }
   last_x_error = 0;
   XRaiseWindow(display, win);
   XSetInputFocus(display, win, RevertToParent, CurrentTime);
   XSync(display, False);
-  return last_x_error == 0;
+  bool ok = last_x_error == 0 && browser_window_owns_focus(win);
+  XUngrabServer(display);
+  XFlush(display);
+  return ok;
 }
 
-static void handle_line(const char *line, FILE *out) {
+static void handle_line(const char *wire, FILE *out, bool *protocol_ready) {
   char id[MAX_ID] = "";
   char type[MAX_TYPE] = "";
+  const char *line = NULL;
+  CommandTiming timing;
+  if (!parse_war2_line(wire, &line, &timing)) {
+    respond(out, id, false, "invalid_protocol", held_key_count, held_button_count());
+    return;
+  }
   if (!get_json_string(line, "id", id, sizeof(id)) || !get_json_string(line, "type", type, sizeof(type))) {
     respond(out, id, false, "invalid_packet", held_key_count, held_button_count());
     return;
   }
+  int64_t json_deadline = 0;
+  if (!get_json_int64(line, "deadlineAt", &json_deadline) || json_deadline != timing.deadline_at) {
+    respond(out, id, false, "invalid_deadline", held_key_count, held_button_count());
+    return;
+  }
+  active_timing = timing;
   if (strcmp(type, "ping") == 0 || strcmp(type, "getState") == 0) {
+    int protocol_version = 0;
+    if (strcmp(type, "ping") == 0 && get_json_int(line, "protocol", &protocol_version) && protocol_version == 2) *protocol_ready = true;
     respond(out, id, true, NULL, held_key_count, held_button_count());
     return;
   }
@@ -280,8 +476,18 @@ static void handle_line(const char *line, FILE *out) {
     respond(out, id, true, NULL, held_key_count, held_button_count());
     return;
   }
+  if (!*protocol_ready) {
+    respond(out, id, false, "invalid_protocol", held_key_count, held_button_count());
+    return;
+  }
+  if (deadline_expired(&timing)) {
+    respond(out, id, false, "deadline_exceeded", held_key_count, held_button_count());
+    return;
+  }
   if (strcmp(type, "focusWindow") == 0) {
-    respond(out, id, focus_window(), "focus_failed", held_key_count, held_button_count());
+    bool focused = focus_window(timing.deadline_at);
+    const char *focus_error = last_guard_deadline ? "deadline_exceeded" : "focus_failed";
+    respond(out, id, focused, focused ? NULL : focus_error, held_key_count, held_button_count());
     return;
   }
   if (strcmp(type, "mouseMove") == 0 || strcmp(type, "click") == 0) {
@@ -290,10 +496,17 @@ static void handle_line(const char *line, FILE *out) {
       respond(out, id, false, "point_out_of_bounds", held_key_count, held_button_count());
       return;
     }
-    XTestFakeMotionEvent(display, DefaultScreen(display), x, y, CurrentTime);
+    if (!begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
+      return;
+    }
+    if (!fake_motion(x, y)) {
+      end_browser_input_guard();
+      respond(out, id, false, "input_failed", held_key_count, held_button_count());
+      return;
+    }
     if (strcmp(type, "mouseMove") == 0) {
-      XFlush(display);
-      respond(out, id, true, NULL, held_key_count, held_button_count());
+      respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
       return;
     }
   }
@@ -304,21 +517,32 @@ static void handle_line(const char *line, FILE *out) {
     get_json_int(line, "count", &count);
     int button = button_number(button_name[0] ? button_name : "left");
     if (!button || count < 1 || count > 3) {
+      if (strcmp(type, "click") == 0) end_browser_input_guard();
       respond(out, id, false, "invalid_button", held_key_count, held_button_count());
+      return;
+    }
+    if (strcmp(type, "click") != 0 && !begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
       return;
     }
     if (strcmp(type, "click") == 0) {
       for (int i = 0; i < count; i++) {
-        XTestFakeButtonEvent(display, button, True, CurrentTime);
-        XTestFakeButtonEvent(display, button, False, CurrentTime);
+        if (!fake_button(button, true) || !fake_button(button, false)) {
+          end_browser_input_guard();
+          respond(out, id, false, "input_failed", held_key_count, held_button_count());
+          return;
+        }
       }
     } else {
       bool down = strcmp(type, "mouseDown") == 0;
-      XTestFakeButtonEvent(display, button, down ? True : False, CurrentTime);
+      if (!fake_button(button, down)) {
+        end_browser_input_guard();
+        respond(out, id, false, "input_failed", held_key_count, held_button_count());
+        return;
+      }
       held_buttons[button] = down ? 1 : 0;
     }
-    XFlush(display);
-    respond(out, id, true, NULL, held_key_count, held_button_count());
+    respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
     return;
   }
   if (strcmp(type, "wheel") == 0) {
@@ -327,25 +551,40 @@ static void handle_line(const char *line, FILE *out) {
       respond(out, id, false, "invalid_delta", held_key_count, held_button_count());
       return;
     }
+    if (!begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
+      return;
+    }
     int button = delta > 0 ? 5 : 4;
     int clicks = abs(delta) / 120;
     if (clicks < 1) clicks = 1;
     if (clicks > 20) clicks = 20;
     for (int i = 0; i < clicks; i++) {
-      XTestFakeButtonEvent(display, button, True, CurrentTime);
-      XTestFakeButtonEvent(display, button, False, CurrentTime);
+      if (!fake_button(button, true) || !fake_button(button, false)) {
+        end_browser_input_guard();
+        respond(out, id, false, "input_failed", held_key_count, held_button_count());
+        return;
+      }
     }
-    XFlush(display);
-    respond(out, id, true, NULL, held_key_count, held_button_count());
+    respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
     return;
   }
   if (strcmp(type, "keyDown") == 0 || strcmp(type, "keyUp") == 0) {
     char key[64] = "";
-    if (!get_json_string(line, "key", key, sizeof(key)) || !fake_key(key, strcmp(type, "keyDown") == 0)) {
+    if (!get_json_string(line, "key", key, sizeof(key))) {
       respond(out, id, false, "invalid_key", held_key_count, held_button_count());
       return;
     }
-    respond(out, id, true, NULL, held_key_count, held_button_count());
+    if (!begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
+      return;
+    }
+    if (!fake_key(key, strcmp(type, "keyDown") == 0)) {
+      end_browser_input_guard();
+      respond(out, id, false, "invalid_key", held_key_count, held_button_count());
+      return;
+    }
+    respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
     return;
   }
   if (strcmp(type, "insertText") == 0) {
@@ -354,14 +593,18 @@ static void handle_line(const char *line, FILE *out) {
       respond(out, id, false, "invalid_text", held_key_count, held_button_count());
       return;
     }
+    if (!begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
+      return;
+    }
     for (size_t i = 0; text[i]; i++) {
       if (!fake_text_char(text[i])) {
+        end_browser_input_guard();
         respond(out, id, false, "unsupported_text", held_key_count, held_button_count());
         return;
       }
     }
-    XFlush(display);
-    respond(out, id, true, NULL, held_key_count, held_button_count());
+    respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
     return;
   }
   if (strcmp(type, "shortcut") == 0) {
@@ -380,11 +623,19 @@ static void handle_line(const char *line, FILE *out) {
       respond(out, id, false, "invalid_shortcut", held_key_count, held_button_count());
       return;
     }
-    for (int i = 0; i < count - 1; i++) if (!fake_key(parts[i], true)) { respond(out, id, false, "invalid_shortcut", held_key_count, held_button_count()); return; }
-    fake_key(parts[count - 1], true);
-    fake_key(parts[count - 1], false);
-    for (int i = count - 2; i >= 0; i--) fake_key(parts[i], false);
-    respond(out, id, true, NULL, held_key_count, held_button_count());
+    if (!begin_browser_input_guard(timing.deadline_at)) {
+      respond(out, id, false, guard_failure_error(), held_key_count, held_button_count());
+      return;
+    }
+    for (int i = 0; i < count - 1; i++) {
+      if (!fake_key(parts[i], true)) { release_all(); end_browser_input_guard(); respond(out, id, false, "input_failed", held_key_count, held_button_count()); return; }
+    }
+    if (!fake_key(parts[count - 1], true)) { release_all(); end_browser_input_guard(); respond(out, id, false, "input_failed", held_key_count, held_button_count()); return; }
+    if (!fake_key(parts[count - 1], false)) { release_all(); end_browser_input_guard(); respond(out, id, false, "input_failed", held_key_count, held_button_count()); return; }
+    for (int i = count - 2; i >= 0; i--) {
+      if (!fake_key(parts[i], false)) { release_all(); end_browser_input_guard(); respond(out, id, false, "input_failed", held_key_count, held_button_count()); return; }
+    }
+    respond(out, id, end_browser_input_guard(), "input_failed", held_key_count, held_button_count());
     return;
   }
   respond(out, id, false, "unknown_type", held_key_count, held_button_count());
@@ -467,6 +718,7 @@ int main(int argc, char **argv) {
       close(client);
       continue;
     }
+    bool protocol_ready = false;
     char line[MAX_LINE + 2];
     while (running && fgets(line, sizeof(line), in)) {
       size_t len = strlen(line);
@@ -476,7 +728,7 @@ int main(int argc, char **argv) {
         while ((c = fgetc(in)) != EOF && c != '\n') {}
         continue;
       }
-      handle_line(line, in);
+      handle_line(line, in, &protocol_ready);
     }
     fclose(in);
   }

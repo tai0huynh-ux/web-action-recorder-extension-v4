@@ -30,6 +30,9 @@ export function createHttpServer({ config, identity, supervisor, dispatcher, ver
       if (req.url === '/v1/control' && req.method === 'POST') {
         requireAuth(req, config);
         const body = await readJsonBody(req, config.maxBodyBytes);
+        if (body?.type === 'clipboard.copySelection' || body?.type === 'clipboard.pasteText') {
+          throw new AgentError('forbidden', 'Clipboard commands require the privileged controller session', 403);
+        }
         const result = await dispatcher.dispatch(body);
         return sendJson(res, 200, redactStateForClient(result, !isLoopbackHost(config.host)));
       }

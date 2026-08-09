@@ -120,7 +120,10 @@ export async function main() {
   await socketServer.start();
   log('info', 'agent', 'native_bridge_socket_listening', { socketPath: config.nativeBridgeSocketPath });
   if (config.autoStartBrowser) {
-    await supervisor.start().catch((error) => {
+    await supervisor.start().then(async () => {
+      const state = await controller.getState();
+      if (state.engine?.browserVersion) identity.browserVersion = state.engine.browserVersion;
+    }).catch((error) => {
       log('error', 'agent', 'auto_start_failed', { message: error.message });
     });
   }
@@ -159,7 +162,7 @@ async function executeRemoteControlRequest({ request, controllerSession, control
       requestId: payload.requestId || request.messageId,
       result: command === 'remote.capture' ? { captured: true, targetId: result.targetId } : result,
       ...(command === 'remote.capture' ? { frame: result } : {})
-    });
+    }, { transient: command === 'clipboard.copySelection' });
   } catch (error) {
     log('warn', 'agent', 'remote_control_failed', { command, message: error.message });
     return controllerSession.sendRemoteControlResponse(request, {

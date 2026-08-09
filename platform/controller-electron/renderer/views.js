@@ -10,7 +10,10 @@ import {
   selectedDevices,
 } from './workspaceState.js';
 import {
+  browserStateFromRemoteResult,
+  normalizedBrowserTabs,
   normalizeRemoteSelection,
+  normalizeOmniboxInput,
   pointForRemoteFrame,
   pollIntervalForFps,
   printableTextForKeyboardEvent,
@@ -24,6 +27,8 @@ let pairingNotice = '';
 let remotePolling = null;
 let remoteScreens = new Map();
 let remoteStatusNode = null;
+let remoteBrowserNodes = new Map();
+const REMOTE_BROWSER_STATE_POLL_MS = 1350;
 
 export function clearPairingSecret() {
   oneTimeSecret = null;
@@ -237,7 +242,7 @@ function hostDraftFromHost(host) {
     identityFile: config.identityFile || '',
     controllerHost: config.controllerHost || '',
     controllerCaPath: config.controllerCaPath || '/etc/war/controller-ca.pem',
-    image: config.image || host.image || 'war-browser-agent:phase1',
+    image: host.image || config.image || 'war-browser-agent:phase1',
   };
 }
 
@@ -384,7 +389,7 @@ function hostDiagnosticsList(refresh) {
       }) }),
       el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerHost')}: ${config.controllerHost || t('workspace.containers.unknown')}` }),
       el('span', { className: 'device-meta', text: `${t('workspace.containers.controllerCaPath')}: ${config.controllerCaPath || t('workspace.containers.unknown')}` }),
-      el('span', { className: 'device-meta', text: `${t('workspace.containers.image')}: ${config.image || host.image || t('workspace.containers.unknown')} · ${config.identityFile ? t('workspace.containers.hostIdentityStored') : t('workspace.containers.sshKeyRequired')}` }),
+      el('span', { className: 'device-meta', text: `${t('workspace.containers.image')}: ${host.image || config.image || t('workspace.containers.unknown')} · ${config.identityFile ? t('workspace.containers.hostIdentityStored') : t('workspace.containers.sshKeyRequired')}` }),
       checks.error ? el('span', { className: 'device-meta host-diagnostic-error', text: checks.error }) : null,
       el('span', { className: 'host-card-hint', text: selected ? t('workspace.containers.editingHost') : t('workspace.containers.selectHostToEdit') }),
     ]);
@@ -2253,10 +2258,14 @@ function devicesView() {
 }
 
 function remoteView(refresh) {
-  store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, updating: {}, errors: {}, notice: '', error: '' };
+  store.remote ||= { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: true, frames: {}, pending: {}, updating: {}, errors: {}, browserStates: {}, browserPending: {}, browserNotices: {}, browserErrors: {}, notice: '', error: '' };
   store.remote.layout ||= 'auto';
   store.remote.updating ||= {};
   store.remote.errors ||= {};
+  store.remote.browserStates ||= {};
+  store.remote.browserPending ||= {};
+  store.remote.browserNotices ||= {};
+  store.remote.browserErrors ||= {};
   const targets = allWorkspaceDevices()
     .filter((device) => device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
     .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
@@ -2268,6 +2277,7 @@ function remoteView(refresh) {
   }
   if (!ids.includes(store.remote.activeDeviceId)) store.remote.activeDeviceId = store.remote.selectedDeviceIds[0] || ids[0] || '';
   remoteScreens = new Map();
+  remoteBrowserNodes = new Map();
   const selected = new Set(store.remote.selectedDeviceIds);
   const sync = el('input', { type: 'checkbox', checked: store.remote.synchronized === true, ariaLabel: t('remote.sync') });
   sync.addEventListener('change', () => { store.remote.synchronized = sync.checked; refresh(); });
@@ -2375,7 +2385,7 @@ function remoteTile(device, refresh) {
     const point = pointForRemoteFrame(event, image.getBoundingClientRect?.(), store.remote.frames?.[id]);
     if (point) sendRemoteCommand('input.wheel', { ...point, deltaX: event.deltaX || 0, deltaY: event.deltaY || 0 });
   }, { passive: false });
-  image.addEventListener('keydown', (event) => handleRemoteKey(event));
+  image.addEventListener('keydown', (event) => handleRemoteKey(event, id));
   image.addEventListener('keyup', (event) => {
     if (shortcutForKeyboardEvent(event) || printableTextForKeyboardEvent(event)) return;
     sendRemoteCommand('input.keyUp', { key: mapRemoteKey(event.key), space: 'browser' });
@@ -2385,6 +2395,7 @@ function remoteTile(device, refresh) {
       el('strong', { text: name }),
       el('span', { className: 'status-pill online', text: t('status.online') }),
     ]),
+    remoteBrowserChrome(id, name),
     el('div', { className: 'remote-screen-wrap' }, [image, placeholder]),
     el('div', { className: 'toolbar tight' }, [
       button(t('remote.focus'), () => { store.remote.activeDeviceId = id; refresh(); }, { className: 'button compact' }),
@@ -2395,8 +2406,166 @@ function remoteTile(device, refresh) {
   ]);
 }
 
+function remoteBrowserChrome(deviceId, name) {
+  const state = store.remote.browserStates?.[deviceId] || null;
+  const tabStrip = el('div', { className: 'remote-browser-tabs', role: 'tablist', ariaLabel: t('remote.tabsFor', { name }) });
+  const omnibox = el('input', {
+    className: 'remote-omnibox',
+    type: 'text',
+    value: activeBrowserUrl(state),
+    placeholder: t('remote.omniboxPlaceholder'),
+    ariaLabel: t('remote.omnibox'),
+  });
+  const status = el('p', { className: 'remote-browser-status', ariaLive: 'polite' });
+  const controls = [];
+  const command = (type, payload) => sendRemoteTileCommand(deviceId, type, payload);
+  const activePayload = () => browserTargetPayload(store.remote.browserStates?.[deviceId]);
+  const newTab = button(t('remote.newTab'), () => command('tab.new', {}), { className: 'button remote-browser-new', ariaLabel: t('remote.newTab') });
+  controls.push(newTab);
+  const navigation = [
+    button(t('remote.back'), () => command('tab.back', activePayload()), { className: 'button compact remote-nav-button' }),
+    button(t('remote.forward'), () => command('tab.forward', activePayload()), { className: 'button compact remote-nav-button' }),
+    button(t('remote.reload'), () => command('tab.reload', activePayload()), { className: 'button compact remote-nav-button' }),
+    button(t('remote.home'), () => command('tab.home', activePayload()), { className: 'button compact remote-nav-button' }),
+  ];
+  controls.push(...navigation);
+  const navigate = () => {
+    const url = normalizeOmniboxInput(omnibox.value);
+    if (!url) return setRemoteBrowserNotice(deviceId, '', t('remote.omniboxRequired'));
+    return command('tab.navigate', { ...activePayload(), url });
+  };
+  omnibox.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault?.();
+    navigate();
+  });
+  const go = button(t('remote.go'), navigate, { className: 'button compact remote-go' });
+  const settings = button(t('remote.settings'), () => command('browser.openInternalPage', { page: 'settings' }), { className: 'button compact' });
+  const extensions = button(t('remote.extensions'), () => command('browser.openInternalPage', { page: 'extensions' }), { className: 'button compact' });
+  const webStore = button(t('remote.webStore'), () => command('tab.new', { url: 'https:' + '//chromewebstore.google.com/' }), { className: 'button compact' });
+  const warExtension = button(t('remote.warExtension'), () => command('browser.openInternalPage', { page: 'extensionSidePanel' }), { className: 'button compact' });
+  const copy = button(t('remote.copyFromBrowser'), () => copyFromRemoteBrowser(deviceId), { className: 'button compact' });
+  const paste = button(t('remote.pasteToBrowser'), () => pasteToRemoteBrowser(deviceId), { className: 'button compact' });
+  controls.push(go, settings, extensions, webStore, warExtension, copy, paste);
+  remoteBrowserNodes.set(deviceId, { tabStrip, omnibox, status, controls: [...controls], staticControls: controls, name });
+  renderRemoteBrowserTabs(deviceId, state);
+  updateRemoteBrowserControls(deviceId);
+  return el('section', { className: 'remote-browser-chrome', ariaLabel: t('remote.browserControls', { name }) }, [
+    el('div', { className: 'remote-browser-tab-row' }, [tabStrip, newTab]),
+    el('div', { className: 'remote-browser-nav-row' }, [...navigation, omnibox, go]),
+    el('div', { className: 'remote-browser-app-row' }, [settings, extensions, webStore, warExtension, copy, paste]),
+    status,
+  ]);
+}
+
+function activeBrowserUrl(browser) {
+  return normalizedBrowserTabs(browser).find((tab) => tab.active)?.url || '';
+}
+
+function browserTargetPayload(browser) {
+  const active = normalizedBrowserTabs(browser).find((tab) => tab.active);
+  return active ? { targetId: active.id } : {};
+}
+
+function renderRemoteBrowserTabs(deviceId, browser) {
+  const node = remoteBrowserNodes.get(deviceId);
+  if (!node?.tabStrip) return;
+  const scrollLeft = node.tabStrip.scrollLeft || 0;
+  const tabs = normalizedBrowserTabs(browser);
+  const tabControls = [];
+  node.tabStrip.replaceChildren(...(tabs.length ? tabs.map((tab) => {
+    const activate = button(tab.title, () => sendRemoteTileCommand(deviceId, 'tab.activate', { targetId: tab.id }), { className: 'remote-browser-tab-button', ariaLabel: tab.title });
+    const close = button(t('remote.closeTab'), () => sendRemoteTileCommand(deviceId, 'tab.close', { targetId: tab.id }), { className: 'remote-browser-tab-close', ariaLabel: t('remote.closeTabFor', { title: tab.title }) });
+    tabControls.push(activate, close);
+    return el('div', { className: `remote-browser-tab${tab.active ? ' active' : ''}`, role: 'presentation' }, [activate, close]);
+  }) : [el('span', { className: 'remote-browser-tab-empty', text: t('remote.noTabs') })]));
+  node.controls = [...node.staticControls, ...tabControls];
+  node.tabStrip.scrollLeft = scrollLeft;
+}
+
+function updateRemoteBrowserControls(deviceId) {
+  const node = remoteBrowserNodes.get(deviceId);
+  if (!node) return;
+  const pending = store.remote.browserPending?.[deviceId] === true;
+  for (const control of node.controls) control.disabled = pending;
+  const error = store.remote.browserErrors?.[deviceId] || '';
+  const notice = store.remote.browserNotices?.[deviceId] || '';
+  node.status.className = `remote-browser-status${error ? ' error' : ''}${pending ? ' pending' : ''}`;
+  node.status.textContent = error || (pending ? t('remote.browserWorking') : notice);
+}
+
+function updateRemoteBrowserState(deviceId, browser) {
+  store.remote.browserStates[deviceId] = browser;
+  const node = remoteBrowserNodes.get(deviceId);
+  if (!node) return;
+  renderRemoteBrowserTabs(deviceId, browser);
+  // A poll must never replace the input a user is currently typing into.
+  if (globalThis.document?.activeElement !== node.omnibox) node.omnibox.value = activeBrowserUrl(browser);
+}
+
+function setRemoteBrowserNotice(deviceId, notice, error = '') {
+  store.remote.browserNotices[deviceId] = notice;
+  store.remote.browserErrors[deviceId] = error;
+  updateRemoteBrowserControls(deviceId);
+}
+
+async function sendRemoteTileCommand(deviceId, command, payload) {
+  if (store.remote.browserPending?.[deviceId]) return;
+  store.remote.browserPending[deviceId] = true;
+  setRemoteBrowserNotice(deviceId, '', '');
+  updateRemoteBrowserControls(deviceId);
+  try {
+    const result = await window.warController.remote.control({ deviceIds: [deviceId], command, payload, synchronized: false });
+    if (result?.ok === false) throw controllerError(result, 'REMOTE_BROWSER_COMMAND_FAILED');
+    const data = unwrap(result) || {};
+    const failed = (data.targets || []).find((item) => item?.deviceId === deviceId && !item.ok);
+    if (failed) throw controllerError(failed.error || failed, 'REMOTE_BROWSER_COMMAND_FAILED');
+    setRemoteBrowserNotice(deviceId, t('remote.browserCommandSent'));
+    await pollRemoteBrowserState(deviceId);
+  } catch (error) {
+    setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_BROWSER_COMMAND_FAILED'));
+  } finally {
+    delete store.remote.browserPending[deviceId];
+    updateRemoteBrowserControls(deviceId);
+  }
+}
+
+async function copyFromRemoteBrowser(deviceId) {
+  if (store.remote.browserPending?.[deviceId]) return;
+  store.remote.browserPending[deviceId] = true;
+  setRemoteBrowserNotice(deviceId, '', '');
+  updateRemoteBrowserControls(deviceId);
+  try {
+    const result = await window.warController.remote.copyFromBrowser({ deviceId });
+    if (result?.ok === false) throw controllerError(result, 'REMOTE_CLIPBOARD_COPY_FAILED');
+    setRemoteBrowserNotice(deviceId, t('remote.clipboardCopied'));
+  } catch (error) {
+    setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_CLIPBOARD_COPY_FAILED'));
+  } finally {
+    delete store.remote.browserPending[deviceId];
+    updateRemoteBrowserControls(deviceId);
+  }
+}
+
+async function pasteToRemoteBrowser(deviceId) {
+  if (store.remote.browserPending?.[deviceId]) return;
+  store.remote.browserPending[deviceId] = true;
+  setRemoteBrowserNotice(deviceId, '', '');
+  updateRemoteBrowserControls(deviceId);
+  try {
+    const result = await window.warController.remote.pasteToBrowser({ deviceIds: [deviceId], synchronized: false });
+    if (result?.ok === false) throw controllerError(result, 'REMOTE_CLIPBOARD_PASTE_FAILED');
+    setRemoteBrowserNotice(deviceId, t('remote.clipboardPasted'));
+  } catch (error) {
+    setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_CLIPBOARD_PASTE_FAILED'));
+  } finally {
+    delete store.remote.browserPending[deviceId];
+    updateRemoteBrowserControls(deviceId);
+  }
+}
+
 function remoteDisplayName(device) {
-  return device.containerName || device.displayName || device.name || device.id || device.deviceId || 'Chromium';
+  return device.containerName || device.displayName || device.name || device.id || device.deviceId || 'CloakBrowser';
 }
 
 async function openRemoteWindow(deviceIds, mode) {
@@ -2411,13 +2580,18 @@ async function openRemoteWindow(deviceIds, mode) {
 
 function startRemotePolling() {
   if (remotePolling || store.view !== 'remote' || !store.remote.live) return;
-  const state = { inFlight: false, timer: null };
+  const state = { inFlight: false, browserInFlight: false, lastBrowserStateAt: 0, timer: null };
   remotePolling = state;
   const tick = async () => {
     if (remotePolling !== state || store.view !== 'remote' || !store.remote.live) return;
+    const ids = store.remote.selectedDeviceIds.slice(0, 8);
+    if (!state.browserInFlight && Date.now() - state.lastBrowserStateAt >= REMOTE_BROWSER_STATE_POLL_MS) {
+      state.browserInFlight = true;
+      state.lastBrowserStateAt = Date.now();
+      pollRemoteBrowserStates(ids).finally(() => { state.browserInFlight = false; });
+    }
     if (!state.inFlight) {
       state.inFlight = true;
-      const ids = store.remote.selectedDeviceIds.slice(0, 8);
       try {
         await Promise.all(ids.map(async (deviceId) => {
           try {
@@ -2472,7 +2646,32 @@ function stopRemotePolling() {
   if (remotePolling?.timer) clearTimeout(remotePolling.timer);
   remotePolling = null;
   remoteScreens.clear();
+  remoteBrowserNodes.clear();
   remoteStatusNode = null;
+}
+
+async function pollRemoteBrowserStates(deviceIds) {
+  await Promise.all((deviceIds || []).map((deviceId) => pollRemoteBrowserState(deviceId)));
+}
+
+async function pollRemoteBrowserState(deviceId) {
+  try {
+    const result = await window.warController.remote.control({
+      deviceIds: [deviceId],
+      command: 'browser.getState',
+      payload: {},
+      synchronized: false,
+    });
+    if (result?.ok === false) throw controllerError(result, 'REMOTE_BROWSER_STATE_FAILED');
+    const browser = browserStateFromRemoteResult(result, deviceId);
+    if (browser) {
+      delete store.remote.browserErrors[deviceId];
+      updateRemoteBrowserState(deviceId, browser);
+      updateRemoteBrowserControls(deviceId);
+    }
+  } catch (error) {
+    if (!store.remote.browserPending?.[deviceId]) setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_BROWSER_STATE_FAILED'));
+  }
 }
 
 async function sendRemoteCommand(command, payload) {
@@ -2488,7 +2687,19 @@ async function sendRemoteCommand(command, payload) {
   }
   store.remote.error = '';
   try {
-    const result = await window.warController.remote.control({ deviceIds: targets, command, payload, synchronized: store.remote.synchronized });
+    const targetIds = payload?.space === 'browser'
+      ? Object.fromEntries(targets.map((deviceId) => [deviceId, browserTargetPayload(store.remote.browserStates?.[deviceId]).targetId]).filter(([, targetId]) => targetId))
+      : undefined;
+    if (payload?.space === 'browser' && Object.keys(targetIds).length !== targets.length) {
+      throw new Error('REMOTE_BROWSER_TARGET_REQUIRED');
+    }
+    const result = await window.warController.remote.control({
+      deviceIds: targets,
+      command,
+      payload,
+      ...(targetIds ? { targetIds } : {}),
+      synchronized: store.remote.synchronized,
+    });
     if (result?.ok === false) throw controllerError(result, 'REMOTE_CONTROL_FAILED');
     const data = unwrap(result) || {};
     const failed = (data.targets || []).filter((item) => !item.ok);
@@ -2507,14 +2718,12 @@ function updateRemoteStatus() {
   remoteStatusNode.textContent = store.remote.error || store.remote.notice || t('remote.help');
 }
 
-function handleRemoteKey(event) {
+function handleRemoteKey(event, deviceId) {
   const shortcut = shortcutForKeyboardEvent(event);
   if (shortcut) {
     event.preventDefault?.();
-    if (shortcut === 'CTRL+V' && globalThis.navigator?.clipboard?.readText) {
-      globalThis.navigator.clipboard.readText().then((text) => {
-        if (text) sendRemoteCommand('input.insertText', { text, space: 'browser' });
-      }).catch(() => sendRemoteCommand('input.shortcut', { keys: shortcut, space: 'browser' }));
+    if (shortcut === 'CTRL+V') {
+      pasteToRemoteBrowser(deviceId);
     } else {
       sendRemoteCommand('input.shortcut', { keys: shortcut, space: 'browser' });
     }
