@@ -114,7 +114,10 @@ export class RawInputController {
   }
 
   async executeCdp(type, payload, timing) {
-    const page = await this.activePage();
+    assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
+    const page = payload.targetId
+      ? await this.browserController.findPage(payload.targetId)
+      : await this.activePage();
     this.mapper.updateFromPage(page);
     assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
     switch (type) {

@@ -29,6 +29,7 @@ let remoteScreens = new Map();
 let remoteStatusNode = null;
 let remoteBrowserNodes = new Map();
 const REMOTE_BROWSER_STATE_POLL_MS = 1350;
+const REMOTE_TAB_COMMANDS_REQUIRING_TARGET = new Set(['tab.navigate', 'tab.back', 'tab.forward', 'tab.reload', 'tab.home']);
 
 export function clearPairingSecret() {
   oneTimeSecret = null;
@@ -2266,19 +2267,20 @@ function remoteView(refresh) {
   store.remote.browserPending ||= {};
   store.remote.browserNotices ||= {};
   store.remote.browserErrors ||= {};
-  const targets = allWorkspaceDevices()
-    .filter((device) => device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
-    .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
+  const targets = remoteAvailableDevices();
   const ids = targets.map((device) => device.id || device.deviceId).filter(Boolean);
-  store.remote.selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
-  if (!store.remote.selectionInitialized) {
-    if (!store.remote.selectedDeviceIds.length && ids.length) store.remote.selectedDeviceIds = [ids[0]];
+  if (ids.length) {
+    store.remote.selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
+  }
+  if (!store.remote.selectionInitialized && ids.length) {
+    if (!store.remote.selectedDeviceIds.length) store.remote.selectedDeviceIds = [ids[0]];
     store.remote.selectionInitialized = true;
   }
-  if (!ids.includes(store.remote.activeDeviceId)) store.remote.activeDeviceId = store.remote.selectedDeviceIds[0] || ids[0] || '';
+  const selectedDeviceIds = normalizeRemoteSelection(store.remote.selectedDeviceIds, ids);
+  if (!ids.includes(store.remote.activeDeviceId)) store.remote.activeDeviceId = selectedDeviceIds[0] || '';
   remoteScreens = new Map();
   remoteBrowserNodes = new Map();
-  const selected = new Set(store.remote.selectedDeviceIds);
+  const selected = new Set(selectedDeviceIds);
   const sync = el('input', { type: 'checkbox', checked: store.remote.synchronized === true, ariaLabel: t('remote.sync') });
   sync.addEventListener('change', () => { store.remote.synchronized = sync.checked; refresh(); });
   const fps = el('select', { ariaLabel: t('remote.fps') }, [
@@ -2322,6 +2324,16 @@ function remoteView(refresh) {
     queueMicrotask(() => startRemotePolling());
   }
   return root;
+}
+
+function remoteAvailableDevices() {
+  return allWorkspaceDevices()
+    .filter((device) => device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
+    .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function remoteAvailableDeviceIds() {
+  return remoteAvailableDevices().map((device) => device.id || device.deviceId).filter(Boolean);
 }
 
 function remoteTargetCheckbox(device, selected, refresh) {
@@ -2463,8 +2475,13 @@ function activeBrowserUrl(browser) {
 }
 
 function browserTargetPayload(browser) {
-  const active = normalizedBrowserTabs(browser).find((tab) => tab.active);
-  return active ? { targetId: active.id } : {};
+  const activeTabId = String(browser?.activeTabId ?? '').trim();
+  const active = (Array.isArray(browser?.tabs) ? browser.tabs : []).find((tab) => {
+    const targetId = String(tab?.id ?? tab?.targetId ?? '').trim();
+    return targetId && (tab.active === true || (activeTabId && targetId === activeTabId));
+  });
+  const targetId = String(active?.id ?? active?.targetId ?? '').trim();
+  return targetId ? { targetId } : {};
 }
 
 function renderRemoteBrowserTabs(deviceId, browser) {
@@ -2510,12 +2527,27 @@ function setRemoteBrowserNotice(deviceId, notice, error = '') {
 }
 
 async function sendRemoteTileCommand(deviceId, command, payload) {
+  if (!remoteAvailableDeviceIds().includes(deviceId)) return;
   if (store.remote.browserPending?.[deviceId]) return;
   store.remote.browserPending[deviceId] = true;
   setRemoteBrowserNotice(deviceId, '', '');
   updateRemoteBrowserControls(deviceId);
   try {
-    const result = await window.warController.remote.control({ deviceIds: [deviceId], command, payload, synchronized: false });
+    let commandPayload = payload;
+    if (REMOTE_TAB_COMMANDS_REQUIRING_TARGET.has(command) && !commandPayload?.targetId) {
+      const browserState = await pollRemoteBrowserState(deviceId);
+      if (!browserState.ok) {
+        setRemoteBrowserNotice(deviceId, '', browserState.error);
+        return;
+      }
+      const targetId = browserTargetPayload(browserState.browser).targetId;
+      if (!targetId) {
+        setRemoteBrowserNotice(deviceId, '', 'REMOTE_BROWSER_TARGET_REQUIRED');
+        return;
+      }
+      commandPayload = { ...commandPayload, targetId };
+    }
+    const result = await window.warController.remote.control({ deviceIds: [deviceId], command, payload: commandPayload, synchronized: false });
     if (result?.ok === false) throw controllerError(result, 'REMOTE_BROWSER_COMMAND_FAILED');
     const data = unwrap(result) || {};
     const failed = (data.targets || []).find((item) => item?.deviceId === deviceId && !item.ok);
@@ -2531,6 +2563,7 @@ async function sendRemoteTileCommand(deviceId, command, payload) {
 }
 
 async function copyFromRemoteBrowser(deviceId) {
+  if (!remoteAvailableDeviceIds().includes(deviceId)) return;
   if (store.remote.browserPending?.[deviceId]) return;
   store.remote.browserPending[deviceId] = true;
   setRemoteBrowserNotice(deviceId, '', '');
@@ -2548,6 +2581,7 @@ async function copyFromRemoteBrowser(deviceId) {
 }
 
 async function pasteToRemoteBrowser(deviceId) {
+  if (!remoteAvailableDeviceIds().includes(deviceId)) return;
   if (store.remote.browserPending?.[deviceId]) return;
   store.remote.browserPending[deviceId] = true;
   setRemoteBrowserNotice(deviceId, '', '');
@@ -2555,6 +2589,11 @@ async function pasteToRemoteBrowser(deviceId) {
   try {
     const result = await window.warController.remote.pasteToBrowser({ deviceIds: [deviceId], synchronized: false });
     if (result?.ok === false) throw controllerError(result, 'REMOTE_CLIPBOARD_PASTE_FAILED');
+    const data = unwrap(result) || {};
+    const target = (Array.isArray(data.targets) ? data.targets : []).find((item) => item?.deviceId === deviceId);
+    if (data.pasted !== true || target?.ok !== true) {
+      throw controllerError({ code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'REMOTE_CLIPBOARD_PASTE_FAILED' }, 'REMOTE_CLIPBOARD_PASTE_FAILED');
+    }
     setRemoteBrowserNotice(deviceId, t('remote.clipboardPasted'));
   } catch (error) {
     setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_CLIPBOARD_PASTE_FAILED'));
@@ -2569,7 +2608,8 @@ function remoteDisplayName(device) {
 }
 
 async function openRemoteWindow(deviceIds, mode) {
-  const ids = [...new Set(deviceIds || [])].filter(Boolean).slice(0, 8);
+  const availableIds = new Set(remoteAvailableDeviceIds());
+  const ids = [...new Set(deviceIds || [])].filter((deviceId) => availableIds.has(deviceId)).slice(0, 8);
   if (!ids.length || typeof window.warController?.remote?.openWindow !== 'function') return;
   const result = await window.warController.remote.openWindow({ mode, deviceIds: ids, layout: store.remote.layout || 'auto' });
   if (result?.ok === false) {
@@ -2584,7 +2624,7 @@ function startRemotePolling() {
   remotePolling = state;
   const tick = async () => {
     if (remotePolling !== state || store.view !== 'remote' || !store.remote.live) return;
-    const ids = store.remote.selectedDeviceIds.slice(0, 8);
+    const ids = normalizeRemoteSelection(store.remote.selectedDeviceIds, remoteAvailableDeviceIds());
     if (!state.browserInFlight && Date.now() - state.lastBrowserStateAt >= REMOTE_BROWSER_STATE_POLL_MS) {
       state.browserInFlight = true;
       state.lastBrowserStateAt = Date.now();
@@ -2663,23 +2703,29 @@ async function pollRemoteBrowserState(deviceId) {
       synchronized: false,
     });
     if (result?.ok === false) throw controllerError(result, 'REMOTE_BROWSER_STATE_FAILED');
-    const browser = browserStateFromRemoteResult(result, deviceId);
-    if (browser) {
-      delete store.remote.browserErrors[deviceId];
-      updateRemoteBrowserState(deviceId, browser);
-      updateRemoteBrowserControls(deviceId);
-    }
+    const data = unwrap(result) || {};
+    const target = (Array.isArray(data.targets) ? data.targets : []).find((item) => item?.deviceId === deviceId);
+    if (target?.ok === false) throw controllerError(target.error || target, 'REMOTE_BROWSER_STATE_FAILED');
+    const browser = browserStateFromRemoteResult(data, deviceId);
+    if (!browser) throw controllerError({ code: 'REMOTE_BROWSER_STATE_FAILED', message: 'Remote browser state is unavailable' });
+    delete store.remote.browserErrors[deviceId];
+    updateRemoteBrowserState(deviceId, browser);
+    updateRemoteBrowserControls(deviceId);
+    return { ok: true, browser };
   } catch (error) {
-    if (!store.remote.browserPending?.[deviceId]) setRemoteBrowserNotice(deviceId, '', safeError(error, 'REMOTE_BROWSER_STATE_FAILED'));
+    const message = safeError(error, 'REMOTE_BROWSER_STATE_FAILED');
+    if (!store.remote.browserPending?.[deviceId]) setRemoteBrowserNotice(deviceId, '', message);
+    return { ok: false, error: message };
   }
 }
 
 async function sendRemoteCommand(command, payload) {
+  const availableIds = new Set(remoteAvailableDeviceIds());
   const targets = remoteTargetsForAction({
     selectedDeviceIds: store.remote.selectedDeviceIds,
     activeDeviceId: store.remote.activeDeviceId,
     synchronized: store.remote.synchronized,
-  });
+  }).filter((deviceId) => availableIds.has(deviceId));
   if (!targets.length) {
     store.remote.error = t('remote.selectTarget');
     updateRemoteStatus();

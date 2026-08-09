@@ -287,7 +287,11 @@ export class ControllerApplicationService extends EventEmitter {
           ...(syncAt ? { syncAt } : {}),
           deadline: new Date(Date.parse(this.now()) + 10000).toISOString(),
         });
-        if (response?.payload?.ok !== true) return { deviceId, ok: false, error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' } };
+        const dispatch = response?.payload?.result;
+        const paste = dispatch?.type === 'clipboard.pasteText' ? dispatch.result : null;
+        if (response?.payload?.ok !== true || paste?.pasted !== true || (paste.bytes !== undefined && paste.bytes !== bytes)) {
+          return { deviceId, ok: false, error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' } };
+        }
         return { deviceId, ok: true };
       } catch {
         return { deviceId, ok: false, error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' } };
@@ -885,13 +889,22 @@ export class ControllerApplicationService extends EventEmitter {
   async containerLifecycle(containerId, action, status, desiredState) {
     const current = this.core.containers.getContainer(containerId);
     if (current.host) await this.ensureManagedHostReady(current.host);
+    const priorSession = current.deviceId ? this.core.sessions.getPublicSession(current.deviceId) : null;
+    if (priorSession) await this.retireContainerAgentSession(current.deviceId, priorSession.generation);
     if (current.deviceId) this.remoteReadiness.delete(current.deviceId);
     const progressStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
     const container = await this.core.containers.updateStatus(containerId, progressStatus, { desiredState });
     const operation = await this.safeContainerOperation(action, container);
+    if (priorSession) await this.retireContainerAgentSession(current.deviceId, priorSession.generation);
     const next = operation.ok ? await this.core.containers.updateStatus(containerId, status, { desiredState, resourceUsage: operation.resourceUsage, runtime: operation.runtime }) : await this.core.containers.updateStatus(containerId, 'failed', { desiredState, lastError: operation.error });
     this.invalidate('containers', { containerId });
     return this.result({ container: next, operation });
+  }
+
+  async retireContainerAgentSession(deviceId, generation) {
+    const session = this.core.sessions.getPublicSession(deviceId);
+    if (!session || session.generation !== generation) return false;
+    return this.core.sessions.closeDeviceSession(deviceId, 'container-lifecycle');
   }
 
   containerAdapterForHost(hostId) {

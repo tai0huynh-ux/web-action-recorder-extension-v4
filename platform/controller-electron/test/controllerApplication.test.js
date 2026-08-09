@@ -515,6 +515,52 @@ test('application manages container lifecycle through a bounded adapter', async 
   assert.deepEqual(adapter.calls.map((item) => item.action), ['create', 'start', 'status', 'restart', 'stop', 'updateNetwork', 'create', 'delete']);
 });
 
+test('managed container restart makes its prior Agent session non-actionable until a fresh hello', async () => {
+  const core = await connectedCore();
+  const transport = fakeTransport();
+  let releaseRestart;
+  let notifyRestart;
+  const restartStarted = new Promise((resolve) => { notifyRestart = resolve; });
+  const adapter = {
+    async restart() {
+      notifyRestart();
+      await new Promise((resolve) => { releaseRestart = resolve; });
+      return { status: 'running' };
+    },
+  };
+  const container = await core.containers.createContainer({
+    name: 'Restarting Agent',
+    deviceId: 'dev-a',
+    runtime: { dockerName: 'restarting-agent' },
+  });
+  await core.containers.updateStatus(container.id, 'running', { desiredState: 'running' });
+  const app = new ControllerApplicationService({ core, containerAdapter: adapter, wssTransport: transport, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const priorGeneration = core.sessions.getPublicSession('dev-a').generation;
+
+  const restart = app.restartContainer({ containerId: container.id });
+  await restartStarted;
+
+  assert.equal(core.containers.getContainer(container.id).status, 'restarting');
+  assert.equal(core.sessions.getPublicSession('dev-a').status, 'offline');
+  assert.equal(core.devices.getDevice('dev-a').status, 'offline');
+  const duringRestart = await app.remoteControl({ deviceIds: ['dev-a'], command: 'input.stopAll', payload: {} });
+  assert.equal(duringRestart.data.targets[0].ok, false);
+  assert.equal(transport.remoteRequests.length, 0);
+
+  releaseRestart();
+  await restart;
+  assert.equal(core.sessions.getPublicSession('dev-a').status, 'offline');
+  await core.sessions.authenticateHello(agentHello(), { credential: 'cred-a' });
+  const replacement = core.sessions.getPublicSession('dev-a');
+  assert.equal(replacement.status, 'online');
+  assert.ok(replacement.generation > priorGeneration);
+
+  const afterHello = await app.remoteControl({ deviceIds: ['dev-a'], command: 'input.stopAll', payload: {} });
+  assert.equal(afterHello.data.targets[0].ok, true);
+  assert.equal(transport.remoteRequests.length, 1);
+  assert.equal(transport.remoteRequests[0].generation, replacement.generation);
+});
+
 test('trashing an already-revoked failed managed container remains recoverable', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();
@@ -979,6 +1025,33 @@ test('dedicated remote clipboard methods keep text out of generic control and en
     () => app.remoteClipboardPaste({ deviceIds: ['dev-a'], text: 'x'.repeat(64 * 1024 + 1) }),
     code('REMOTE_CLIPBOARD_TOO_LARGE'),
   );
+});
+
+test('remote clipboard paste fails closed when an outer-success response has an invalid nested dispatch', async (t) => {
+  const secret = 'synthetic clipboard secret';
+  const cases = [
+    { name: 'wrong command type', dispatch: { type: 'clipboard.copySelection', result: { pasted: true, bytes: Buffer.byteLength(secret) } } },
+    { name: 'paste not confirmed', dispatch: { type: 'clipboard.pasteText', result: { pasted: false, bytes: Buffer.byteLength(secret) } } },
+    { name: 'mismatched byte count', dispatch: { type: 'clipboard.pasteText', result: { pasted: true, bytes: Buffer.byteLength(secret) + 1 } } },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const core = await connectedCore();
+      const transport = fakeTransport();
+      transport.requestRemoteControl = async () => ({ payload: { ok: true, result: scenario.dispatch } });
+      const app = application(core, transport);
+
+      const result = await app.remoteClipboardPaste({ deviceIds: ['dev-a'], text: secret });
+
+      assert.equal(result.data.pasted, false, 'a malformed nested success must not mark the aggregate paste as successful');
+      assert.deepEqual(result.data.targets, [{
+        deviceId: 'dev-a',
+        ok: false,
+        error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' },
+      }]);
+    });
+  }
 });
 
 test('remote control does not forward Agent-provided error text or codes', async () => {

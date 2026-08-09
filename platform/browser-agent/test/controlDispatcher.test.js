@@ -130,15 +130,17 @@ test('clipboard copy bounds the reader by remaining deadline and never returns p
   assert.equal(JSON.stringify({ outcome, logs }).includes(secret), false);
 });
 
-test('clipboard paste runs guard, ready session, native Ctrl+V, then selection completion without an empty rewrite', async () => {
+test('clipboard paste runs guard and sends Ctrl+V through the exact target viewport before selection completion', async () => {
   const fake = makeFake();
   const secret = 'one-time secret';
   const events = [];
+  const shortcutCalls = [];
   const completion = deferred();
   const rawInput = {
     executeCompound: async (task) => task({
       execute: async (type, payload) => {
-        events.push(`x11:${type}:${payload.keys}`);
+        shortcutCalls.push({ type, payload });
+        events.push(`shortcut:${type}:${payload.keys}`);
         completion.resolve({ written: true, bytes: Buffer.byteLength(secret, 'utf8') });
         events.push('selection:completed');
         return { executed: true };
@@ -163,9 +165,12 @@ test('clipboard paste runs guard, ready session, native Ctrl+V, then selection c
     'guard',
     'helper:ready',
     'selection:armed',
-    'x11:input.shortcut:CTRL+V',
+    'shortcut:input.shortcut:CTRL+V',
     'selection:completed'
   ]);
+  assert.deepEqual(shortcutCalls, [
+    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'viewport' } }
+  ], 'clipboard paste must use the selected Playwright target viewport, never the browser-wide X11 shortcut');
   assert.deepEqual(helperCalls, [secret], 'the one-shot owner must not immediately rewrite the clipboard');
   assert.deepEqual(result.result, { pasted: true, bytes: Buffer.byteLength(secret, 'utf8') });
   assert.equal(JSON.stringify({ result, logs, events }).includes(secret), false);

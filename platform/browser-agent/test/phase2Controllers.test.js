@@ -146,6 +146,38 @@ test('phase2 CDP shortcut releases pressed modifiers when the main key fails', a
   assert.deepEqual(raw.getState().heldKeys, []);
 });
 
+test('phase2 viewport shortcut resolves the explicit target through CDP and preserves its deadline guard', async () => {
+  let now = 0;
+  const findPageCalls = [];
+  const activePage = fakePage(fakeLocator());
+  const targetPage = fakePage(fakeLocator());
+  const targetKeys = [];
+  targetPage.keyboard.down = async (key) => targetKeys.push(`down:${key}`);
+  targetPage.keyboard.press = async (key) => targetKeys.push(`press:${key}`);
+  targetPage.keyboard.up = async (key) => targetKeys.push(`up:${key}`);
+  const controller = {
+    activeTargetId: 'unrelated-active-target',
+    firstOpenTargetId: () => 'unrelated-first-target',
+    findPage: async (targetId) => {
+      findPageCalls.push(targetId);
+      return targetId === 'paste-target' ? targetPage : activePage;
+    }
+  };
+  const raw = new RawInputController({ browserController: controller, config: { width: 100, height: 100 }, x11: fakeX11() });
+
+  await raw.execute('input.shortcut', { targetId: 'paste-target', space: 'viewport', keys: ['CTRL', 'V'] }, { deadlineAt: 1, now: () => now });
+
+  assert.deepEqual(findPageCalls, ['paste-target'], 'viewport/CDP input must resolve the explicit target, never the active target');
+  assert.deepEqual(targetKeys, ['down:Control', 'press:V', 'up:Control']);
+
+  now = 2;
+  await assert.rejects(
+    () => raw.execute('input.shortcut', { targetId: 'paste-target', space: 'viewport', keys: ['CTRL', 'V'] }, { deadlineAt: 1, now: () => now }),
+    (error) => error?.code === 'deadline_exceeded'
+  );
+  assert.deepEqual(findPageCalls, ['paste-target'], 'expired viewport input must be rejected before resolving any target');
+});
+
 test('phase2 raw input tracks held keys', async () => {
   const raw = makeRaw();
   await raw.execute('input.keyDown', { space: 'viewport', key: 'A' });

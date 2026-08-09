@@ -228,11 +228,11 @@ export class ControlDispatcher {
       if (!session || typeof session.waitForPaste !== 'function' || typeof session.abort !== 'function') {
         throw new AgentError('CLIPBOARD_WRITE_FAILED', 'X11 clipboard helper did not provide a one-shot session');
       }
-      // Mark the intended XTEST paste before issuing it: xclip may finish its
-      // documented post-SelectionRequest wait before XTEST returns control.
+      // Arm completion before the targeted CDP paste because xclip may finish
+      // its post-SelectionRequest wait before Playwright returns control.
       const pasteCompletion = session.waitForPaste();
       try {
-        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'browser' });
+        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'viewport' });
         await pasteCompletion;
         if (commandDeadlineAt <= this.now()) {
           throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);

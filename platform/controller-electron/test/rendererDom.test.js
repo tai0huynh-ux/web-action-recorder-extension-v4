@@ -1652,6 +1652,141 @@ test('remote keyboard control uses the Chromium browser input space', async () =
   ]);
 });
 
+test('remote selection survives a transient unavailable Agent and restores its tile', () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+
+  let current = views.renderView(() => {});
+  assert.equal(remoteTargetCheckbox(current, 'Chromium 1').checked, true);
+  assert.equal(remoteTiles(current).length, 1);
+
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'offline' }];
+  current = views.renderView(() => {});
+  assert.deepEqual(state.store.remote.selectedDeviceIds, ['managed-device-1'], 'temporary Agent unavailability must preserve selection intent');
+  assert.equal(remoteTiles(current).length, 0, 'unavailable Agents must not render an actionable remote tile');
+
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  current = views.renderView(() => {});
+  assert.equal(remoteTargetCheckbox(current, 'Chromium 1').checked, true);
+  assert.equal(state.store.remote.activeDeviceId, 'managed-device-1');
+  assert.equal(remoteTiles(current).length, 1);
+});
+
+test('remote view selects the first Agent that comes online after an empty initial state', () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'offline' }];
+  state.store.remote = { selectedDeviceIds: [], selectionInitialized: false, activeDeviceId: '', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+
+  let current = views.renderView(() => {});
+  assert.equal(remoteTiles(current).length, 0);
+
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  current = views.renderView(() => {});
+  assert.deepEqual(state.store.remote.selectedDeviceIds, ['managed-device-1']);
+  assert.equal(remoteTargetCheckbox(current, 'Chromium 1').checked, true);
+  assert.equal(remoteTiles(current).length, 1);
+});
+
+test('remote browser omnibox Enter blocks navigation when browser state is unavailable', async () => {
+  await assertRemoteBrowserNavigationIsBlocked({
+    browserStates: undefined,
+    expectedStatus: 'REMOTE_BROWSER_STATE_FAILED: Remote browser state is unavailable',
+    submit: (root, omnibox) => fireWithEvent(omnibox, 'keydown', { key: 'Enter', preventDefault() {} }),
+  });
+});
+
+test('remote browser omnibox Go blocks navigation when reported tabs have no active target', async () => {
+  await assertRemoteBrowserNavigationIsBlocked({
+    browserStates: { 'managed-device-1': { tabs: [{ id: 'tab-1', active: false, url: 'https://example.test/' }] } },
+    expectedStatus: 'REMOTE_BROWSER_TARGET_REQUIRED',
+    submit: (root) => clickButton(root, i18n.t('remote.go')),
+  });
+});
+
+test('remote browser navigation surfaces a per-target browser state failure', async () => {
+  const originalControl = window.warController.remote.control;
+  const calls = [];
+  window.warController.remote.control = async (payload) => {
+    calls.push(structuredClone(payload));
+    return {
+      ok: true,
+      data: {
+        targets: [{
+          deviceId: 'managed-device-1',
+          ok: false,
+          error: { code: 'REMOTE_CONTROL_FAILED', message: 'Remote command failed' },
+        }],
+      },
+    };
+  };
+
+  try {
+    const current = remoteBrowserFixture();
+    const omnibox = all(current, (node) => node.className === 'remote-omnibox')[0];
+    omnibox.value = 'example.com';
+    await fireWithEvent(omnibox, 'keydown', { key: 'Enter', preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(calls.filter((call) => call.command === 'browser.getState').length, 1);
+    assert.equal(calls.filter((call) => call.command === 'tab.navigate').length, 0);
+    const status = all(current, (node) => node.className.includes('remote-browser-status'))[0];
+    assert.equal(status.textContent, 'REMOTE_CONTROL_FAILED: Remote command failed');
+  } finally {
+    window.warController.remote.control = originalControl;
+  }
+});
+
+test('remote browser navigation uses the active target from a nested Agent state envelope', async () => {
+  const originalControl = window.warController.remote.control;
+  const calls = [];
+  window.warController.remote.control = async (payload) => {
+    calls.push(structuredClone(payload));
+    if (payload.command === 'browser.getState') {
+      return {
+        ok: true,
+        data: {
+          ok: true,
+          data: {
+            targets: [{
+              deviceId: 'managed-device-1',
+              ok: true,
+              result: {
+                status: 'succeeded',
+                result: {
+                  browser: {
+                    tabs: [{ targetId: 'tab-from-agent', active: true, url: 'https://example.test/' }],
+                  },
+                },
+              },
+            }],
+          },
+        },
+      };
+    }
+    return { ok: true, data: { targets: [{ deviceId: 'managed-device-1', ok: true }] } };
+  };
+
+  try {
+    const current = remoteBrowserFixture();
+    const omnibox = all(current, (node) => node.className === 'remote-omnibox')[0];
+    omnibox.value = 'example.com';
+    await fireWithEvent(omnibox, 'keydown', { key: 'Enter', preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const navigation = calls.find((call) => call.command === 'tab.navigate');
+    assert.equal(navigation.payload.targetId, 'tab-from-agent');
+  } finally {
+    window.warController.remote.control = originalControl;
+  }
+});
+
 test('remote browser deck scopes controls and clipboard to its own device when sync is enabled', async () => {
   resetStore();
   state.store.view = 'remote';
@@ -1680,6 +1815,33 @@ test('remote browser deck scopes controls and clipboard to its own device when s
     { action: 'paste', deviceIds: ['managed-device-1'], synchronized: false },
     { action: 'paste', deviceIds: ['managed-device-1'], synchronized: false },
   ]);
+});
+
+test('remote browser paste does not show success when an outer-success IPC response rejects the target', async () => {
+  const originalPaste = window.warController.remote.pasteToBrowser;
+  window.warController.remote.pasteToBrowser = async ({ deviceIds }) => ({
+    ok: true,
+    data: {
+      pasted: false,
+      targets: deviceIds.map((deviceId) => ({
+        deviceId,
+        ok: false,
+        error: { code: 'REMOTE_CLIPBOARD_PASTE_FAILED', message: 'Remote clipboard paste failed' },
+      })),
+    },
+  });
+
+  try {
+    const current = remoteBrowserFixture();
+    await clickButton(current, i18n.t('remote.pasteToBrowser'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const status = all(current, (node) => node.className.includes('remote-browser-status'))[0];
+    assert.equal(status.textContent, 'REMOTE_CLIPBOARD_PASTE_FAILED');
+    assert.equal(status.textContent.includes(i18n.t('remote.clipboardPasted')), false);
+  } finally {
+    window.warController.remote.pasteToBrowser = originalPaste;
+  }
 });
 
 test('remote live view shows automatic Agent update and clears it when the first frame arrives', async () => {
@@ -1900,6 +2062,70 @@ async function clickButton(root, label) {
   const button = findButton(root, label);
   assert.ok(button, `Missing button ${label}`);
   await button.click();
+}
+
+async function assertRemoteBrowserNavigationIsBlocked({ browserStates, expectedStatus, submit }) {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = {
+    selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {},
+    browserStates, browserPending: {}, browserNotices: {}, browserErrors: {}, notice: '', error: '',
+  };
+
+  const originalControl = window.warController.remote.control;
+  if (browserStates) {
+    window.warController.remote.control = async (payload) => {
+      if (payload.command !== 'browser.getState') return originalControl(payload);
+      apiState.remoteCalls.push(structuredClone(payload));
+      return {
+        ok: true,
+        data: {
+          targets: [{
+            deviceId: 'managed-device-1',
+            ok: true,
+            result: { status: 'succeeded', result: { browser: browserStates['managed-device-1'] } },
+          }],
+        },
+      };
+    };
+  }
+
+  try {
+    const current = views.renderView(() => {});
+    const omnibox = all(current, (node) => node.className === 'remote-omnibox')[0];
+    omnibox.value = 'example.com';
+    await submit(current, omnibox);
+
+    assert.equal(apiState.remoteCalls.filter((call) => call.command === 'tab.navigate').length, 0, 'tab.navigate must not dispatch without a targetId');
+    const status = all(current, (node) => node.className.includes('remote-browser-status'))[0];
+    assert.equal(status.textContent, expectedStatus, 'the browser-state or target-selection error must remain visible');
+  } finally {
+    window.warController.remote.control = originalControl;
+  }
+}
+
+function remoteBrowserFixture() {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'Chromium 1', status: 'running' })];
+  state.store.devices = [deviceFixture('managed-device-1', 'Chromium 1')];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = {
+    selectedDeviceIds: ['managed-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {},
+    browserStates: undefined, browserPending: {}, browserNotices: {}, browserErrors: {}, notice: '', error: '',
+  };
+  return views.renderView(() => {});
+}
+
+function remoteTargetCheckbox(root, name) {
+  return all(root, (node) => node.localName === 'input' && node.type === 'checkbox' && node.getAttribute('aria-label') === name)[0];
+}
+
+function remoteTiles(root) {
+  return all(root, (node) => node.className.split(' ').includes('remote-tile'));
 }
 
 function findButton(root, label) {
