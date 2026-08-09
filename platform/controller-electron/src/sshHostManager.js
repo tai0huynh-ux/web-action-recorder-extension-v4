@@ -399,7 +399,15 @@ function withMainProcessImagePin(host, config) {
   const copy = structuredClone(host);
   const imagePin = config?.containers?.imagePin;
   if (!isImmutableImagePin(imagePin)) return copy;
-  return { ...copy, image: imagePin, imagePin };
+  const containers = config.containers || {};
+  return {
+    ...copy,
+    image: imagePin,
+    imagePin,
+    ipv6Interface: copy.ipv6Interface ?? containers.ipv6Interface ?? null,
+    ipv6Prefix: copy.ipv6Prefix ?? containers.ipv6Prefix ?? null,
+    ipv6Driver: copy.ipv6Driver ?? containers.ipv6Driver ?? 'macvlan',
+  };
 }
 
 function requiredText(value, min, max) {
