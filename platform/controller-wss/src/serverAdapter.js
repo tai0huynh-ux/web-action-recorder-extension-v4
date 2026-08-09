@@ -198,11 +198,11 @@ export class ControllerWssServerAdapter extends EventEmitter {
   }
 
   requestRemoteControl(deviceId, generation, payload = {}) {
-    const { deadline, ...requestPayload } = payload;
+    const { deadline, idempotencyKey, ...requestPayload } = payload;
     return this.requestAgent(deviceId, generation, {
       type: 'remote.control.request',
       deadline: deadline || new Date(Date.parse(this.now()) + 10000).toISOString(),
-      idempotencyKey: payload.idempotencyKey || this.id('remote'),
+      idempotencyKey: idempotencyKey || this.id('remote'),
       payload: requestPayload,
     }, { timeoutMs: 10000, expectedTypes: ['remote.control.response'] });
   }

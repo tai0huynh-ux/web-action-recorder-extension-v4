@@ -7,7 +7,7 @@ import { ControllerCore, hashSecret } from '../../controller-core/src/controller
 import { createMemoryStore } from '../../../companion/store.js';
 import { ControllerWssServerAdapter } from '../src/serverAdapter.js';
 import { ControllerWssRuntimeServer, parseAuthorization } from '../src/wssServer.js';
-import { PROTOCOL_VERSION } from '../../protocol/src/protocolV2.js';
+import { PROTOCOL_VERSION, validateEnvelope } from '../../protocol/src/protocolV2.js';
 import { createWorkflowContentHash } from '../../workflow-core/src/workflowMetadata.js';
 
 test('controller WSS adapter authenticates AgentHello and rejects oversized or wrong-version envelopes', async () => {
@@ -265,6 +265,32 @@ test('controller WSS sends remote control and resolves only the correlated Agent
 
   assert.equal(ack, null);
   assert.equal((await pending).payload.result.executed, true);
+});
+
+test('controller WSS keeps clipboard paste idempotency metadata at the envelope level', async (t) => {
+  const core = await pairedCore();
+  const adapter = new ControllerWssServerAdapter({ sessionManager: core.sessions, now: () => '2026-07-16T00:00:00.000Z', id: sequenceId() });
+  const connection = new FakeConnection();
+  const state = { connection };
+  await adapter.handleMessage(JSON.stringify(agentHello()), state, 'cred-a', () => {});
+  const session = core.sessions.getPublicSession('dev-a');
+
+  const pending = adapter.requestRemoteControl('dev-a', session.generation, {
+    command: 'clipboard.pasteText',
+    payload: { text: 'bounded clipboard regression' },
+    requestId: 'clipboard-paste-a',
+    idempotencyKey: 'clipboard-idempotency-a'
+  });
+  const pendingHandled = pending.catch(() => {});
+  t.after(async () => {
+    adapter.shutdown();
+    await pendingHandled;
+  });
+
+  const sent = JSON.parse(connection.sent.at(-1));
+  assert.equal(sent.idempotencyKey, 'clipboard-idempotency-a');
+  assert.equal(sent.payload.idempotencyKey, undefined);
+  assert.equal(validateEnvelope(sent).ok, true);
 });
 
 test('authorization parser accepts one Bearer credential and rejects malformed headers', () => {
