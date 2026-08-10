@@ -93,7 +93,7 @@ test('clipboard IPC keeps clipboard text in the main process and returns metadat
   assert.equal(JSON.stringify(pasted).includes(secret), false);
 });
 
-test('interactive open validates Moonlight scheme before invoking the launcher', async () => {
+test('interactive open validates private Moonlight endpoint and action before invoking the launcher', async () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();
   const window = trustedWindow();
@@ -109,14 +109,20 @@ test('interactive open validates Moonlight scheme before invoking the launcher',
   });
   const opened = await ipcMain.handlers.get(IPC_CHANNELS.remote.openInteractive)(trustedEvent(window), {
     deviceId: 'device-1',
-    descriptor: { deepLink: 'moonlight://pair/device-1', host: '192.168.1.201', port: 47989 },
+    action: 'stream',
+    descriptor: { host: '192.168.1.201', port: 47989, app: 'Desktop', ignored: 'value' },
   });
   assert.deepEqual(opened, { ok: true, data: { status: 'opened', deviceId: 'device-1' } });
-  assert.deepEqual(calls, [{ deviceId: 'device-1', descriptor: { deepLink: 'moonlight://pair/device-1' } }]);
+  assert.deepEqual(calls, [{
+    deviceId: 'device-1',
+    action: 'stream',
+    descriptor: { host: '192.168.1.201', port: 47989, app: 'Desktop', protocol: 'moonlight' },
+  }]);
 
   const rejected = await ipcMain.handlers.get(IPC_CHANNELS.remote.openInteractive)(trustedEvent(window), {
     deviceId: 'device-1',
-    descriptor: { deepLink: 'https://example.test' },
+    action: 'pair',
+    descriptor: { host: '8.8.8.8' },
   });
   assert.equal(rejected.ok, false);
   assert.equal(rejected.error.code, 'INTERACTIVE_DESCRIPTOR_INVALID');

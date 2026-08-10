@@ -3,6 +3,7 @@ import { IPC_CHANNELS, REQUEST_CHANNELS, validateIpcPayload } from './ipcContrac
 import { mapErrorToIpcResult } from './errorMapper.js';
 import { assertTrustedIpcSender } from './ipcSenderPolicy.js';
 import { validateDeviceDescriptor, validateWorkflowRevision } from '../../protocol/src/protocolV2.js';
+import { normalizeMoonlightAction, normalizeMoonlightDescriptor } from './moonlightLauncher.js';
 
 const MAX_IMPORT_BYTES = 1024 * 1024;
 
@@ -214,20 +215,11 @@ function codedError(code, message, details) {
 }
 
 function validateInteractivePayload(payload = {}) {
-  const descriptor = payload.descriptor;
-  if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {
-    throw codedError('INTERACTIVE_DESCRIPTOR_REQUIRED', 'Interactive connection descriptor is required');
-  }
-  const deepLink = String(descriptor.deepLink || descriptor.uri || descriptor.url || '').trim();
-  if (!deepLink || deepLink.length > 1024) {
-    throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Interactive connection descriptor is invalid');
-  }
-  let parsed;
-  try { parsed = new URL(deepLink); } catch { throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Interactive connection descriptor is invalid'); }
-  if (parsed.protocol !== 'moonlight:') {
-    throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Only moonlight:// connection links are allowed');
-  }
-  return { deviceId: payload.deviceId, descriptor: { deepLink } };
+  return {
+    deviceId: payload.deviceId,
+    action: normalizeMoonlightAction(payload.action),
+    descriptor: normalizeMoonlightDescriptor(payload.descriptor),
+  };
 }
 
 function unwrapApplicationResult(result) {

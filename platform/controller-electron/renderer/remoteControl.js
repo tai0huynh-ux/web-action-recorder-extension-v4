@@ -45,7 +45,7 @@ export function interactiveConnectionDescriptor(device) {
   if (typeof source === 'string') return { deepLink: source };
   if (typeof source !== 'object') return null;
   const descriptor = {};
-  for (const key of ['deepLink', 'uri', 'url', 'host', 'address', 'port', 'protocol', 'displayName', 'pairingCode']) {
+  for (const key of ['deepLink', 'uri', 'url', 'host', 'address', 'port', 'protocol', 'app', 'displayName', 'pairingCode']) {
     if (source[key] !== undefined && source[key] !== null && String(source[key]).trim()) descriptor[key] = source[key];
   }
   return Object.keys(descriptor).length ? descriptor : null;

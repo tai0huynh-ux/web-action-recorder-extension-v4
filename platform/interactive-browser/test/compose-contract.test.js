@@ -5,15 +5,42 @@ import { readFile } from 'node:fs/promises';
 const composeUrl = new URL('../compose.yml', import.meta.url);
 const sunshineUrl = new URL('../sunshine.conf', import.meta.url);
 
-test('uses an internal bridge for Sunshine ingress instead of publishing from macvlan', async () => {
+function serviceBlock(compose, name) {
+  const match = compose.match(new RegExp(`^  ${name}:\\s*\\n[\\s\\S]*?(?=^  [a-z][\\w-]*:|^volumes:|^networks:|(?![\\s\\S]))`, 'm'));
+  assert.ok(match, `missing ${name} service`);
+  return match[0];
+}
+
+test('splits Chrome macvlan egress from Sunshine bridge ingress and port publishing', async () => {
   const compose = await readFile(composeUrl, 'utf8');
-  assert.match(compose, /networks:\s*\n\s*- pilot-ingress\s*\n\s*- pilot-external/);
+  const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
+  const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
+
+  assert.match(chrome, /WAR_PILOT_ROLE: chrome/);
+  assert.match(chrome, /networks:\s*\n\s*- pilot-external/);
+  assert.doesNotMatch(chrome, /pilot-ingress|ports:/);
+  assert.match(sunshine, /WAR_PILOT_ROLE: sunshine/);
+  assert.match(sunshine, /networks:\s*\n\s*- pilot-ingress/);
+  assert.doesNotMatch(sunshine, /pilot-external/);
+  for (const port of ['47984', '47989', '47990', '48010']) {
+    assert.match(sunshine, new RegExp(`\\$\\{WAR_PILOT_BIND_ADDRESS[^}]*\\}:${port}:${port}/tcp`));
+  }
+  assert.match(sunshine, /\$\{WAR_PILOT_BIND_ADDRESS[^}]*\}:47998-48000:47998-48000\/udp/);
   assert.match(compose, /pilot-ingress:\s*\n\s+driver: bridge\s*\n\s+internal: true/);
   assert.match(compose, /pilot-external:\s*\n\s+name: .*\n\s+external: true/);
-  for (const port of ['47984', '47989', '47990', '48010']) {
-    assert.match(compose, new RegExp(`:${port}:${port}/tcp`));
+});
+
+test('shares X11 only and persists Chrome and Sunshine state in separate volumes', async () => {
+  const compose = await readFile(composeUrl, 'utf8');
+  const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
+  const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
+  assert.match(chrome, /pilot-chrome-profile:\/data\/chrome-profile/);
+  assert.doesNotMatch(chrome, /pilot-sunshine-state/);
+  assert.match(sunshine, /pilot-sunshine-state:\/home\/warpilot\/\.config\/sunshine/);
+  assert.doesNotMatch(sunshine, /pilot-chrome-profile/);
+  for (const service of [chrome, sunshine]) {
+    assert.match(service, /pilot-x11-socket:\/tmp\/\.X11-unix/);
   }
-  assert.match(compose, /:47998-48000:47998-48000\/udp/);
 });
 
 test('keeps Sunshine off the public IPv6 interface', async () => {

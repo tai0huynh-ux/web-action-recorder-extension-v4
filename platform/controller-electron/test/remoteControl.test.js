@@ -21,7 +21,7 @@ test('remote mode and interactive connection descriptor stay explicit', () => {
   const device = {
     deviceId: 'chrome-human',
     mode: 'interactive',
-    interactive: { connection: { deepLink: 'moonlight://pair/chrome-human', host: '192.168.1.201', port: 47989 } },
+    interactive: { connection: { deepLink: 'moonlight://pair/chrome-human', host: '192.168.1.201', port: 47989, app: 'Real Chrome' } },
   };
   assert.equal(remoteModeForDevice(device), 'interactive');
   assert.equal(isInteractiveRemoteDevice(device), true);
@@ -29,6 +29,7 @@ test('remote mode and interactive connection descriptor stay explicit', () => {
     deepLink: 'moonlight://pair/chrome-human',
     host: '192.168.1.201',
     port: 47989,
+    app: 'Real Chrome',
   });
   assert.deepEqual(connectionDescriptorForInteractiveDevice(device), interactiveConnectionDescriptor(device));
   assert.equal(remoteModeForDevice({ mode: 'managed' }), 'managed');

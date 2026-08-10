@@ -1,6 +1,7 @@
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import os from 'node:os';
+import net from 'node:net';
 import { normalizeIpv6Prefix } from '../../controller-core/src/networkConfig.js';
 import { normalizeControllerHost } from './controllerHost.js';
 import { isImmutableImagePin, validateRuntimeProfile } from './runtimeProfileStore.js';
@@ -40,10 +41,16 @@ export function resolveElectronRuntimeConfig({
   const containerIpv6Interface = env.WAR_CONTAINER_IPV6_INTERFACE || '';
   const containerIpv6Prefix = env.WAR_CONTAINER_IPV6_PREFIX || '';
   const containerIpv6Driver = env.WAR_CONTAINER_IPV6_DRIVER || 'macvlan';
+  const interactiveHost = String(env.WAR_INTERACTIVE_MOONLIGHT_HOST || '').trim();
+  const interactivePort = parseOptionalPort(env.WAR_INTERACTIVE_MOONLIGHT_PORT, 47989);
+  const interactiveApp = String(env.WAR_INTERACTIVE_MOONLIGHT_APP || 'Desktop').trim();
+  const interactiveDeviceId = String(env.WAR_INTERACTIVE_DEVICE_ID || 'interactive-chrome-pilot').trim();
+  const interactiveDisplayName = String(env.WAR_INTERACTIVE_DISPLAY_NAME || 'Google Chrome realtime').trim();
   const wssRequested = explicitWssEnvironment
     ? env.WAR_CONTROLLER_WSS_ENABLED === '1' || Boolean(certPath || keyPath)
     : profileWss?.enabled === true;
   const errors = [];
+  const interactiveErrors = [];
 
   const lanBindingApproved = explicitWssEnvironment ? env.WAR_CONTROLLER_ALLOW_LAN === '1' : profileWss?.lanBindingApproved === true;
   if (!LOOPBACK_HOSTS.has(host) && !lanBindingApproved) {
@@ -73,6 +80,12 @@ export function resolveElectronRuntimeConfig({
   if (containerRuntime === 'ssh-docker' && containerSeccompProfilePath && !/^\/[A-Za-z0-9._/-]+$/.test(containerSeccompProfilePath)) errors.push('SSH container seccomp profile path must be absolute');
   if (containerIpv6Interface && !/^[A-Za-z0-9_.:-]{1,32}$/.test(containerIpv6Interface)) errors.push('Container IPv6 interface is invalid');
   if (!['bridge', 'macvlan'].includes(containerIpv6Driver)) errors.push('Container IPv6 driver must be bridge or macvlan');
+  if (interactiveHost && !isPrivateLanIpv4(interactiveHost)) interactiveErrors.push('Interactive Moonlight host must be a private LAN IPv4 address');
+  if (interactiveHost && interactivePort === null) interactiveErrors.push('Interactive Moonlight port must be an integer from 1 to 65535');
+  if (interactiveHost && interactivePort !== 47989) interactiveErrors.push('Interactive Moonlight base port must be 47989');
+  if (interactiveHost && (!interactiveApp || interactiveApp.length > 80 || /[\u0000-\u001f\u007f]/.test(interactiveApp))) interactiveErrors.push('Interactive Moonlight application name is invalid');
+  if (interactiveHost && !isRuntimeId(interactiveDeviceId)) interactiveErrors.push('Interactive device ID is invalid');
+  if (interactiveHost && (!interactiveDisplayName || interactiveDisplayName.length > 80 || /[\u0000-\u001f\u007f]/.test(interactiveDisplayName))) interactiveErrors.push('Interactive display name is invalid');
   let normalizedIpv6Prefix = null;
   if (containerIpv6Prefix) {
     try {
@@ -126,6 +139,15 @@ export function resolveElectronRuntimeConfig({
       timeoutMs: 120000,
       hostLabel: containerRuntime === 'ssh-docker' ? 'ssh-docker' : 'local-docker',
     },
+    interactive: {
+      enabled: Boolean(interactiveHost) && interactiveErrors.length === 0,
+      errors: interactiveErrors,
+      deviceId: interactiveDeviceId,
+      displayName: interactiveDisplayName,
+      host: interactiveHost || null,
+      port: interactivePort ?? 47989,
+      app: interactiveApp,
+    },
   });
 }
 
@@ -159,6 +181,15 @@ export function toPublicRuntimeConfig(config) {
       ipv6InterfaceConfigured: Boolean(config.containers?.ipv6Interface),
       ipv6StaticPrefixConfigured: Boolean(config.containers?.ipv6Prefix),
       ipv6Driver: config.containers?.ipv6Driver || null,
+    },
+    interactive: {
+      enabled: Boolean(config.interactive?.enabled),
+      deviceId: config.interactive?.enabled ? config.interactive.deviceId : null,
+      displayName: config.interactive?.enabled ? config.interactive.displayName : null,
+      host: config.interactive?.enabled ? config.interactive.host : null,
+      port: config.interactive?.enabled ? config.interactive.port : null,
+      app: config.interactive?.enabled ? config.interactive.app : null,
+      errors: [...(config.interactive?.errors || [])],
     },
   });
 }
@@ -206,6 +237,12 @@ function parsePort(value) {
   return port;
 }
 
+function parseOptionalPort(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
 function hasWssEnvironment(env) {
   return [
     'WAR_CONTROLLER_WSS_ENABLED',
@@ -238,6 +275,18 @@ function isHostLabel(value) {
     && value.length >= 1
     && value.length <= 80
     && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function isPrivateLanIpv4(value) {
+  if (net.isIP(value) !== 4) return false;
+  const [first, second] = value.split('.').map(Number);
+  return first === 10
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168);
+}
+
+function isRuntimeId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 }
 
 function deepFreeze(value) {

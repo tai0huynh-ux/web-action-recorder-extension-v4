@@ -32,9 +32,11 @@ RUN chmod 0755 /usr/local/bin/war-interactive-browser \
     && useradd --create-home --shell /usr/sbin/nologin warpilot \
     && mkdir -p /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix \
-    && mkdir -p /data/chrome-profile \
-    && chown -R warpilot:warpilot /data \
-    && chmod 0700 /data/chrome-profile
+    && mkdir -p /data/chrome-profile /home/warpilot/.config/sunshine \
+    && chown -R warpilot:warpilot /data /home/warpilot/.config \
+    && chmod 0700 /data/chrome-profile /home/warpilot/.config/sunshine
+
+VOLUME ["/data/chrome-profile", "/home/warpilot/.config/sunshine", "/tmp/.X11-unix"]
 
 USER warpilot
 ENTRYPOINT ["/usr/local/bin/war-interactive-browser"]

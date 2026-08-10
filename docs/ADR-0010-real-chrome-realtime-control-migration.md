@@ -26,24 +26,24 @@ Use two explicit runtime modes:
   JPEG/CDP/X11 compatibility path. This is the rollback target and remains unchanged
   until the interactive gates pass.
 * `interactive`: a separate immutable image containing pinned Google Chrome Stable and
-  Sunshine. One selected identity receives an exclusive lease for the lifetime of the
-  Chrome profile and Sunshine session. The human uses Moonlight/Sunshine for live video
-  and native pointer/keyboard input; effectful Controller workflow, remote-input,
-  capture, clipboard, and Native Messaging commands are denied in this mode. Health is
-  allowed.
+  Sunshine. Each pilot instance runs two containers from that image: Chrome/Xvfb and a
+  Sunshine sidecar sharing only the X11 socket. One selected identity receives an
+  exclusive lease for the lifetime of the Chrome profile and Sunshine session. The
+  human uses Moonlight/Sunshine for live video and native pointer/keyboard input;
+  effectful Controller workflow, remote-input, capture, clipboard, and Native Messaging
+  commands are denied in this mode. Health is allowed.
 
 The interactive image is a pilot capability, not an anti-bot bypass. Human-operated
   challenge pages remain subject to Google, Cloudflare, and site policy. No CAPTCHA,
   fingerprint spoofing, proxy rotation, or challenge automation is part of this ADR.
 
-The Controller continues to use IPv4 LAN for its own endpoint. Browser Internet egress
-remains on the identity's IPv6-only macvlan. Docker macvlan does not support port
-publishing, so the same container also joins a Docker bridge marked `internal` for the
-Sunshine control plane only. Sunshine 0.23.1 listens on IPv4 on that private bridge;
-Docker publishes its ports only on an explicit LAN IPv4 host address. The internal
-bridge must provide no IPv4 Internet route, and UPnP remains disabled. Acceptance must
-prove IPv4 Internet egress fails, IPv6 egress succeeds, and Sunshine has no IPv6
-listener. There is no hidden public IPv4 fallback for Chrome traffic.
+The Controller continues to use IPv4 LAN for its own endpoint. The Chrome container has
+only the identity's IPv6-only macvlan. Docker macvlan does not support port publishing,
+so Sunshine runs as a sidecar attached only to a Docker bridge marked `internal` and
+shares the X11 Unix socket with Chrome/Xvfb. Sunshine 0.23.1 listens on IPv4 on that
+private bridge; Docker publishes its ports only on an explicit LAN IPv4 host address.
+The Chrome network namespace has no IPv4 interface or fallback, Sunshine has no public
+IPv6 interface, and UPnP remains disabled.
 
 ## Rejected alternatives
 
@@ -80,7 +80,8 @@ listener. There is no hidden public IPv4 fallback for Chrome traffic.
 * Twenty managed-to-interactive-to-managed lease cycles, plus crash, partition, and
   restart recovery, show no concurrent profile mount, unsafe Singleton lock deletion,
   MAC change, or public IPv6 change.
-* Sunshine listens only on the private ingress bridge, Docker publishes TCP
+* The Chrome container has only public IPv6 egress; the Sunshine sidecar listens only
+  on the private ingress bridge. Docker publishes TCP
   `47984/47989/47990/48010` and UDP `47998-48000` on the configured LAN IPv4, and
   non-allowlisted clients and public exposure are rejected; UPnP is disabled.
 * One 1280x720 H.264 stream runs for 30 minutes with less than 1% dropped frames,

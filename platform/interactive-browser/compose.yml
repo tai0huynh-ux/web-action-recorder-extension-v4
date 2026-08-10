@@ -11,32 +11,48 @@ services:
     image: war-interactive-chrome-pilot:0.1.0
     shm_size: "1gb"
     environment:
+      WAR_PILOT_ROLE: chrome
       DISPLAY: :99
+      X11_SOCKET_DIR: /tmp/.X11-unix
       CHROME_BIN: /usr/bin/google-chrome
-      SUNSHINE_BIN: /usr/bin/sunshine
-      SUNSHINE_CONFIG: /etc/sunshine/sunshine.conf
       PROFILE_DIR: /data/chrome-profile
       WIDTH: ${WAR_PILOT_WIDTH:-1280}
       HEIGHT: ${WAR_PILOT_HEIGHT:-720}
       WAR_PILOT_NO_SANDBOX: ${WAR_PILOT_NO_SANDBOX:-0}
     volumes:
-      - pilot-data:/data
+      - pilot-chrome-profile:/data/chrome-profile
+      - pilot-x11-socket:/tmp/.X11-unix
     # Optional runtime-only acceleration/input devices; no host packages are installed.
     # devices:
     #   - /dev/dri/renderD128:/dev/dri/renderD128
     #   - /dev/uinput:/dev/uinput
+    networks:
+      - pilot-external
+
+  interactive-sunshine-pilot:
+    image: war-interactive-chrome-pilot:0.1.0
+    environment:
+      WAR_PILOT_ROLE: sunshine
+      DISPLAY: :99
+      X11_SOCKET_DIR: /tmp/.X11-unix
+      SUNSHINE_BIN: /usr/bin/sunshine
+      SUNSHINE_CONFIG: /etc/sunshine/sunshine.conf
+    volumes:
+      - pilot-sunshine-state:/home/warpilot/.config/sunshine
+      - pilot-x11-socket:/tmp/.X11-unix
     ports:
+      - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47984:47984/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47989:47989/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47990:47990/tcp"
-      - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47984:47984/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:48010:48010/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47998-48000:47998-48000/udp"
     networks:
       - pilot-ingress
-      - pilot-external
 
 volumes:
-  pilot-data:
+  pilot-chrome-profile:
+  pilot-sunshine-state:
+  pilot-x11-socket:
 
 networks:
   pilot-ingress:

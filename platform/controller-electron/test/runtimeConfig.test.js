@@ -14,6 +14,39 @@ test('runtime config defaults to local disabled WSS and userData state', () => {
   assert.equal(config.wss.host, '127.0.0.1');
   assert.equal(config.wss.port, 0);
   assert.equal(config.devTools, false);
+  assert.equal(config.interactive.enabled, false);
+});
+
+test('runtime config exposes a validated private Moonlight pilot without enabling managed automation', () => {
+  const config = resolveElectronRuntimeConfig({
+    app: fakeApp('/data'),
+    env: {
+      WAR_INTERACTIVE_MOONLIGHT_HOST: '192.168.1.201',
+      WAR_INTERACTIVE_MOONLIGHT_APP: 'Desktop',
+      WAR_INTERACTIVE_DISPLAY_NAME: 'Chrome realtime',
+    },
+  });
+  assert.equal(config.interactive.enabled, true);
+  assert.equal(config.interactive.host, '192.168.1.201');
+  assert.equal(config.interactive.port, 47989);
+  assert.equal(config.containers.enabled, false);
+  const dto = toPublicRuntimeConfig(config);
+  assert.deepEqual(dto.interactive, {
+    enabled: true,
+    deviceId: 'interactive-chrome-pilot',
+    displayName: 'Chrome realtime',
+    host: '192.168.1.201',
+    port: 47989,
+    app: 'Desktop',
+    errors: [],
+  });
+});
+
+test('invalid optional Moonlight configuration fails that feature only', () => {
+  const config = resolveElectronRuntimeConfig({ app: fakeApp('/data'), env: { WAR_INTERACTIVE_MOONLIGHT_HOST: '8.8.8.8' } });
+  assert.equal(config.interactive.enabled, false);
+  assert.match(config.interactive.errors.join(' '), /private LAN/);
+  assert.equal(config.degraded, false);
 });
 
 test('runtime config supports custom state path', () => {

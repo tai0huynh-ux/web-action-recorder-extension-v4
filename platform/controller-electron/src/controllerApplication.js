@@ -72,7 +72,7 @@ export class ControllerApplicationService extends EventEmitter {
   constructor({ core, wssRuntime = null, wssTransport = null, containerAdapter = null, containerHostManager = null, config = null, version = '0.1.0', settingsStore = null, fs = nodeFs, now = () => new Date().toISOString(), id = (prefix) => `${prefix}-${crypto.randomUUID()}` }) { super(); this.core = core; this.wssRuntime = wssRuntime; this.wssTransport = wssTransport || wssRuntime?.adapter || wssRuntime; this.containerAdapter = containerAdapter; this.containerHostManager = containerHostManager; this.config = config; this.version = version; this.settingsStore = settingsStore; this.fs = fs; this.now = now; this.id = id; this.sequence = 0; this.remoteReadiness = new Map(); this.reconciliation = null; this.lastReconciliation = { status: 'idle', error: null }; }
   result(data) { return Object.freeze({ ok: true, data: structuredClone(data) }); }
   invalidate(domain, identifiers = {}) { this.emit('invalidation', Object.freeze({ sequence: ++this.sequence, domain, ...identifiers })); }
-  getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length, sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
+  getBootstrapState() { return this.result({ applicationVersion: this.version, protocolVersion: 'v1', deviceCount: this.core.devices.listDevices().devices.length + (interactiveDeviceFromConfig(this.config) ? 1 : 0), sessionCount: this.core.sessions.listSessions().length, groupCount: this.core.groups.listGroups().groups.length, workflowCount: this.core.workflows.listMetadata().length, wss: this.getRuntimeStatus().data }); }
   getRuntimeStatus() {
     const publicConfig = this.config ? toPublicRuntimeConfig(this.config) : null;
     return this.result({
@@ -83,6 +83,7 @@ export class ControllerApplicationService extends EventEmitter {
       storeStatus: publicConfig?.storeStatus || 'loaded',
       degraded: Boolean(publicConfig?.degraded),
       containers: publicConfig?.containers || { enabled: false, runtime: 'disabled', hostId: null, hostLabel: null },
+      interactive: publicConfig?.interactive || { enabled: false, host: null, port: null, app: null },
       reconciliation: structuredClone(this.lastReconciliation),
       applicationVersion: this.version,
       protocolVersion: 'v1'
@@ -206,8 +207,16 @@ export class ControllerApplicationService extends EventEmitter {
     this.invalidate('sessions', { deviceId });
     return this.result({ deviceId, status: session ? 'reconnecting' : 'offline', requested: Boolean(session) });
   }
-  listDevices() { return this.result(this.core.devices.listDevices()); }
-  getDevice({ deviceId }) { return this.result(this.core.devices.getDevice(deviceId)); }
+  listDevices() {
+    const registered = this.core.devices.listDevices();
+    const interactive = interactiveDeviceFromConfig(this.config);
+    return this.result({ devices: interactive ? [...registered.devices, interactive] : registered.devices });
+  }
+  getDevice({ deviceId }) {
+    const interactive = interactiveDeviceFromConfig(this.config);
+    if (interactive?.id === deviceId) return this.result(interactive);
+    return this.result(this.core.devices.getDevice(deviceId));
+  }
   async getSettings() { return this.result(await this.settingsStore.get()); }
   async updateSettings(payload) { const data = await this.settingsStore.update(payload); this.invalidate('settings'); return this.result(data); }
   listSessions() { return this.result({ sessions: this.core.sessions.listSessions() }); }
@@ -1363,6 +1372,29 @@ function isImmutableImagePin(value) {
   return typeof value === 'string'
     && (/^sha256:[a-f0-9]{64}$/i.test(value)
       || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}@sha256:[a-f0-9]{64}$/i.test(value));
+}
+
+function interactiveDeviceFromConfig(config) {
+  const interactive = config?.interactive;
+  if (!interactive?.enabled) return null;
+  return Object.freeze({
+    id: interactive.deviceId,
+    deviceId: interactive.deviceId,
+    name: interactive.displayName,
+    displayName: interactive.displayName,
+    status: 'configured',
+    mode: 'interactive',
+    runtimeMode: 'interactive',
+    browser: 'Google Chrome Stable',
+    capabilities: Object.freeze({ mode: 'interactive', humanRealtimeControl: true }),
+    connectionDescriptor: Object.freeze({
+      host: interactive.host,
+      port: interactive.port,
+      app: interactive.app,
+      protocol: 'moonlight',
+      displayName: interactive.displayName,
+    }),
+  });
 }
 
 function codedError(code, message, details) {

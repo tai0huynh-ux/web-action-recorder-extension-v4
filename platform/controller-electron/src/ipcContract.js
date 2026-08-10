@@ -204,7 +204,7 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.remote.clipboardCopy, objectSchema({ deviceId: 'id' })],
   [IPC_CHANNELS.remote.clipboardPaste, objectSchema({ deviceIds: 'optionalIdArray', synchronized: 'optionalBoolean' })],
   [IPC_CHANNELS.remote.openWindow, objectSchema({ mode: 'id', deviceIds: 'optionalIdArray', layout: 'optionalString' })],
-  [IPC_CHANNELS.remote.openInteractive, objectSchema({ deviceId: 'id', descriptor: 'optionalObject' })],
+  [IPC_CHANNELS.remote.openInteractive, objectSchema({ deviceId: 'id', action: 'optionalString', descriptor: 'optionalObject' })],
   [IPC_CHANNELS.containers.list, LIST_PAYLOAD],
   [IPC_CHANNELS.containers.trash, NO_PAYLOAD],
   [IPC_CHANNELS.containers.hosts, NO_PAYLOAD],

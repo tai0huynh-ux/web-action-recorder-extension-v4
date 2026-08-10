@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { JsonStore } from '../../../companion/store.js';
 import { ControllerCore } from '../../controller-core/src/controllerCore.js';
 import { ControllerWssServerAdapter } from '../../controller-wss/src/serverAdapter.js';
@@ -14,6 +15,7 @@ import { createControllerSettingsStore } from './settingsStore.js';
 import { secureWindowOptions } from './secureWindow.js';
 import { createDockerContainerAdapter } from './containerAdapter.js';
 import { SshContainerHostManager } from './sshHostManager.js';
+import { launchMoonlight } from './moonlightLauncher.js';
 
 export function createElectronControllerRuntime(dependencies = {}) {
   const state = {
@@ -25,6 +27,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     dialog: dependencies.dialog,
     clipboard: dependencies.clipboard,
     shell: dependencies.shell,
+    spawn: dependencies.spawn || spawn,
     fs: dependencies.fs || fs,
     path: dependencies.path || path,
     https: dependencies.https || https,
@@ -265,13 +268,17 @@ function openRemoteWindow(state, payload = {}) {
 }
 
 async function openInteractive(state, payload = {}) {
-  if (typeof state.shell?.openExternal !== 'function') {
-    const error = new Error('Moonlight integration is unavailable');
-    error.code = 'INTERACTIVE_NOT_CONFIGURED';
-    throw error;
-  }
-  await state.shell.openExternal(payload.descriptor.deepLink);
-  return { deviceId: payload.deviceId, status: 'opened' };
+  return {
+    deviceId: payload.deviceId,
+    ...launchMoonlight({
+      action: payload.action,
+      descriptor: payload.descriptor,
+      env: state.env,
+      fs: state.fs,
+      path: state.path,
+      spawn: state.spawn,
+    }),
+  };
 }
 
 async function maybeStartWss(state) {

@@ -88,6 +88,37 @@ test('application runtime status reports the actual bound WSS port', async () =>
   assert.equal(status.port, 49152);
 });
 
+test('application projects one configured human-only Moonlight device without registering a managed Agent', async () => {
+  const core = await connectedCore();
+  const app = new ControllerApplicationService({
+    core,
+    config: {
+      dataPath: 'data',
+      degraded: false,
+      errors: [],
+      wss: { enabled: false, requested: false, status: 'disabled', host: '127.0.0.1', port: 0, tls: {} },
+      containers: { enabled: false, runtime: 'disabled' },
+      interactive: {
+        enabled: true,
+        errors: [],
+        deviceId: 'interactive-chrome-pilot',
+        displayName: 'Chrome realtime',
+        host: '192.168.1.201',
+        port: 47989,
+        app: 'Desktop',
+      },
+    },
+  });
+  const listed = app.listDevices().data.devices;
+  const interactive = listed.find((device) => device.id === 'interactive-chrome-pilot');
+  assert.equal(interactive.status, 'configured');
+  assert.equal(interactive.mode, 'interactive');
+  assert.equal(interactive.connectionDescriptor.host, '192.168.1.201');
+  assert.equal(interactive.capabilities.humanRealtimeControl, true);
+  assert.equal(app.getDevice({ deviceId: interactive.id }).data.connectionDescriptor.app, 'Desktop');
+  assert.equal(app.getBootstrapState().data.deviceCount, core.devices.listDevices().devices.length + 1);
+});
+
 test('application exposes only a probed configured Docker host and owns container defaults', async () => {
   const core = await connectedCore();
   const adapter = fakeContainerAdapter();

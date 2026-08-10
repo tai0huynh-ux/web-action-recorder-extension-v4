@@ -2339,7 +2339,7 @@ function remoteView(refresh) {
 function remoteAvailableDevices() {
   return allWorkspaceDevices()
     .filter((device) => isInteractiveRemoteDevice(device)
-      ? normalizeDeviceStatus(device) === 'online'
+      ? ['configured', 'online'].includes(normalizeDeviceStatus(device))
       : device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
     .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
 }
@@ -2446,37 +2446,53 @@ function interactiveRemoteTile(device, refresh) {
   const api = window.warController?.remote?.openInteractive;
   const configured = typeof api === 'function' && Boolean(descriptor);
   const status = el('p', { className: configured ? 'status remote-interactive-status' : 'status error remote-interactive-status', text: !api ? t('remote.notConfigured') : (descriptor ? t('remote.interactiveReady') : t('remote.interactiveDescriptorUnavailable')), ariaLive: 'polite' });
-  const open = button(t('remote.openMoonlight'), async () => {
+  let pending = false;
+  const controls = [];
+  const setPending = (value) => {
+    pending = value;
+    for (const control of controls) control.disabled = value || !configured;
+  };
+  const openInteractive = async (action) => {
+    if (pending) return;
     if (typeof api !== 'function' || !descriptor) {
       status.textContent = t('remote.notConfigured');
       return;
     }
-    open.disabled = true;
-    status.textContent = t('remote.interactiveOpening');
+    setPending(true);
+    status.className = 'status remote-interactive-status';
+    status.textContent = action === 'pair' ? t('remote.interactivePairing') : t('remote.interactiveStarting');
     try {
-      const result = await api({ deviceId: id, descriptor });
+      const result = await api({ deviceId: id, action, descriptor });
       if (result?.ok === false) throw controllerError(result, 'INTERACTIVE_OPEN_FAILED');
-      const returned = result?.data ?? result;
-      status.textContent = returned?.status === 'paired' || returned?.paired === true
-        ? t('remote.interactivePaired')
-        : t('remote.interactiveOpened');
+      status.textContent = action === 'pair' ? t('remote.interactivePaired') : t('remote.interactiveStarted');
     } catch (error) {
       status.textContent = safeError(error, 'INTERACTIVE_OPEN_FAILED');
       status.className = 'status error remote-interactive-status';
     } finally {
-      open.disabled = false;
+      setPending(false);
     }
-  }, { className: 'button primary compact', disabled: !configured });
+  };
+  const pair = button(t('remote.pairMoonlight'), () => openInteractive('pair'), { className: 'button compact', disabled: !configured });
+  const start = button(t('remote.startRealtime'), () => openInteractive('stream'), { className: 'button primary compact', disabled: !configured });
+  controls.push(pair, start);
   return el('article', { className: 'remote-tile remote-tile-interactive' }, [
     el('div', { className: 'remote-tile-heading' }, [
       el('strong', { text: name }),
       el('span', { className: 'status-pill connecting', text: t('remote.humanOnlyMode') }),
     ]),
     el('p', { className: 'muted', text: t('remote.interactiveDescription') }),
-    descriptor ? el('code', { className: 'remote-interactive-descriptor', text: descriptor.deepLink || descriptor.uri || descriptor.url || stableJson(descriptor) }) : null,
-    el('div', { className: 'toolbar tight' }, [open]),
+    descriptor ? el('p', { className: 'remote-interactive-descriptor', text: t('remote.interactiveEndpoint', { endpoint: interactiveEndpoint(descriptor) }) }) : null,
+    el('div', { className: 'toolbar tight' }, controls),
     status,
   ]);
+}
+
+function interactiveEndpoint(descriptor) {
+  const host = String(descriptor.host || descriptor.address || '').trim();
+  const port = String(descriptor.port || '').trim();
+  const app = String(descriptor.app || descriptor.displayName || '').trim();
+  const endpoint = host && port ? `${host}:${port}` : host;
+  return [endpoint, app].filter(Boolean).join(' - ') || stableJson(descriptor);
 }
 
 function remoteBrowserChrome(deviceId, name) {
