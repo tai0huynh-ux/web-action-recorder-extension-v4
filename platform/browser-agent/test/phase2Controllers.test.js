@@ -194,6 +194,86 @@ test('phase2 browser-space keyDown/keyUp use native X11 backend', async () => {
   assert.deepEqual(raw.getState().heldKeys, []);
 });
 
+test('clipboard focus-only refocus preserves browser chrome ownership', async () => {
+  const calls = [];
+  const raw = new RawInputController({
+    browserController: {
+      activeTargetId: 'tab-1',
+      firstOpenTargetId: () => 'tab-1',
+      assertSingleWindowForRawInput: async () => {},
+      activateTab: async () => { calls.push('activateTab'); },
+      findPage: async () => ({})
+    },
+    config: { width: 100, height: 100 },
+    x11: { focusChromium: async () => { calls.push('focusChromium'); } }
+  });
+
+  await raw.execute('browser.focusWindow', { targetId: 'tab-1' }, { focusOnly: true });
+  assert.deepEqual(calls, ['focusChromium']);
+});
+
+test('clipboard focus-only paste keeps an active omnibox focused without activateTab', async () => {
+  const calls = [];
+  let omniboxText = '';
+  const raw = new RawInputController({
+    browserController: {
+      activeTargetId: 'tab-1',
+      firstOpenTargetId: () => 'tab-1',
+      assertSingleWindowForRawInput: async (targetId) => { calls.push(`guard:${targetId}`); },
+      activateTab: async () => { calls.push('activateTab'); },
+      findPage: async () => ({})
+    },
+    config: { width: 100, height: 100 },
+    x11: {
+      focusChromium: async () => { calls.push('focusChromium'); },
+      shortcut: async (shortcut) => { calls.push(`shortcut:${shortcut}`); omniboxText = 'clipboard text'; }
+    }
+  });
+
+  await raw.execute('browser.focusWindow', { targetId: 'tab-1' }, { focusOnly: true });
+  await raw.execute('input.shortcut', { targetId: 'tab-1', space: 'browser', keys: 'CTRL+V' });
+
+  assert.deepEqual(calls, [
+    'guard:tab-1',
+    'focusChromium',
+    'guard:tab-1',
+    'shortcut:CTRL+V'
+  ]);
+  assert.equal(omniboxText, 'clipboard text');
+});
+
+test('clipboard shortcut reasserts native focus after a cached lease loses the foreground', async () => {
+  const calls = [];
+  let foreground = 'other-window';
+  const raw = new RawInputController({
+    browserController: {
+      activeTargetId: 'tab-1',
+      firstOpenTargetId: () => 'tab-1',
+      assertSingleWindowForRawInput: async () => {},
+      activateTab: async () => { calls.push('activateTab'); },
+      findPage: async () => ({})
+    },
+    config: { width: 100, height: 100 },
+    x11: {
+      focusChromium: async () => { calls.push('focusChromium'); foreground = 'chromium'; },
+      shortcut: async (shortcut) => {
+        assert.equal(foreground, 'chromium', 'native shortcut must only run while Chromium owns the foreground');
+        calls.push(`shortcut:${shortcut}`);
+      }
+    }
+  });
+
+  await raw.execute('browser.focusWindow', { targetId: 'tab-1' }, { focusOnly: true });
+  foreground = 'other-window';
+  await raw.execute('input.shortcut', { targetId: 'tab-1', space: 'browser', keys: 'CTRL+V' }, {
+    focusOnly: true,
+    forceFocus: true,
+    expectedActiveTargetId: 'tab-1'
+  });
+
+  assert.deepEqual(calls, ['focusChromium', 'focusChromium', 'shortcut:CTRL+V']);
+});
+
 test('phase2 browser-space shortcut and text focus Chromium before native input', async () => {
   const raw = makeRaw();
   await raw.execute('input.shortcut', { targetId: 'tab-1', space: 'browser', keys: ['CTRL', 'L'] });

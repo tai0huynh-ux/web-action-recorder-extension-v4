@@ -76,12 +76,12 @@ export class RawInputController {
     emergencyStop?.onStop(() => this.stopAll());
   }
 
-  async execute(type, payload, { deadlineAt, now = () => Date.now() } = {}) {
+  async execute(type, payload, { deadlineAt, now = () => Date.now(), focusOnly = false, forceFocus = false, expectedActiveTargetId } = {}) {
     if (type === 'input.stopAll') return this.stopAll();
     if (type === 'input.getState') return this.getState();
     return this.queue.enqueue(async () => {
       assertDeadline(deadlineAt, now);
-      return this.executeNow(type, payload, { deadlineAt, now });
+      return this.executeNow(type, payload, { deadlineAt, now, focusOnly, forceFocus, expectedActiveTargetId });
     });
   }
 
@@ -90,9 +90,15 @@ export class RawInputController {
     return this.queue.enqueue(async () => {
       assertDeadline(deadlineAt, now);
       return task({
-        execute: async (type, payload) => {
+        execute: async (type, payload, options = {}) => {
           assertDeadline(deadlineAt, now);
-          return this.executeNow(type, payload, { deadlineAt, now });
+          return this.executeNow(type, payload, {
+            deadlineAt,
+            now,
+            focusOnly: options.focusOnly === true,
+            forceFocus: options.forceFocus === true,
+            expectedActiveTargetId: options.expectedActiveTargetId,
+          });
         }
       });
     });
@@ -185,7 +191,7 @@ export class RawInputController {
     const nativeTiming = { deadlineAt: timing.deadlineAt };
     switch (type) {
       case 'browser.focusWindow':
-        return { targetId: await this.focusBrowserTarget(payload.targetId, { ...timing, force: true }) };
+        return { targetId: await this.focusBrowserTarget(payload.targetId, { ...timing, force: true, activateTab: timing.focusOnly !== true }) };
       case 'input.mouseMove': {
         await this.focusBrowserTarget(payload.targetId, timing);
         assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
@@ -233,7 +239,12 @@ export class RawInputController {
       }
       case 'input.shortcut': {
         const shortcut = validateShortcut(payload.keys);
-        await this.focusBrowserTarget(payload.targetId, timing);
+        await this.focusBrowserTarget(payload.targetId, {
+          ...timing,
+          force: timing.forceFocus === true,
+          activateTab: timing.focusOnly !== true,
+        });
+        this.assertExpectedActiveTarget(timing.expectedActiveTargetId);
         assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
         await this.x11.shortcut(shortcut, nativeTiming);
         assertDeadline(timing.deadlineAt, timing.now || (() => Date.now()));
@@ -306,19 +317,29 @@ export class RawInputController {
     return this.browserController.findPage(targetId);
   }
 
-  async focusBrowserTarget(targetId, { force = false, deadlineAt, now = () => Date.now() } = {}) {
+  async focusBrowserTarget(targetId, { force = false, activateTab = true, deadlineAt, now = () => Date.now(), expectedActiveTargetId } = {}) {
     requireString(targetId, 'targetId');
     await this.browserController.assertSingleWindowForRawInput(targetId);
+    this.assertExpectedActiveTarget(expectedActiveTargetId);
     assertDeadline(deadlineAt, now);
     if (!force && this.focusLeaseTargetId === targetId) return targetId;
 
-    // Bring the selected Playwright target forward before focusing its X11 window.
-    await this.browserController.activateTab(targetId);
-    assertDeadline(deadlineAt, now);
+    // Re-activating a Playwright page clears browser-chrome focus (for example, the omnibox).
+    if (activateTab) {
+      await this.browserController.activateTab(targetId);
+      assertDeadline(deadlineAt, now);
+    }
     await this.x11.focusChromium({ deadlineAt });
+    this.assertExpectedActiveTarget(expectedActiveTargetId);
     assertDeadline(deadlineAt, now);
     this.focusLeaseTargetId = targetId;
     return targetId;
+  }
+
+  assertExpectedActiveTarget(targetId) {
+    if (targetId !== undefined && this.browserController.activeTargetId !== targetId) {
+      throw new AgentError('raw_input_target_changed', 'Active browser target changed before native input', 409);
+    }
   }
 
   invalidateFocusLease() {

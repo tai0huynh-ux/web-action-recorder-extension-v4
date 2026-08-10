@@ -131,6 +131,24 @@ test('activate updates exactly one active tab', async () => {
   assert.equal(tabs.find((tab) => tab.active).targetId, secondId);
 });
 
+test('raw input lease blocks tab mutations until clipboard ownership is released', async () => {
+  const controller = fakeController();
+  const first = fakePage('https://fixture.local/a');
+  const second = fakePage('https://fixture.local/b');
+  controller.context._pages.push(first, second);
+  const firstId = controller.registerPage(first);
+  const secondId = controller.registerPage(second);
+  controller.activeTargetId = firstId;
+
+  controller.acquireRawInputLease(firstId);
+  await assert.rejects(() => controller.activateTab(secondId), (error) => error?.code === 'raw_input_target_busy');
+  await assert.rejects(() => controller.navigateTab(firstId, 'https://fixture.local/blocked'), (error) => error?.code === 'raw_input_target_busy');
+  controller.assertRawInputLease(firstId);
+  controller.releaseRawInputLease(firstId);
+  await controller.activateTab(secondId);
+  assert.equal(controller.activeTargetId, secondId);
+});
+
 test('closing active tab chooses fallback', async () => {
   const controller = fakeController();
   const first = fakePage('https://fixture.local/a');

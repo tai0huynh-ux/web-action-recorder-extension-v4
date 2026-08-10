@@ -177,7 +177,7 @@ export class ControlDispatcher {
         return await this.controller.getSandboxStatus();
       case 'clipboard.copySelection': {
         const targetId = this.activeBrowserTargetId();
-        const text = await this.runClipboardCompound(async (raw) => {
+        const text = await this.runClipboardCompound(targetId, async (raw) => {
           await raw.execute('input.shortcut', { targetId, keys: 'CTRL+C', space: 'browser' });
           const remainingMs = commandDeadlineAt - this.now();
           if (remainingMs < 1) throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);
@@ -222,7 +222,7 @@ export class ControlDispatcher {
   }
 
   async runClipboardPaste(targetId, text, commandDeadlineAt) {
-    await this.runClipboardCompound(async (raw) => {
+    await this.runClipboardCompound(targetId, async (raw) => {
       await this.assertClipboardWindow(targetId, commandDeadlineAt);
       const session = await this.clipboardWriter(text, { deadlineAt: commandDeadlineAt, now: this.now });
       if (!session || typeof session.waitForPaste !== 'function' || typeof session.abort !== 'function') {
@@ -234,10 +234,11 @@ export class ControlDispatcher {
       try {
         // Clicking the Controller paste button can steal X11 focus while the
         // target lease remains cached. Reassert the browser window before Ctrl+V.
-        await raw.execute('browser.focusWindow', { targetId });
+        await raw.execute('browser.focusWindow', { targetId }, { focusOnly: true, expectedActiveTargetId: targetId });
+        this.assertActiveBrowserTarget(targetId);
         // Browser chrome (including the omnibox) is outside the page viewport.
         // Use the native X11 browser space so paste reaches either browser chrome or page focus.
-        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'browser' });
+        await raw.execute('input.shortcut', { targetId, keys: 'CTRL+V', space: 'browser' }, { focusOnly: true, forceFocus: true, expectedActiveTargetId: targetId });
         await pasteCompletion;
         if (commandDeadlineAt <= this.now()) {
           throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);
@@ -250,20 +251,35 @@ export class ControlDispatcher {
     }, commandDeadlineAt);
   }
 
-  async runClipboardCompound(task, commandDeadlineAt) {
+  async runClipboardCompound(targetId, task, commandDeadlineAt) {
     if (typeof this.rawInput?.executeCompound !== 'function') {
       throw new AgentError('raw_input_unavailable', 'Atomic native input queue is unavailable', 503);
     }
     if (typeof this.controller?.assertSingleWindowForRawInput !== 'function') {
       throw new AgentError('raw_input_unavailable', 'Single-window guard is unavailable', 503);
     }
-    return this.rawInput.executeCompound(task, { deadlineAt: commandDeadlineAt, now: this.now });
+    return this.rawInput.executeCompound(async (raw) => {
+      this.controller.acquireRawInputLease?.(targetId);
+      try {
+        return await task(raw);
+      } finally {
+        this.controller.releaseRawInputLease?.(targetId);
+      }
+    }, { deadlineAt: commandDeadlineAt, now: this.now });
   }
 
   async assertClipboardWindow(targetId, deadlineAt) {
     await this.controller.assertSingleWindowForRawInput(targetId);
+    this.controller.assertRawInputLease?.(targetId);
+    this.assertActiveBrowserTarget(targetId);
     if (deadlineAt <= this.now()) {
       throw new AgentError('deadline_exceeded', 'Command deadline has already passed', 408);
+    }
+  }
+
+  assertActiveBrowserTarget(targetId) {
+    if (this.controller.activeTargetId !== targetId) {
+      throw new AgentError('raw_input_target_changed', 'Active browser target changed before clipboard input', 409);
     }
   }
 

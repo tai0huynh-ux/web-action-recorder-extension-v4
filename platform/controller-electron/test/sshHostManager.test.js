@@ -450,6 +450,7 @@ test('SSH host manager reuses the persisted host when launcher configuration nam
         sshIdentityFile: 'C:/launcher/id_ed25519',
         controllerHost: '192.168.1.20',
         controllerCaPath: '/etc/war/controller-ca.pem',
+        ipv6Interface: 'eth0',
       },
     },
     settingsStore: settingsStore({ containerHosts: [persisted] }),
@@ -466,4 +467,23 @@ test('SSH host manager reuses the persisted host when launcher configuration nam
   assert.equal(effective.identityFile, persisted.identityFile);
   assert.equal(effective.controllerHost, persisted.controllerHost);
   assert.equal(effective.controllerCaPath, persisted.controllerCaPath);
+  assert.equal(effective.ipv6Interface, 'eth0', 'launcher IPv6 interface should fill omitted persisted metadata');
+
+  const customPersisted = { ...persisted, id: 'ssh-custom-ipv6', ipv6Interface: 'ens5' };
+  const customManager = new SshContainerHostManager({
+    config: {
+      ...config(),
+      containers: {
+        ...config().containers,
+        sshTarget: customPersisted.target,
+        sshIdentityFile: 'C:/launcher/id_ed25519',
+        controllerHost: '192.168.1.20',
+        controllerCaPath: '/etc/war/controller-ca.pem',
+        ipv6Interface: 'eth0',
+      },
+    },
+    settingsStore: settingsStore({ containerHosts: [customPersisted] }),
+  });
+  await customManager.load();
+  assert.equal(customManager.getHost(customPersisted.id).ipv6Interface, 'ens5', 'persisted custom IPv6 interface must remain authoritative');
 });

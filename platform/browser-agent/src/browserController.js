@@ -58,6 +58,7 @@ export class BrowserController extends EventEmitter {
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId = new Map();
     this.activeTargetId = undefined;
+    this.rawInputLeaseTargetId = undefined;
     this.extensionStatus = {
       configuredPath: config.extensionDir,
       loaded: false,
@@ -171,6 +172,7 @@ export class BrowserController extends EventEmitter {
   async openTab(url) {
     const targetUrl = url === undefined ? DEFAULT_NEW_TAB_URL : assertSafeHttpUrl(url);
     this.assertRunning();
+    this.assertRawInputLeaseAvailable();
     const page = await this.context.newPage();
     this.registerPage(page);
     await page.goto(targetUrl);
@@ -180,6 +182,7 @@ export class BrowserController extends EventEmitter {
   }
 
   async activateTab(targetId) {
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.bringToFront();
     this.activeTargetId = this.getTargetId(page);
@@ -188,6 +191,7 @@ export class BrowserController extends EventEmitter {
 
   async navigateTab(targetId, url) {
     assertSafeHttpUrl(url);
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.goto(url);
     await page.bringToFront();
@@ -197,6 +201,7 @@ export class BrowserController extends EventEmitter {
 
   async openInternalPage(pageName) {
     this.assertRunning();
+    this.assertRawInputLeaseAvailable();
     const url = this.resolveInternalPage(pageName);
     const page = await this.context.newPage();
     this.registerPage(page);
@@ -207,6 +212,7 @@ export class BrowserController extends EventEmitter {
   }
 
   async backTab(targetId) {
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.goBack();
     await page.bringToFront();
@@ -215,6 +221,7 @@ export class BrowserController extends EventEmitter {
   }
 
   async forwardTab(targetId) {
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.goForward();
     await page.bringToFront();
@@ -223,6 +230,7 @@ export class BrowserController extends EventEmitter {
   }
 
   async reloadTab(targetId) {
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.reload();
     await page.bringToFront();
@@ -231,6 +239,7 @@ export class BrowserController extends EventEmitter {
   }
 
   async homeTab(targetId) {
+    this.assertRawInputLeaseAvailable();
     const page = await this.findPage(targetId);
     await page.goto(DEFAULT_NEW_TAB_URL);
     await page.bringToFront();
@@ -311,6 +320,7 @@ export class BrowserController extends EventEmitter {
 
   async closeTab(targetId) {
     this.assertRunning();
+    this.assertRawInputLeaseAvailable();
     const page = this.pageByTargetId.get(targetId);
     if (!page || page.isClosed()) return { closed: false, reason: 'not_found' };
     const openPages = this.context.pages().filter((candidate) => !candidate.isClosed());
@@ -410,6 +420,33 @@ export class BrowserController extends EventEmitter {
     return { targetId, windowId: [...windowIds][0] };
   }
 
+  acquireRawInputLease(targetId) {
+    if (this.rawInputLeaseTargetId && this.rawInputLeaseTargetId !== targetId) {
+      throw new AgentError('raw_input_target_busy', 'Another browser target owns the native input lease', 409);
+    }
+    if (this.activeTargetId !== targetId) {
+      throw new AgentError('raw_input_target_changed', 'Active browser target changed before native input', 409);
+    }
+    this.rawInputLeaseTargetId = targetId;
+    return targetId;
+  }
+
+  assertRawInputLease(targetId) {
+    if (this.rawInputLeaseTargetId !== targetId || this.activeTargetId !== targetId) {
+      throw new AgentError('raw_input_target_changed', 'Active browser target changed before native input', 409);
+    }
+  }
+
+  releaseRawInputLease(targetId) {
+    if (this.rawInputLeaseTargetId === targetId) this.rawInputLeaseTargetId = undefined;
+  }
+
+  assertRawInputLeaseAvailable() {
+    if (this.rawInputLeaseTargetId) {
+      throw new AgentError('raw_input_target_busy', 'Browser tab mutation is temporarily blocked during native input', 409);
+    }
+  }
+
   assertRunning() {
     if (!this.context) throw new AgentError('browser_not_running', 'Browser is not running', 409);
   }
@@ -419,6 +456,7 @@ export class BrowserController extends EventEmitter {
     this.targetIdByPage = new WeakMap();
     this.pageByTargetId.clear();
     this.activeTargetId = undefined;
+    this.rawInputLeaseTargetId = undefined;
   }
 
   async ensureDefaultNewTab(page) {
@@ -430,14 +468,14 @@ export class BrowserController extends EventEmitter {
   registerPage(page, { activate = false } = {}) {
     if (this.targetIdByPage.has(page)) {
       const existingTargetId = this.targetIdByPage.get(page);
-      if (activate) this.activeTargetId = existingTargetId;
+      if (activate && !this.rawInputLeaseTargetId) this.activeTargetId = existingTargetId;
       return existingTargetId;
     }
     const targetId = `tab-${crypto.randomUUID()}`;
     this.targetIdByPage.set(page, targetId);
     this.pageByTargetId.set(targetId, page);
     this.createdAtByPage.set(page, new Date().toISOString());
-    if (activate) this.activeTargetId = targetId;
+    if (activate && !this.rawInputLeaseTargetId) this.activeTargetId = targetId;
     page.once?.('close', () => {
       this.pageByTargetId.delete(targetId);
       if (this.activeTargetId === targetId) this.activeTargetId = this.firstOpenTargetId();

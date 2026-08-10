@@ -138,8 +138,8 @@ test('clipboard paste runs guard and sends Ctrl+V through the exact browser targ
   const completion = deferred();
   const rawInput = {
     executeCompound: async (task) => task({
-      execute: async (type, payload) => {
-        shortcutCalls.push({ type, payload });
+      execute: async (type, payload, options) => {
+        shortcutCalls.push({ type, payload, ...(options ? { options } : {}) });
         events.push(type === 'browser.focusWindow' ? 'focusWindow' : `shortcut:${type}:${payload.keys}`);
         if (type === 'input.shortcut') {
           completion.resolve({ written: true, bytes: Buffer.byteLength(secret, 'utf8') });
@@ -172,8 +172,8 @@ test('clipboard paste runs guard and sends Ctrl+V through the exact browser targ
     'selection:completed'
   ]);
   assert.deepEqual(shortcutCalls, [
-    { type: 'browser.focusWindow', payload: { targetId: 't1' } },
-    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' } }
+    { type: 'browser.focusWindow', payload: { targetId: 't1' }, options: { focusOnly: true, expectedActiveTargetId: 't1' } },
+    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' }, options: { focusOnly: true, forceFocus: true, expectedActiveTargetId: 't1' } }
   ], 'clipboard paste must refocus the browser and use the native input space');
   assert.deepEqual(helperCalls, [secret], 'the one-shot owner must not immediately rewrite the clipboard');
   assert.deepEqual(result.result, { pasted: true, bytes: Buffer.byteLength(secret, 'utf8') });
@@ -186,8 +186,8 @@ test('clipboard paste uses browser-space Ctrl+V when the omnibox owns focus', as
   let omniboxFocused = true;
   const rawInput = {
     executeCompound: async (task) => task({
-      execute: async (type, payload) => {
-        calls.push({ type, payload });
+      execute: async (type, payload, options) => {
+        calls.push({ type, payload, ...(options ? { options } : {}) });
         if (type === 'input.shortcut' && omniboxFocused && payload.space !== 'browser') {
           throw new Error('CDP viewport input cannot reach a focused browser omnibox');
         }
@@ -203,9 +203,40 @@ test('clipboard paste uses browser-space Ctrl+V when the omnibox owns focus', as
   await dispatcher.dispatch(envelope('clipboard.pasteText', { text: 'omnibox paste' }));
 
   assert.deepEqual(calls, [
-    { type: 'browser.focusWindow', payload: { targetId: 't1' } },
-    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' } }
+    { type: 'browser.focusWindow', payload: { targetId: 't1' }, options: { focusOnly: true, expectedActiveTargetId: 't1' } },
+    { type: 'input.shortcut', payload: { targetId: 't1', keys: 'CTRL+V', space: 'browser' }, options: { focusOnly: true, forceFocus: true, expectedActiveTargetId: 't1' } }
   ], 'focused omnibox paste must refocus Chrome and use the native browser input space');
+});
+
+test('clipboard paste fails closed when its focus-only target is no longer active before native input', async () => {
+  const fake = makeFake();
+  const events = [];
+  const pasteCompletion = deferred();
+  const rawInput = new RawInputController({
+    browserController: fake.controller,
+    config: { width: 100, height: 100 },
+    x11: {
+      focusChromium: async () => { events.push('native:focus'); },
+      shortcut: async () => { events.push('native:shortcut'); pasteCompletion.resolve(); }
+    }
+  });
+  const dispatcher = makeDispatcher(fake, undefined, undefined, rawInput, undefined, async () => {
+    // Model a tab switch after the clipboard helper takes ownership, before Ctrl+V.
+    fake.controller.activeTargetId = 't2';
+    events.push('target:changed');
+    return {
+      waitForPaste: async () => { events.push('selection:armed'); return pasteCompletion.promise; },
+      abort: async () => { events.push('session:abort'); pasteCompletion.reject(new Error('aborted')); }
+    };
+  });
+
+  await assert.rejects(() => dispatcher.dispatch(envelope('clipboard.pasteText', { text: 'must-not-paste' })));
+
+  assert.deepEqual(events, [
+    'target:changed',
+    'selection:armed',
+    'session:abort'
+  ], 'a stale target must abort clipboard ownership before native focus or Ctrl+V');
 });
 
 test('rejects a clipboard command that expires while waiting in the raw-input queue before it causes effects', async () => {
