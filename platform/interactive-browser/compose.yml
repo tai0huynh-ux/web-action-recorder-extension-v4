@@ -15,7 +15,6 @@ services:
       CHROME_BIN: /usr/bin/google-chrome
       SUNSHINE_BIN: /usr/bin/sunshine
       SUNSHINE_CONFIG: /etc/sunshine/sunshine.conf
-      SUNSHINE_CONTAINER_IPV6_ONLY: ${WAR_PILOT_SUNSHINE_IPV6_ONLY:-1}
       PROFILE_DIR: /data/chrome-profile
       WIDTH: ${WAR_PILOT_WIDTH:-1280}
       HEIGHT: ${WAR_PILOT_HEIGHT:-720}
@@ -30,14 +29,19 @@ services:
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47989:47989/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47990:47990/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47984:47984/tcp"
+      - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:48010:48010/tcp"
       - "${WAR_PILOT_BIND_ADDRESS:-192.168.1.201}:47998-48000:47998-48000/udp"
     networks:
+      - pilot-ingress
       - pilot-external
 
 volumes:
   pilot-data:
 
 networks:
+  pilot-ingress:
+    driver: bridge
+    internal: true
   pilot-external:
     name: ${WAR_PILOT_NETWORK_NAME:-war-interactive-ipv6}
     external: true

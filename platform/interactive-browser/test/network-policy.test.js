@@ -11,11 +11,11 @@ test('accepts RFC1918 LAN addresses only', () => {
   }
 });
 
-test('requires explicit private IPv4 host publishing and a Sunshine 0.23.x family compatible with IPv6-only networking', () => {
+test('requires explicit private IPv4 host publishing and IPv4-only Sunshine on the private ingress bridge', () => {
   assert.equal(assertHostBindAddress('192.168.1.201'), '192.168.1.201');
   assert.throws(() => assertHostBindAddress('::'), /private LAN/);
   assert.equal(assertSunshineAddressFamily('ipv4'), 'ipv4');
-  assert.equal(assertSunshineAddressFamily('both', { containerIpv6Only: true }), 'both');
-  assert.throws(() => assertSunshineAddressFamily('ipv4', { containerIpv6Only: true }), /must be "both"/);
+  assert.equal(assertSunshineAddressFamily('ipv4', { privateIpv4Ingress: true }), 'ipv4');
+  assert.throws(() => assertSunshineAddressFamily('both', { privateIpv4Ingress: true }), /must be "ipv4"/);
   assert.throws(() => assertSunshineAddressFamily('ipv6'), /Sunshine 0\.23/);
 });

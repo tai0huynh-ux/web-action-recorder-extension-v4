@@ -35,13 +35,13 @@ export function assertHostBindAddress(value, name = 'hostBindAddress') {
   return assertLanIpv4Address(value, name);
 }
 
-export function assertSunshineAddressFamily(value, { containerIpv6Only = false, name = 'sunshineAddressFamily' } = {}) {
+export function assertSunshineAddressFamily(value, { privateIpv4Ingress = false, name = 'sunshineAddressFamily' } = {}) {
   const family = String(value ?? '').trim().toLowerCase();
   if (family !== 'ipv4' && family !== 'both') {
     throw new Error(`${name} must be "ipv4" or "both" for Sunshine 0.23.x`);
   }
-  if (containerIpv6Only && family !== 'both') {
-    throw new Error(`${name} must be "both" when the container has no IPv4 network`);
+  if (privateIpv4Ingress && family !== 'ipv4') {
+    throw new Error(`${name} must be "ipv4" when Sunshine uses the private ingress bridge`);
   }
   return family;
 }

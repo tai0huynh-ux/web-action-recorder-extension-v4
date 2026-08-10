@@ -36,16 +36,14 @@ The interactive image is a pilot capability, not an anti-bot bypass. Human-opera
   challenge pages remain subject to Google, Cloudflare, and site policy. No CAPTCHA,
   fingerprint spoofing, proxy rotation, or challenge automation is part of this ADR.
 
-The Controller continues to use IPv4 LAN for its own endpoint. Browser egress remains
-on the identity's IPv6-only network. Sunshine 0.23.1 has only `ipv4` and `both` address
-families and no specific bind-address key, so the pilot uses its IPv6 dual-stack socket
-inside the container while Docker publishes ports only on an explicit LAN IPv4 host
-address. UPnP remains disabled. Runtime acceptance must prove that the container's
-public IPv6 cannot reach Sunshine directly; otherwise the pilot is blocked until a
-network fence, sidecar, or Sunshine version with a verified bind-address contract is
-introduced. An IPv4-only controller cannot reach an IPv6-only endpoint directly, so
-any future direct signalling path requires an authenticated dual-stack relay or NAT64;
-there is no hidden IPv4 fallback.
+The Controller continues to use IPv4 LAN for its own endpoint. Browser Internet egress
+remains on the identity's IPv6-only macvlan. Docker macvlan does not support port
+publishing, so the same container also joins a Docker bridge marked `internal` for the
+Sunshine control plane only. Sunshine 0.23.1 listens on IPv4 on that private bridge;
+Docker publishes its ports only on an explicit LAN IPv4 host address. The internal
+bridge must provide no IPv4 Internet route, and UPnP remains disabled. Acceptance must
+prove IPv4 Internet egress fails, IPv6 egress succeeds, and Sunshine has no IPv6
+listener. There is no hidden public IPv4 fallback for Chrome traffic.
 
 ## Rejected alternatives
 
@@ -82,8 +80,9 @@ there is no hidden IPv4 fallback.
 * Twenty managed-to-interactive-to-managed lease cycles, plus crash, partition, and
   restart recovery, show no concurrent profile mount, unsafe Singleton lock deletion,
   MAC change, or public IPv6 change.
-* Sunshine binds only the configured LAN IPv4 and rejects wildcard/public exposure and
-  non-allowlisted clients; UPnP is disabled.
+* Sunshine listens only on the private ingress bridge, Docker publishes TCP
+  `47984/47989/47990/48010` and UDP `47998-48000` on the configured LAN IPv4, and
+  non-allowlisted clients and public exposure are rejected; UPnP is disabled.
 * One 1280x720 H.264 stream runs for 30 minutes with less than 1% dropped frames,
   input-to-photon P95 at or below 150 ms on wired LAN, host CPU P95 below 80%, and no
   60-second interval above 90%.

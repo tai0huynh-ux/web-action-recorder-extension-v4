@@ -5,9 +5,10 @@ const DEFAULTS = Object.freeze({
   sunshineBin: '/usr/bin/sunshine',
   sunshineConfig: '/etc/sunshine/sunshine.conf',
   profileDir: '/data/chrome-profile',
-  sunshineAddressFamily: 'both',
+  sunshineAddressFamily: 'ipv4',
   hostBindAddress: '192.168.1.201',
-  containerIpv6Only: true,
+  privateIpv4Ingress: true,
+  browserIpv6OnlyEgress: true,
   width: 1280,
   height: 720,
   fps: 30,
@@ -27,10 +28,11 @@ export function normalizeConfig(input = {}) {
   const display = String(value('display', DEFAULTS.display)).trim();
   if (!/^:[0-9]+$/.test(display)) throw new Error('display must be an X display such as :99');
 
-  const containerIpv6Only = value('containerIpv6Only', DEFAULTS.containerIpv6Only) === true;
+  const privateIpv4Ingress = value('privateIpv4Ingress', DEFAULTS.privateIpv4Ingress) === true;
+  const browserIpv6OnlyEgress = value('browserIpv6OnlyEgress', DEFAULTS.browserIpv6OnlyEgress) === true;
   const addressFamily = assertSunshineAddressFamily(
     value('sunshineAddressFamily', DEFAULTS.sunshineAddressFamily),
-    { containerIpv6Only },
+    { privateIpv4Ingress },
   );
   const hostBindAddress = String(value('hostBindAddress', DEFAULTS.hostBindAddress)).trim();
   assertHostBindAddress(hostBindAddress);
@@ -42,7 +44,8 @@ export function normalizeConfig(input = {}) {
     profileDir: String(value('profileDir', DEFAULTS.profileDir)).trim(),
     sunshineAddressFamily: addressFamily,
     hostBindAddress,
-    containerIpv6Only,
+    privateIpv4Ingress,
+    browserIpv6OnlyEgress,
     width: positiveInt(value('width', DEFAULTS.width), 'width', { min: 320, max: 7680 }),
     height: positiveInt(value('height', DEFAULTS.height), 'height', { min: 240, max: 4320 }),
     fps: positiveInt(value('fps', DEFAULTS.fps), 'fps', { min: 1, max: 60 }),
