@@ -21,7 +21,7 @@ services:
       HEIGHT: ${WAR_PILOT_HEIGHT:-720}
       WAR_PILOT_NO_SANDBOX: ${WAR_PILOT_NO_SANDBOX:-0}
     volumes:
-      - pilot-chrome-profile:/data/chrome-profile
+      - pilot-chrome-profile-v2:/data/chrome-profile
       - pilot-x11-socket:/tmp/.X11-unix
     # Optional runtime-only acceleration/input devices; no host packages are installed.
     # devices:
@@ -51,7 +51,7 @@ services:
       - pilot-ingress
 
 volumes:
-  pilot-chrome-profile:
+  pilot-chrome-profile-v2:
   pilot-sunshine-state:
   pilot-x11-socket:
 

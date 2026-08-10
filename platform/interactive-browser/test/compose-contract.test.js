@@ -43,11 +43,15 @@ test('disables bridge masquerading on Sunshine ingress without marking it intern
   assert.match(ingress, /driver: bridge\s*\n\s+driver_opts:\s*\n\s+com\.docker\.network\.bridge\.enable_ip_masquerade:\s*"false"/);
 });
 
-test('shares X11 only and persists Chrome and Sunshine state in separate volumes', async () => {
+test('migrates Chrome profile identity to a new volume while preserving the legacy volume for rollback', async () => {
   const compose = await readFile(composeUrl, 'utf8');
   const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
   const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
-  assert.match(chrome, /pilot-chrome-profile:\/data\/chrome-profile/);
+
+  assert.match(chrome, /^\s*- pilot-chrome-profile-v2:\/data\/chrome-profile\s*$/m);
+  assert.doesNotMatch(chrome, /^\s*- pilot-chrome-profile:\/data\/chrome-profile\s*$/m);
+  assert.match(compose, /^  pilot-chrome-profile-v2:\s*$/m);
+  assert.doesNotMatch(compose, /^  pilot-chrome-profile:\s*$/m);
   assert.doesNotMatch(chrome, /pilot-sunshine-state/);
   assert.match(sunshine, /pilot-sunshine-state:\/home\/warpilot\/\.config\/sunshine/);
   assert.doesNotMatch(sunshine, /pilot-chrome-profile/);
