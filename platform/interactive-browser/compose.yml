@@ -1,5 +1,6 @@
 services:
   interactive-chrome-pilot:
+    hostname: war-interactive-chrome-pilot
     build:
       context: ../..
       dockerfile: platform/interactive-browser/Dockerfile

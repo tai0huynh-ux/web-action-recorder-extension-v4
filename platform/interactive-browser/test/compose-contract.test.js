@@ -56,6 +56,15 @@ test('shares X11 only and persists Chrome and Sunshine state in separate volumes
   }
 });
 
+test('pins Chrome to a stable hostname without assigning it to Sunshine', async () => {
+  const compose = await readFile(composeUrl, 'utf8');
+  const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
+  const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
+
+  assert.match(chrome, /^\s+hostname:\s*war-interactive-chrome-pilot\s*$/m);
+  assert.doesNotMatch(sunshine, /^\s+hostname:\s*war-interactive-chrome-pilot\s*$/m);
+});
+
 test('keeps Sunshine off the public IPv6 interface', async () => {
   const config = await readFile(sunshineUrl, 'utf8');
   assert.match(config, /^address_family\s*=\s*ipv4$/m);

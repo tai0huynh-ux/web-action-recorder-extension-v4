@@ -38,7 +38,9 @@ The interactive image is a pilot capability, not an anti-bot bypass. Human-opera
   fingerprint spoofing, proxy rotation, or challenge automation is part of this ADR.
 
 The Controller continues to use IPv4 LAN for its own endpoint. The Chrome container has
-only the identity's IPv6-only macvlan. Docker macvlan does not support port publishing,
+only the identity's IPv6-only macvlan and a fixed hostname. The hostname remains stable
+across container recreation so Chromium can classify and clean its own orphaned profile
+lock; the exclusive profile lease still forbids concurrent mounts. Docker macvlan does not support port publishing,
 so Sunshine runs as a sidecar attached only to a non-internal Docker bridge and shares
 the X11 Unix socket with Chrome/Xvfb. The bridge disables IP masquerading: Docker can
 still install host DNAT rules for the explicit LAN IPv4 publications, while the sidecar
