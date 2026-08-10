@@ -10,6 +10,8 @@ services:
         SUNSHINE_VERSION: ${WAR_PILOT_SUNSHINE_VERSION:-0.23.1}
         SUNSHINE_DEB_SHA256: ${WAR_PILOT_SUNSHINE_DEB_SHA256:-b60f9c829b8c08a05a0de34c82c4a720c773fd6941d889eaceb8b3df9f57286d}
     image: war-interactive-chrome-pilot:0.1.0
+    # Sunshine joins this namespace so X11 MIT-SHM capture can read Xvfb frames.
+    ipc: shareable
     shm_size: "1gb"
     environment:
       WAR_PILOT_ROLE: chrome
@@ -31,7 +33,9 @@ services:
       - pilot-external
 
   interactive-sunshine-pilot:
+    hostname: war-interactive-sunshine-pilot
     image: war-interactive-chrome-pilot:0.1.0
+    ipc: service:interactive-chrome-pilot
     environment:
       WAR_PILOT_ROLE: sunshine
       DISPLAY: :99

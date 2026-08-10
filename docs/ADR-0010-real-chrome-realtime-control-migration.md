@@ -1,6 +1,6 @@
 # ADR-0010: Real Chrome and realtime human control migration
 
-Status: proposed pilot implementation
+Status: accepted for the single-session human-control rollout
 
 Date: 2026-08-10
 
@@ -20,18 +20,26 @@ application packages must not be installed on the Linux host.
 
 ## Decision
 
-Use two explicit runtime modes:
+Use two explicit runtime modes, with interactive mode owning the Controller's human
+remote-control surface whenever it is configured:
 
-* `managed`: the existing CloakBrowser image, Browser Agent WSS, workflow APIs, and
-  JPEG/CDP/X11 compatibility path. This is the rollback target and remains unchanged
-  until the interactive gates pass.
+* `managed`: the existing CloakBrowser image, Browser Agent WSS, and workflow APIs.
+  It remains the automation and rollback runtime. Its JPEG/CDP/X11 compatibility
+  controls are shown only when no interactive endpoint is configured.
 * `interactive`: a separate immutable image containing pinned Google Chrome Stable and
   Sunshine. Each pilot instance runs two containers from that image: Chrome/Xvfb and a
-  Sunshine sidecar sharing only the X11 socket. One selected identity receives an
+  Sunshine sidecar sharing the X11 socket and Chrome's IPC namespace for MIT-SHM capture.
+  One selected identity receives an
   exclusive lease for the lifetime of the Chrome profile and Sunshine session. The
   human uses Moonlight/Sunshine for live video and native pointer/keyboard input;
   effectful Controller workflow, remote-input, capture, clipboard, and Native Messaging
   commands are denied in this mode. Health is allowed.
+
+This changes the human-control mechanism, not the workflow-execution engine. When the
+Controller has a valid `WAR_INTERACTIVE_MOONLIGHT_HOST`, the Remote view exposes only
+the interactive Chrome device and does not poll managed JPEG frames or dispatch
+managed mouse/keyboard commands. Removing that configuration is the explicit rollback
+that restores the managed compatibility controls.
 
 The interactive image is a pilot capability, not an anti-bot bypass. Human-operated
   challenge pages remain subject to Google, Cloudflare, and site policy. No CAPTCHA,
@@ -45,12 +53,17 @@ uses a new profile volume cloned while the source is stopped, excluding only the
 `SingletonLock`, `SingletonCookie`, and `SingletonSocket` runtime symlinks. The original
 volume stays unchanged as rollback and is never mounted concurrently. Docker macvlan does not support port publishing,
 so Sunshine runs as a sidecar attached only to a non-internal Docker bridge and shares
-the X11 Unix socket with Chrome/Xvfb. The bridge disables IP masquerading: Docker can
+the X11 Unix socket and IPC namespace with Chrome/Xvfb. Sunshine also has a fixed,
+distinct hostname so its Moonlight pairing identity survives container recreation. The bridge disables IP masquerading: Docker can
 still install host DNAT rules for the explicit LAN IPv4 publications, while the sidecar
 does not receive general IPv4 Internet egress through host SNAT. This assumes the LAN
 has no route to the bridge subnet and is verified at runtime rather than treated as a
 firewall guarantee. The Chrome network namespace has no IPv4 interface or fallback,
 Sunshine has no public IPv6 interface, and UPnP remains disabled.
+
+The shared IPC namespace is a deliberate pilot tradeoff for X11 MIT-SHM capture. It
+widens the Sunshine sidecar trust boundary beyond the X11 socket; hardening the sidecar
+and integrating pairing revoke/reset remain follow-up security work.
 
 ## Rejected alternatives
 
@@ -73,7 +86,8 @@ Sunshine has no public IPv6 interface, and UPnP remains disabled.
    measure pointer/keyboard input-to-photon latency, frame drops, and reconnect time.
 3. **Controller checkpoint**: expose an explicit human-only interactive action and
    connection descriptor. If the native Moonlight client is unavailable, show
-   `NOT_CONFIGURED`; never silently fall back to command injection.
+   `NOT_CONFIGURED`; never silently fall back to command injection. When the endpoint
+   is configured, make this the exclusive Remote-view control path.
 4. **Extension/profile checkpoint**: install the extension through a supported Chrome
    policy or signed package, re-enroll Native Messaging, and migrate only an allowlisted
    subset of non-secret state. Never copy `chrome.storage.local` wholesale.

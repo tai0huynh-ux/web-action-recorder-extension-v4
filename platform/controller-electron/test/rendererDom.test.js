@@ -1734,6 +1734,48 @@ test('interactive remote tile is human-only and pairs or starts Moonlight withou
   }
 });
 
+test('interactive Google Chrome excludes managed controls and remote polling from a mixed inventory', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.containers = [containerFixture({ id: 'container-1', deviceId: 'managed-device-1', name: 'CloakBrowser 1', status: 'running' })];
+  state.store.devices = [
+    deviceFixture('managed-device-1', 'CloakBrowser 1'),
+    {
+      ...deviceFixture('interactive-device-1', 'Google Chrome'),
+      mode: 'interactive',
+      connectionDescriptor: { host: '192.168.1.201', port: 47989, app: 'Google Chrome' },
+    },
+  ];
+  state.store.sessions = [{ deviceId: 'managed-device-1', status: 'online' }];
+  state.store.remote = { selectedDeviceIds: ['managed-device-1', 'interactive-device-1'], selectionInitialized: true, activeDeviceId: 'managed-device-1', synchronized: true, fps: 6, live: true, frames: {}, pending: {}, notice: '', error: '' };
+  const originalCapture = window.warController.remote.capture;
+  const originalControl = window.warController.remote.control;
+  let captureCalls = 0;
+  let controlCalls = 0;
+  window.warController.remote.capture = async () => { captureCalls += 1; return { ok: true, data: {} }; };
+  window.warController.remote.control = async () => { controlCalls += 1; return { ok: true, data: {} }; };
+  try {
+    const current = views.renderView(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(state.store.remote.selectedDeviceIds.includes('managed-device-1'), false);
+    assert.equal(remoteTiles(current).length, 1);
+    assert.equal(all(current, (node) => node.localName === 'img').length, 0);
+    assert.ok(current.textContent.includes(i18n.t('remote.interactiveTitle')));
+    assert.ok(current.textContent.includes(i18n.t('remote.interactiveViewDescription')));
+    for (const label of [i18n.t('remote.sync'), i18n.t('remote.fps'), i18n.t('remote.layout'), i18n.t('remote.pause'), i18n.t('remote.openActive'), i18n.t('remote.openAll'), i18n.t('remote.keyHelp')]) {
+      assert.equal(current.textContent.includes(label), false, `${label} must be hidden for human-operated Chrome`);
+    }
+    assert.equal(captureCalls, 0);
+    assert.equal(controlCalls, 0);
+  } finally {
+    window.warController.remote.capture = originalCapture;
+    window.warController.remote.control = originalControl;
+    state.store.remote.live = false;
+    state.store.view = 'overview';
+    views.renderView(() => {});
+  }
+});
+
 test('remote selection survives a transient unavailable Agent and restores its tile', () => {
   resetStore();
   state.store.view = 'remote';

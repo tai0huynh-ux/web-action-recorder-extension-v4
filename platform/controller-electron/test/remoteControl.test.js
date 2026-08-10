@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   browserStateFromRemoteResult,
   connectionDescriptorForInteractiveDevice,
+  controlSurfaceRemoteDevices,
   interactiveConnectionDescriptor,
   isInteractiveRemoteDevice,
   normalizeRemoteSelection,
@@ -33,6 +34,13 @@ test('remote mode and interactive connection descriptor stay explicit', () => {
   });
   assert.deepEqual(connectionDescriptorForInteractiveDevice(device), interactiveConnectionDescriptor(device));
   assert.equal(remoteModeForDevice({ mode: 'managed' }), 'managed');
+});
+
+test('interactive devices exclusively own the remote control surface when present', () => {
+  const managed = { deviceId: 'managed-1', mode: 'managed' };
+  const interactive = { deviceId: 'interactive-1', mode: 'interactive' };
+  assert.deepEqual(controlSurfaceRemoteDevices([managed, interactive]), [interactive]);
+  assert.deepEqual(controlSurfaceRemoteDevices([managed]), [managed]);
 });
 
 test('remote selection is stable, bounded, and limited to available devices', () => {

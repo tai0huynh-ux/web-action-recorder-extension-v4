@@ -60,6 +60,15 @@ test('migrates Chrome profile identity to a new volume while preserving the lega
   }
 });
 
+test('shares Chrome IPC with Sunshine so X11 shared-memory capture crosses the container boundary', async () => {
+  const compose = await readFile(composeUrl, 'utf8');
+  const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
+  const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
+
+  assert.match(chrome, /^\s+ipc:\s+shareable\s*$/m);
+  assert.match(sunshine, /^\s+ipc:\s+service:interactive-chrome-pilot\s*$/m);
+});
+
 test('pins Chrome to a stable hostname without assigning it to Sunshine', async () => {
   const compose = await readFile(composeUrl, 'utf8');
   const chrome = serviceBlock(compose, 'interactive-chrome-pilot');
@@ -67,6 +76,13 @@ test('pins Chrome to a stable hostname without assigning it to Sunshine', async 
 
   assert.match(chrome, /^\s+hostname:\s*war-interactive-chrome-pilot\s*$/m);
   assert.doesNotMatch(sunshine, /^\s+hostname:\s*war-interactive-chrome-pilot\s*$/m);
+});
+
+test('pins Sunshine to a stable hostname distinct from Chrome for pairing identity persistence', async () => {
+  const compose = await readFile(composeUrl, 'utf8');
+  const sunshine = serviceBlock(compose, 'interactive-sunshine-pilot');
+
+  assert.match(sunshine, /^\s+hostname:\s*war-interactive-sunshine-pilot\s*$/m);
 });
 
 test('keeps Sunshine off the public IPv6 interface', async () => {

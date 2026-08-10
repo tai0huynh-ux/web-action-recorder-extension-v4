@@ -27,6 +27,10 @@ export default {
   remote: {
     title: 'Lightweight CloakBrowser control',
     description: 'View and control several CloakBrowser containers over the existing authenticated WSS session. Frames use bounded JPEG snapshots instead of a heavy desktop protocol.',
+    interactiveTitle: 'Google Chrome realtime control',
+    interactiveViewDescription: 'Use Google Chrome through Sunshine and Moonlight. Pointer and keyboard input stay in Moonlight; Controller does not capture frames or send browser commands.',
+    interactiveHelp: 'Select a Google Chrome device, then pair or start Moonlight.',
+    interactiveEmpty: 'No configured Google Chrome + Moonlight device is available.',
     sync: 'Synchronize actions',
     fps: 'Frame rate',
     selectAll: 'Select all online',

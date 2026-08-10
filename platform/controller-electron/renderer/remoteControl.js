@@ -34,6 +34,14 @@ export function isInteractiveRemoteDevice(device) {
   return remoteModeForDevice(device) === 'interactive';
 }
 
+// A configured human-operated device owns the Remote surface; managed fallback
+// remains available only when no interactive device can be used.
+export function controlSurfaceRemoteDevices(devices) {
+  const available = Array.isArray(devices) ? devices.filter(Boolean) : [];
+  const interactive = available.filter(isInteractiveRemoteDevice);
+  return interactive.length ? interactive : available;
+}
+
 export function interactiveConnectionDescriptor(device) {
   const source = device?.connectionDescriptor
     ?? device?.interactiveConnection

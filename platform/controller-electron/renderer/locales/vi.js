@@ -27,6 +27,10 @@ export default {
   remote: {
     title: 'Điều khiển CloakBrowser nhẹ',
     description: 'Xem và điều khiển nhiều container CloakBrowser qua phiên WSS đã xác thực. Hình ảnh dùng JPEG có giới hạn thay cho giao thức desktop nặng.',
+    interactiveTitle: 'Điều khiển Google Chrome realtime',
+    interactiveViewDescription: 'Dùng Google Chrome qua Sunshine và Moonlight. Chuột và bàn phím chỉ điều khiển trong Moonlight; Controller không chụp màn hình hoặc gửi lệnh trình duyệt.',
+    interactiveHelp: 'Chọn một thiết bị Google Chrome, sau đó ghép hoặc bật Moonlight.',
+    interactiveEmpty: 'Chưa có thiết bị Google Chrome + Moonlight đã cấu hình.',
     sync: 'Đồng bộ hành động',
     fps: 'Tốc độ hình',
     selectAll: 'Chọn tất cả đang online',

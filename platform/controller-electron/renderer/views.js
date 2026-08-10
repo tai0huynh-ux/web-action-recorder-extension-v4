@@ -11,6 +11,7 @@ import {
 } from './workspaceState.js';
 import {
   browserStateFromRemoteResult,
+  controlSurfaceRemoteDevices,
   interactiveConnectionDescriptor,
   isInteractiveRemoteDevice,
   normalizedBrowserTabs,
@@ -2291,6 +2292,8 @@ function remoteView(refresh) {
   const selected = new Set(selectedDeviceIds);
   const managedIds = new Set(remoteManagedDeviceIds());
   const selectedManagedIds = new Set([...selected].filter((id) => managedIds.has(id)));
+  const interactiveOnly = targets.some(isInteractiveRemoteDevice);
+  if (interactiveOnly) stopRemotePolling();
   const sync = el('input', { type: 'checkbox', checked: store.remote.synchronized === true, ariaLabel: t('remote.sync') });
   sync.addEventListener('change', () => { store.remote.synchronized = sync.checked; refresh(); });
   const fps = el('select', { ariaLabel: t('remote.fps') }, [
@@ -2311,37 +2314,40 @@ function remoteView(refresh) {
   ]);
   layout.value = store.remote.layout || 'auto';
   layout.addEventListener('change', () => { store.remote.layout = layout.value; refresh(); });
-  const status = el('p', { className: store.remote.error ? 'status error' : 'status', text: store.remote.error || store.remote.notice || (ids.length ? t('remote.help') : t('remote.empty')), ariaLive: 'polite' });
+  const status = el('p', { className: store.remote.error ? 'status error' : 'status', text: store.remote.error || store.remote.notice || (ids.length ? t(interactiveOnly ? 'remote.interactiveHelp' : 'remote.help') : t(interactiveOnly ? 'remote.interactiveEmpty' : 'remote.empty')), ariaLive: 'polite' });
   remoteStatusNode = status;
-  const root = section(t('remote.title'), [
-    el('p', { className: 'muted', text: t('remote.description') }),
+  const root = section(t(interactiveOnly ? 'remote.interactiveTitle' : 'remote.title'), [
+    el('p', { className: 'muted', text: t(interactiveOnly ? 'remote.interactiveViewDescription' : 'remote.description') }),
     el('div', { className: 'remote-toolbar' }, [
-      field(t('remote.sync'), sync),
-      field(t('remote.fps'), fps),
-      field(t('remote.layout'), layout),
+      interactiveOnly ? null : field(t('remote.sync'), sync),
+      interactiveOnly ? null : field(t('remote.fps'), fps),
+      interactiveOnly ? null : field(t('remote.layout'), layout),
       button(t('remote.selectAll'), () => { store.remote.selectedDeviceIds = ids.slice(0, 8); refresh(); }, { className: 'button compact', disabled: !ids.length }),
       button(t('remote.clear'), () => { store.remote.selectedDeviceIds = []; refresh(); }, { className: 'button compact', disabled: !selected.size }),
-      live,
-      button(t('remote.openActive'), () => openRemoteWindow([store.remote.activeDeviceId].filter(Boolean), 'single'), { className: 'button compact', disabled: !managedIds.has(store.remote.activeDeviceId) }),
-      button(t('remote.openAll'), () => openRemoteWindow([...selectedManagedIds], 'all'), { className: 'button compact', disabled: !selectedManagedIds.size }),
+      interactiveOnly ? null : live,
+      interactiveOnly ? null : button(t('remote.openActive'), () => openRemoteWindow([store.remote.activeDeviceId].filter(Boolean), 'single'), { className: 'button compact', disabled: !managedIds.has(store.remote.activeDeviceId) }),
+      interactiveOnly ? null : button(t('remote.openAll'), () => openRemoteWindow([...selectedManagedIds], 'all'), { className: 'button compact', disabled: !selectedManagedIds.size }),
     ]),
     status,
     ids.length ? el('div', { className: 'remote-target-list' }, targets.map((device) => remoteTargetCheckbox(device, selected, refresh))) : null,
-    ids.length ? remoteGrid(targets.filter((device) => selected.has(device.id || device.deviceId)), refresh) : el('p', { className: 'empty-state', text: t('remote.empty') }),
-    el('p', { className: 'remote-key-help', text: t('remote.keyHelp') }),
+    ids.length ? remoteGrid(targets.filter((device) => selected.has(device.id || device.deviceId)), refresh) : el('p', { className: 'empty-state', text: t(interactiveOnly ? 'remote.interactiveEmpty' : 'remote.empty') }),
+    interactiveOnly ? null : el('p', { className: 'remote-key-help', text: t('remote.keyHelp') }),
   ]);
-  if (store.remote.live && ids.length && typeof window.warController?.remote?.capture === 'function') {
+  if (!interactiveOnly && store.remote.live && ids.length && typeof window.warController?.remote?.capture === 'function') {
     queueMicrotask(() => startRemotePolling());
   }
   return root;
 }
 
 function remoteAvailableDevices() {
-  return allWorkspaceDevices()
+  return controlSurfaceRemoteDevices(allWorkspaceDevices()
     .filter((device) => isInteractiveRemoteDevice(device)
       ? ['configured', 'online'].includes(normalizeDeviceStatus(device))
-      : device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
-    .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
+      : device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId))))
+    .sort((left, right) => {
+      const modeOrder = Number(isInteractiveRemoteDevice(right)) - Number(isInteractiveRemoteDevice(left));
+      return modeOrder || remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' });
+    });
 }
 
 function remoteAvailableDeviceIds() {

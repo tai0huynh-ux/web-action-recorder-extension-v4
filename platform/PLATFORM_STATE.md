@@ -1,6 +1,6 @@
 # Chromium Control Platform State
 
-Updated: 2026-07-24
+Updated: 2026-08-10
 
 ## Phase
 
@@ -9,6 +9,17 @@ Phase 1 - Browser Agent minimal container gate is complete on a reviewed Linux D
 Phase 2 - Chromium Control Native X11 Gate is complete.
 
 Status: Active Chromium Sandbox, managed-container Phase 10 product path, and required soak: PASS on implementation SHA `62f9095e570c406d6483ed688a0c21008ebe50f1`. Final decision awaits exact-final-SHA GitHub workflow confirmation.
+
+## Google Chrome Realtime Human-Control Runtime
+
+Status: default Controller human-control path when `WAR_INTERACTIVE_MOONLIGHT_HOST` is configured; physical input gate not yet accepted.
+
+- The interactive image contains pinned official Google Chrome Stable, Xvfb, and Sunshine. Chrome and Sunshine run as two containers from the same image and share the X11 socket plus Chrome's IPC namespace for MIT-SHM capture.
+- Chrome uses the IPv6-only macvlan and persistent `pilot-chrome-profile-v2`; Sunshine uses the private IPv4 ingress bridge and persistent pairing state. The legacy profile is retained as rollback.
+- Sunshine joins Chrome/Xvfb's shareable IPC namespace so X11 MIT-SHM capture can return real frames. Stable, distinct Chrome and Sunshine hostnames preserve browser and pairing identity across Compose recreation.
+- The Remote view chooses interactive devices exclusively when available. Managed Browser Agent capture and raw input commands remain a compatibility fallback only when no interactive endpoint is configured.
+- Moonlight launches with absolute mouse mode and system-key capture so pointer movement, drag state, and key-down/key-up are transported as a realtime desktop session instead of Controller command injection.
+- Unit, integration, network, and release-bundle evidence exists for the implementation. The final real-input, Google search, and OpenAI account-page gates remain unverified because the Windows Computer Use helper cannot obtain Moonlight window state after a fresh runtime reset.
 
 ## Phase 10 Reviewed Host Acceptance
 

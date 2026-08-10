@@ -1,6 +1,6 @@
 # Project State - Web Action Recorder v4
 
-Updated: 2026-07-24
+Updated: 2026-08-10
 Source of truth: the checked-out repository root.
 
 ## Current Status
@@ -16,6 +16,18 @@ Current milestone: Phase 10 final personal-LAN acceptance.
 Next milestone: post-MVP maintenance after exact-final-SHA GitHub workflow confirmation.
 
 Controller dispatch reaches the real MV3 Extension through the Browser Agent, Native Messaging, and a generated temporary Windows native host executable shim on local Edge. The GitHub Container Real-World Gate passes a controlled local search/copy workflow with the active Chromium user-namespace sandbox, TLS WSS dispatch, result uplink, terminal replay protection, cancel, and cleanup. Deterministic unsigned development packaging builds the Electron Controller installer/portable package, Browser Agent bundle, MV3 Extension ZIP, release manifest, hashes, integrity scan, packaged smoke, and installer install/launch/uninstall gate. Production signing pipeline variables are implemented, but no production certificate was supplied in this run. Sensitive workflow inputs remain unsupported.
+
+## Google Chrome Realtime Human Control - 2026-08-10
+
+Status: implementation active; physical input acceptance remains blocked by the Windows Computer Use observation runtime.
+
+- The Controller's configured human-control path uses official Google Chrome Stable in the Linux image, Sunshine for LAN video/input transport, and the native Moonlight Windows client.
+- When `WAR_INTERACTIVE_MOONLIGHT_HOST` is valid, the Remote view exposes the interactive Chrome device as the exclusive human-control target and does not use managed JPEG polling or per-command mouse/keyboard injection.
+- Managed CloakBrowser remains available for workflow automation and explicit rollback when the interactive endpoint is removed; it is no longer the primary human-control surface.
+- Chrome has only the public IPv6 macvlan; Sunshine has only the private IPv4 ingress bridge. The Controller and Moonlight continue to reach the Linux host over LAN IPv4.
+- Chrome/Xvfb and Sunshine share a private IPC namespace for X11 MIT-SHM frame capture. Both services use stable, distinct hostnames so Chrome profile identity and Moonlight pairing survive recreation.
+- The active Chrome profile is `pilot-chrome-profile-v2`; the legacy profile volume remains unchanged for rollback.
+- Code and runtime network gates passed before this state update. A real Moonlight window and Chrome video stream were observed, but mouse move, drag, key-down/key-up, Google search, and the OpenAI account page cannot be claimed as passed because `sky.get_window_state` repeatedly fails with `node_repl exec context not found` before input is sent.
 
 ## Phase 10 Final Personal-LAN Acceptance
 
