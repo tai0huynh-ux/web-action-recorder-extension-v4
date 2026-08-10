@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   browserStateFromRemoteResult,
+  connectionDescriptorForInteractiveDevice,
+  interactiveConnectionDescriptor,
+  isInteractiveRemoteDevice,
   normalizeRemoteSelection,
   normalizeOmniboxInput,
   normalizedBrowserTabs,
@@ -10,8 +13,26 @@ import {
   printableTextForKeyboardEvent,
   qualityForFps,
   remoteTargetsForAction,
+  remoteModeForDevice,
   shortcutForKeyboardEvent,
 } from '../renderer/remoteControl.js';
+
+test('remote mode and interactive connection descriptor stay explicit', () => {
+  const device = {
+    deviceId: 'chrome-human',
+    mode: 'interactive',
+    interactive: { connection: { deepLink: 'moonlight://pair/chrome-human', host: '192.168.1.201', port: 47989 } },
+  };
+  assert.equal(remoteModeForDevice(device), 'interactive');
+  assert.equal(isInteractiveRemoteDevice(device), true);
+  assert.deepEqual(interactiveConnectionDescriptor(device), {
+    deepLink: 'moonlight://pair/chrome-human',
+    host: '192.168.1.201',
+    port: 47989,
+  });
+  assert.deepEqual(connectionDescriptorForInteractiveDevice(device), interactiveConnectionDescriptor(device));
+  assert.equal(remoteModeForDevice({ mode: 'managed' }), 'managed');
+});
 
 test('remote selection is stable, bounded, and limited to available devices', () => {
   assert.deepEqual(normalizeRemoteSelection(['b', 'a', 'b', 'missing'], ['a', 'b']), ['b', 'a']);

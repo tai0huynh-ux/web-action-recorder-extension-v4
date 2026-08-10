@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, session } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, session, shell } from 'electron';
 import { createElectronControllerRuntime } from './electronRuntime.js';
 import { maybeRunPackagedSmoke } from '../release/packagedSmoke.js';
 
@@ -10,6 +10,7 @@ const runtime = createElectronControllerRuntime({
   ipcMain,
   protocol,
   session,
+  shell,
 });
 
 runtime.start().then(async () => {

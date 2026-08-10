@@ -8,6 +8,7 @@ const DEFAULTS = {
   port: 3766,
   dataDir: '/data',
   cloakbrowserExecutable: '/usr/local/bin/war-cloakbrowser-sandbox-launcher',
+  googleChromeExecutable: '/usr/bin/google-chrome',
   chromiumExecutable: '/usr/bin/chromium',
   extensionId: 'edoicfpldmlabgdalemfgflpldiijdmm',
   extensionDir: '/app/extension',
@@ -161,7 +162,19 @@ function readBrowserEngine(env, cwd) {
       executable: resolveRuntimePath(env.WAR_CHROMIUM_EXECUTABLE || DEFAULTS.chromiumExecutable, cwd),
     };
   }
-  throw new AgentError('invalid_config', 'WAR_BROWSER_ENGINE must be cloakbrowser or chromium');
+  if (name === 'chrome' || name === 'google-chrome') {
+    const pinnedVersion = readOptionalString(env.WAR_CHROME_VERSION);
+    if (!pinnedVersion) {
+      throw new AgentError('invalid_config', 'WAR_CHROME_VERSION is required when WAR_BROWSER_ENGINE=chrome');
+    }
+    return {
+      name: 'chrome',
+      version: pinnedVersion,
+      pinnedVersion,
+      executable: resolveRuntimePath(env.WAR_CHROME_EXECUTABLE || DEFAULTS.googleChromeExecutable, cwd),
+    };
+  }
+  throw new AgentError('invalid_config', 'WAR_BROWSER_ENGINE must be cloakbrowser, chrome, or chromium');
 }
 
 function readControllerCredential(env, cwd) {

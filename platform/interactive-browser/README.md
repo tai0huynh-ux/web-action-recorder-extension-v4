@@ -2,7 +2,7 @@
 
 This is a disposable, human-only pilot image: official Google Chrome Stable runs on Xvfb and Sunshine provides LAN streaming. It is **not** a challenge bypass, an automation backend, or a replacement for the managed CloakBrowser image. Installing the Web Action Recorder extension is a separate, explicit acceptance gate. No site access is promised by this artifact.
 
-The Compose file joins an already-created external network named by `WAR_PILOT_NETWORK_NAME` (default `war-interactive-ipv6`); it never creates or changes the managed network. Sunshine is configured for LAN IPv4 (`0.0.0.0`), H.264-friendly 1280x720 at 30 fps, and disabled UPnP. Typical ports are TCP 47984/47989/47990 and UDP 47998-48000. Host publishing defaults to `192.168.1.201` and can be changed with `WAR_PILOT_BIND_ADDRESS`.
+The Compose file joins an already-created external network named by `WAR_PILOT_NETWORK_NAME` (default `war-interactive-ipv6`); it never creates or changes the managed network. The IPv6-only container listens on `::`; Docker host publication is separately fenced to the explicit private IPv4 `192.168.1.201` by default and can be changed with `WAR_PILOT_BIND_ADDRESS`. Wildcard, loopback, and public IPv6 host binds are rejected by the runtime contract. Sunshine uses H.264-friendly 1280x720 at 30 fps with UPnP disabled. Typical ports are TCP 47984/47989/47990 and UDP 47998-48000.
 
 On Docker hosts that reject Chromium user/pid namespaces, run the disposable pilot with `WAR_PILOT_NO_SANDBOX=1` as a temporary compatibility mode. This is not an acceptance configuration for the managed CloakBrowser image; remove it once the host sandbox gate passes.
 

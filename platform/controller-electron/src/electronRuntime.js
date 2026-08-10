@@ -24,6 +24,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
     session: dependencies.session,
     dialog: dependencies.dialog,
     clipboard: dependencies.clipboard,
+    shell: dependencies.shell,
     fs: dependencies.fs || fs,
     path: dependencies.path || path,
     https: dependencies.https || https,
@@ -149,6 +150,7 @@ export function createElectronControllerRuntime(dependencies = {}) {
         path: state.path,
         allowedWindows: () => state.windows,
         openRemoteWindow: (payload) => openRemoteWindow(state, payload),
+        openInteractive: (payload) => openInteractive(state, payload),
       });
       state.session.defaultSession?.setPermissionRequestHandler?.((_webContents, _permission, callback) => callback(false));
       state.mainWindow = createMainWindow(state);
@@ -260,6 +262,16 @@ function openRemoteWindow(state, payload = {}) {
   });
   void win.loadURL(`war-controller://app/?${query.toString()}`);
   return { opened: true, mode, deviceIds: ids };
+}
+
+async function openInteractive(state, payload = {}) {
+  if (typeof state.shell?.openExternal !== 'function') {
+    const error = new Error('Moonlight integration is unavailable');
+    error.code = 'INTERACTIVE_NOT_CONFIGURED';
+    throw error;
+  }
+  await state.shell.openExternal(payload.descriptor.deepLink);
+  return { deviceId: payload.deviceId, status: 'opened' };
 }
 
 async function maybeStartWss(state) {

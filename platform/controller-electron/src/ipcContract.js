@@ -34,6 +34,7 @@ export const IPC_CHANNELS = deepFreeze({
     clipboardCopy: `${CHANNEL_PREFIX}remote:clipboard-copy`,
     clipboardPaste: `${CHANNEL_PREFIX}remote:clipboard-paste`,
     openWindow: `${CHANNEL_PREFIX}remote:open-window`,
+    openInteractive: `${CHANNEL_PREFIX}remote:open-interactive`,
   },
   containers: {
     list: `${CHANNEL_PREFIX}containers:list`,
@@ -120,6 +121,7 @@ export const REQUEST_CHANNELS = deepFreeze([
   IPC_CHANNELS.remote.clipboardCopy,
   IPC_CHANNELS.remote.clipboardPaste,
   IPC_CHANNELS.remote.openWindow,
+  IPC_CHANNELS.remote.openInteractive,
   IPC_CHANNELS.containers.list,
   IPC_CHANNELS.containers.trash,
   IPC_CHANNELS.containers.hosts,
@@ -202,6 +204,7 @@ const CHANNEL_SCHEMAS = new Map([
   [IPC_CHANNELS.remote.clipboardCopy, objectSchema({ deviceId: 'id' })],
   [IPC_CHANNELS.remote.clipboardPaste, objectSchema({ deviceIds: 'optionalIdArray', synchronized: 'optionalBoolean' })],
   [IPC_CHANNELS.remote.openWindow, objectSchema({ mode: 'id', deviceIds: 'optionalIdArray', layout: 'optionalString' })],
+  [IPC_CHANNELS.remote.openInteractive, objectSchema({ deviceId: 'id', descriptor: 'optionalObject' })],
   [IPC_CHANNELS.containers.list, LIST_PAYLOAD],
   [IPC_CHANNELS.containers.trash, NO_PAYLOAD],
   [IPC_CHANNELS.containers.hosts, NO_PAYLOAD],

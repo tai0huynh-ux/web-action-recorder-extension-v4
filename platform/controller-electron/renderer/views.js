@@ -11,6 +11,8 @@ import {
 } from './workspaceState.js';
 import {
   browserStateFromRemoteResult,
+  interactiveConnectionDescriptor,
+  isInteractiveRemoteDevice,
   normalizedBrowserTabs,
   normalizeRemoteSelection,
   normalizeOmniboxInput,
@@ -2287,6 +2289,8 @@ function remoteView(refresh) {
   remoteScreens = new Map();
   remoteBrowserNodes = new Map();
   const selected = new Set(selectedDeviceIds);
+  const managedIds = new Set(remoteManagedDeviceIds());
+  const selectedManagedIds = new Set([...selected].filter((id) => managedIds.has(id)));
   const sync = el('input', { type: 'checkbox', checked: store.remote.synchronized === true, ariaLabel: t('remote.sync') });
   sync.addEventListener('change', () => { store.remote.synchronized = sync.checked; refresh(); });
   const fps = el('select', { ariaLabel: t('remote.fps') }, [
@@ -2318,8 +2322,8 @@ function remoteView(refresh) {
       button(t('remote.selectAll'), () => { store.remote.selectedDeviceIds = ids.slice(0, 8); refresh(); }, { className: 'button compact', disabled: !ids.length }),
       button(t('remote.clear'), () => { store.remote.selectedDeviceIds = []; refresh(); }, { className: 'button compact', disabled: !selected.size }),
       live,
-      button(t('remote.openActive'), () => openRemoteWindow([store.remote.activeDeviceId].filter(Boolean), 'single'), { className: 'button compact', disabled: !store.remote.activeDeviceId }),
-      button(t('remote.openAll'), () => openRemoteWindow([...selected], 'all'), { className: 'button compact', disabled: !selected.size }),
+      button(t('remote.openActive'), () => openRemoteWindow([store.remote.activeDeviceId].filter(Boolean), 'single'), { className: 'button compact', disabled: !managedIds.has(store.remote.activeDeviceId) }),
+      button(t('remote.openAll'), () => openRemoteWindow([...selectedManagedIds], 'all'), { className: 'button compact', disabled: !selectedManagedIds.size }),
     ]),
     status,
     ids.length ? el('div', { className: 'remote-target-list' }, targets.map((device) => remoteTargetCheckbox(device, selected, refresh))) : null,
@@ -2334,12 +2338,22 @@ function remoteView(refresh) {
 
 function remoteAvailableDevices() {
   return allWorkspaceDevices()
-    .filter((device) => device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
+    .filter((device) => isInteractiveRemoteDevice(device)
+      ? normalizeDeviceStatus(device) === 'online'
+      : device.managedContainer && isContainerAgentOnline(store.containers.find((item) => item.id === device.containerId)))
     .sort((left, right) => remoteDisplayName(left).localeCompare(remoteDisplayName(right), undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 function remoteAvailableDeviceIds() {
   return remoteAvailableDevices().map((device) => device.id || device.deviceId).filter(Boolean);
+}
+
+function remoteManagedDevices() {
+  return remoteAvailableDevices().filter((device) => !isInteractiveRemoteDevice(device));
+}
+
+function remoteManagedDeviceIds() {
+  return remoteManagedDevices().map((device) => device.id || device.deviceId).filter(Boolean);
 }
 
 function remoteTargetCheckbox(device, selected, refresh) {
@@ -2366,6 +2380,7 @@ function remoteTile(device, refresh) {
   const id = device.id || device.deviceId;
   const frame = store.remote.frames?.[id];
   const name = remoteDisplayName(device);
+  if (isInteractiveRemoteDevice(device)) return interactiveRemoteTile(device, refresh);
   const image = el('img', { className: 'remote-screen', tabIndex: 0, ariaLabel: t('remote.screen', { name }) });
   const placeholder = frame ? null : el('span', { className: 'remote-screen-placeholder', text: store.remote.updating?.[id] ? t('remote.updating') : (store.remote.errors?.[id] || t('remote.waiting')) });
   image.setAttribute('alt', t('remote.screen', { name }));
@@ -2421,6 +2436,46 @@ function remoteTile(device, refresh) {
       button(t('remote.stopInput'), () => sendRemoteCommand('input.stopAll', {}), { className: 'button compact danger' }),
     ]),
     frame ? el('span', { className: 'device-meta', text: `${frame.width}x${frame.height} · ${Math.round((frame.data?.length || 0) * 0.75 / 1024)} KB` }) : null,
+  ]);
+}
+
+function interactiveRemoteTile(device, refresh) {
+  const id = device.id || device.deviceId;
+  const name = remoteDisplayName(device);
+  const descriptor = interactiveConnectionDescriptor(device);
+  const api = window.warController?.remote?.openInteractive;
+  const configured = typeof api === 'function' && Boolean(descriptor);
+  const status = el('p', { className: configured ? 'status remote-interactive-status' : 'status error remote-interactive-status', text: !api ? t('remote.notConfigured') : (descriptor ? t('remote.interactiveReady') : t('remote.interactiveDescriptorUnavailable')), ariaLive: 'polite' });
+  const open = button(t('remote.openMoonlight'), async () => {
+    if (typeof api !== 'function' || !descriptor) {
+      status.textContent = t('remote.notConfigured');
+      return;
+    }
+    open.disabled = true;
+    status.textContent = t('remote.interactiveOpening');
+    try {
+      const result = await api({ deviceId: id, descriptor });
+      if (result?.ok === false) throw controllerError(result, 'INTERACTIVE_OPEN_FAILED');
+      const returned = result?.data ?? result;
+      status.textContent = returned?.status === 'paired' || returned?.paired === true
+        ? t('remote.interactivePaired')
+        : t('remote.interactiveOpened');
+    } catch (error) {
+      status.textContent = safeError(error, 'INTERACTIVE_OPEN_FAILED');
+      status.className = 'status error remote-interactive-status';
+    } finally {
+      open.disabled = false;
+    }
+  }, { className: 'button primary compact', disabled: !configured });
+  return el('article', { className: 'remote-tile remote-tile-interactive' }, [
+    el('div', { className: 'remote-tile-heading' }, [
+      el('strong', { text: name }),
+      el('span', { className: 'status-pill connecting', text: t('remote.humanOnlyMode') }),
+    ]),
+    el('p', { className: 'muted', text: t('remote.interactiveDescription') }),
+    descriptor ? el('code', { className: 'remote-interactive-descriptor', text: descriptor.deepLink || descriptor.uri || descriptor.url || stableJson(descriptor) }) : null,
+    el('div', { className: 'toolbar tight' }, [open]),
+    status,
   ]);
 }
 
@@ -2614,7 +2669,7 @@ function remoteDisplayName(device) {
 }
 
 async function openRemoteWindow(deviceIds, mode) {
-  const availableIds = new Set(remoteAvailableDeviceIds());
+  const availableIds = new Set(remoteManagedDeviceIds());
   const ids = [...new Set(deviceIds || [])].filter((deviceId) => availableIds.has(deviceId)).slice(0, 8);
   if (!ids.length || typeof window.warController?.remote?.openWindow !== 'function') return;
   const result = await window.warController.remote.openWindow({ mode, deviceIds: ids, layout: store.remote.layout || 'auto' });
@@ -2630,7 +2685,7 @@ function startRemotePolling() {
   remotePolling = state;
   const tick = async () => {
     if (remotePolling !== state || store.view !== 'remote' || !store.remote.live) return;
-    const ids = normalizeRemoteSelection(store.remote.selectedDeviceIds, remoteAvailableDeviceIds());
+    const ids = normalizeRemoteSelection(store.remote.selectedDeviceIds, remoteManagedDeviceIds());
     if (!state.browserInFlight && Date.now() - state.lastBrowserStateAt >= REMOTE_BROWSER_STATE_POLL_MS) {
       state.browserInFlight = true;
       state.lastBrowserStateAt = Date.now();
@@ -2726,7 +2781,7 @@ async function pollRemoteBrowserState(deviceId) {
 }
 
 async function sendRemoteCommand(command, payload) {
-  const availableIds = new Set(remoteAvailableDeviceIds());
+  const availableIds = new Set(remoteManagedDeviceIds());
   const targets = remoteTargetsForAction({
     selectedDeviceIds: store.remote.selectedDeviceIds,
     activeDeviceId: store.remote.activeDeviceId,

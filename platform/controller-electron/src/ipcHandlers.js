@@ -15,6 +15,7 @@ export function registerControllerIpcHandlers({
   path,
   clipboard,
   openRemoteWindow,
+  openInteractive,
   allowedWindows,
 } = {}) {
   const registrations = new Set();
@@ -29,7 +30,7 @@ export function registerControllerIpcHandlers({
     }
   };
 
-  const methodMap = buildMethodMap(application, { dialog, fs, path, clipboard, openRemoteWindow });
+  const methodMap = buildMethodMap(application, { dialog, fs, path, clipboard, openRemoteWindow, openInteractive });
   for (const channel of REQUEST_CHANNELS) {
     const method = methodMap.get(channel);
     if (!method) continue;
@@ -95,6 +96,10 @@ export function buildMethodMap(application, dependencies = {}) {
     [IPC_CHANNELS.remote.openWindow, (payload) => {
       if (typeof dependencies.openRemoteWindow !== 'function') throw codedError('REMOTE_WINDOW_UNAVAILABLE', 'Remote window support is unavailable');
       return dependencies.openRemoteWindow(payload);
+    }],
+    [IPC_CHANNELS.remote.openInteractive, (payload) => {
+      if (typeof dependencies.openInteractive !== 'function') throw codedError('INTERACTIVE_NOT_CONFIGURED', 'Moonlight integration is unavailable');
+      return dependencies.openInteractive(validateInteractivePayload(payload));
     }],
     [IPC_CHANNELS.containers.list, () => application.listContainers()],
     [IPC_CHANNELS.containers.trash, () => application.listContainerTrash()],
@@ -206,6 +211,23 @@ function codedError(code, message, details) {
   error.code = code;
   if (details !== undefined) error.details = details;
   return error;
+}
+
+function validateInteractivePayload(payload = {}) {
+  const descriptor = payload.descriptor;
+  if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {
+    throw codedError('INTERACTIVE_DESCRIPTOR_REQUIRED', 'Interactive connection descriptor is required');
+  }
+  const deepLink = String(descriptor.deepLink || descriptor.uri || descriptor.url || '').trim();
+  if (!deepLink || deepLink.length > 1024) {
+    throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Interactive connection descriptor is invalid');
+  }
+  let parsed;
+  try { parsed = new URL(deepLink); } catch { throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Interactive connection descriptor is invalid'); }
+  if (parsed.protocol !== 'moonlight:') {
+    throw codedError('INTERACTIVE_DESCRIPTOR_INVALID', 'Only moonlight:// connection links are allowed');
+  }
+  return { deviceId: payload.deviceId, descriptor: { deepLink } };
 }
 
 function unwrapApplicationResult(result) {

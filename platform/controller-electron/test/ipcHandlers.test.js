@@ -93,6 +93,35 @@ test('clipboard IPC keeps clipboard text in the main process and returns metadat
   assert.equal(JSON.stringify(pasted).includes(secret), false);
 });
 
+test('interactive open validates Moonlight scheme before invoking the launcher', async () => {
+  const ipcMain = fakeIpcMain();
+  const application = fakeApplication();
+  const window = trustedWindow();
+  const calls = [];
+  registerControllerIpcHandlers({
+    ipcMain,
+    mainWindow: window,
+    application,
+    openInteractive: async (payload) => { calls.push(payload); return { status: 'opened', deviceId: payload.deviceId }; },
+    dialog: {},
+    fs: {},
+    path: {},
+  });
+  const opened = await ipcMain.handlers.get(IPC_CHANNELS.remote.openInteractive)(trustedEvent(window), {
+    deviceId: 'device-1',
+    descriptor: { deepLink: 'moonlight://pair/device-1', host: '192.168.1.201', port: 47989 },
+  });
+  assert.deepEqual(opened, { ok: true, data: { status: 'opened', deviceId: 'device-1' } });
+  assert.deepEqual(calls, [{ deviceId: 'device-1', descriptor: { deepLink: 'moonlight://pair/device-1' } }]);
+
+  const rejected = await ipcMain.handlers.get(IPC_CHANNELS.remote.openInteractive)(trustedEvent(window), {
+    deviceId: 'device-1',
+    descriptor: { deepLink: 'https://example.test' },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error.code, 'INTERACTIVE_DESCRIPTOR_INVALID');
+});
+
 test('IPC handlers return a fixed public error envelope for coded application failures', async () => {
   const ipcMain = fakeIpcMain();
   const application = fakeApplication();

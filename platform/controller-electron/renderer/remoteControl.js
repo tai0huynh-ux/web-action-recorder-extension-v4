@@ -18,6 +18,42 @@ export function normalizeRemoteSelection(selectedDeviceIds, availableIds, limit 
   return [...new Set(selectedDeviceIds || [])].filter((id) => available.has(id)).slice(0, limit);
 }
 
+// Interactive Chrome is a distinct, human-only runtime. Keep mode detection
+// tolerant of descriptors from older Controller/device payloads.
+export function remoteModeForDevice(device) {
+  const mode = device?.mode
+    ?? device?.runtimeMode
+    ?? device?.runtime?.mode
+    ?? device?.capability?.mode
+    ?? device?.capabilities?.mode
+    ?? device?.metadata?.mode;
+  return String(mode || 'managed').trim().toLowerCase() === 'interactive' ? 'interactive' : 'managed';
+}
+
+export function isInteractiveRemoteDevice(device) {
+  return remoteModeForDevice(device) === 'interactive';
+}
+
+export function interactiveConnectionDescriptor(device) {
+  const source = device?.connectionDescriptor
+    ?? device?.interactiveConnection
+    ?? device?.interactive?.connection
+    ?? device?.sunshine
+    ?? device?.connection
+    ?? null;
+  if (!source) return null;
+  if (typeof source === 'string') return { deepLink: source };
+  if (typeof source !== 'object') return null;
+  const descriptor = {};
+  for (const key of ['deepLink', 'uri', 'url', 'host', 'address', 'port', 'protocol', 'displayName', 'pairingCode']) {
+    if (source[key] !== undefined && source[key] !== null && String(source[key]).trim()) descriptor[key] = source[key];
+  }
+  return Object.keys(descriptor).length ? descriptor : null;
+}
+
+// Alias kept explicit for callers that use the contract's terminology.
+export const connectionDescriptorForInteractiveDevice = interactiveConnectionDescriptor;
+
 export function remoteTargetsForAction({ selectedDeviceIds, activeDeviceId, synchronized }) {
   const selected = [...new Set(selectedDeviceIds || [])];
   if (synchronized) return selected;

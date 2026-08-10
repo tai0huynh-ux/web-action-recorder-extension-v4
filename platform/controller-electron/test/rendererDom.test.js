@@ -1690,6 +1690,31 @@ test('remote keyboard control uses the Chromium browser input space', async () =
   ]);
 });
 
+test('interactive remote tile is human-only and opens Moonlight through the optional API', async () => {
+  resetStore();
+  state.store.view = 'remote';
+  state.store.devices = [{
+    ...deviceFixture('interactive-device-1', 'Real Chrome'),
+    mode: 'interactive',
+    connectionDescriptor: { deepLink: 'moonlight://pair/interactive-device-1', host: '192.168.1.201', port: 47989 },
+  }];
+  state.store.sessions = [];
+  state.store.remote = { selectedDeviceIds: ['interactive-device-1'], selectionInitialized: true, activeDeviceId: 'interactive-device-1', synchronized: false, fps: 3, live: false, frames: {}, pending: {}, notice: '', error: '' };
+  const originalOpenInteractive = window.warController.remote.openInteractive;
+  const calls = [];
+  window.warController.remote.openInteractive = async (payload) => { calls.push(payload); return { ok: true, data: { paired: true } }; };
+  try {
+    const current = views.renderView(() => {});
+    assert.ok(current.textContent.includes(i18n.t('remote.humanOnlyMode')));
+    assert.equal(all(current, (node) => node.localName === 'img').length, 0);
+    await clickButton(current, i18n.t('remote.openMoonlight'));
+    assert.deepEqual(calls, [{ deviceId: 'interactive-device-1', descriptor: state.store.devices[0].connectionDescriptor }]);
+    assert.equal(apiState.remoteCalls.length, 0);
+  } finally {
+    window.warController.remote.openInteractive = originalOpenInteractive;
+  }
+});
+
 test('remote selection survives a transient unavailable Agent and restores its tile', () => {
   resetStore();
   state.store.view = 'remote';

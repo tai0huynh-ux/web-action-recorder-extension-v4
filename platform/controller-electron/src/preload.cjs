@@ -30,6 +30,7 @@ const IPC_CHANNELS = Object.freeze({
     clipboardCopy: 'war-controller:v1:remote:clipboard-copy',
     clipboardPaste: 'war-controller:v1:remote:clipboard-paste',
     openWindow: 'war-controller:v1:remote:open-window',
+    openInteractive: 'war-controller:v1:remote:open-interactive',
   }),
   containers: Object.freeze({
     list: 'war-controller:v1:containers:list',
@@ -155,6 +156,7 @@ const api = deepFreeze({
     control: call(IPC_CHANNELS.remote.control),
     copyFromBrowser: call(IPC_CHANNELS.remote.clipboardCopy),
     openWindow: call(IPC_CHANNELS.remote.openWindow),
+    openInteractive: call(IPC_CHANNELS.remote.openInteractive),
     pasteToBrowser: call(IPC_CHANNELS.remote.clipboardPaste),
   },
   containers: {

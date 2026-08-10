@@ -27,6 +27,23 @@ test('Chromium is an explicit rollback or development engine only', () => {
   assert.equal(config.browserEngine.executable, '/usr/bin/chromium');
 });
 
+test('real Google Chrome requires an explicit pinned version and executable', () => {
+  const config = loadConfig({
+    WAR_BROWSER_ENGINE: 'chrome',
+    WAR_CHROME_VERSION: '151.0.7922.108-1',
+  }, process.cwd());
+  assert.deepEqual(config.browserEngine, {
+    name: 'chrome',
+    version: '151.0.7922.108-1',
+    pinnedVersion: '151.0.7922.108-1',
+    executable: '/usr/bin/google-chrome',
+  });
+});
+
+test('real Google Chrome cannot run without a version pin', () => {
+  assert.throws(() => loadConfig({ WAR_BROWSER_ENGINE: 'chrome' }, process.cwd()), /WAR_CHROME_VERSION/);
+});
+
 test('non-loopback is rejected without opt-in', () => {
   assert.throws(() => loadConfig({ WAR_AGENT_HOST: '0.0.0.0' }, process.cwd()), /ALLOW_REMOTE/);
 });

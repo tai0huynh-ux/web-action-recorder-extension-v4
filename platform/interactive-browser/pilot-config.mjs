@@ -1,9 +1,13 @@
+import { assertHostBindAddress, assertSunshineListenAddress } from './network-policy.mjs';
+
 const DEFAULTS = Object.freeze({
   chromeBin: '/usr/bin/google-chrome',
   sunshineBin: '/usr/bin/sunshine',
   sunshineConfig: '/etc/sunshine/sunshine.conf',
   profileDir: '/data/chrome-profile',
-  sunshineAddress: '0.0.0.0',
+  sunshineAddress: '::',
+  hostBindAddress: '192.168.1.201',
+  containerIpv6Only: true,
   width: 1280,
   height: 720,
   fps: 30,
@@ -23,10 +27,11 @@ export function normalizeConfig(input = {}) {
   const display = String(value('display', DEFAULTS.display)).trim();
   if (!/^:[0-9]+$/.test(display)) throw new Error('display must be an X display such as :99');
 
+  const containerIpv6Only = value('containerIpv6Only', DEFAULTS.containerIpv6Only) === true;
   const address = String(value('sunshineAddress', DEFAULTS.sunshineAddress)).trim();
-  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) {
-    throw new Error('sunshineAddress must be an IPv4 address');
-  }
+  assertSunshineListenAddress(address, { containerIpv6Only });
+  const hostBindAddress = String(value('hostBindAddress', DEFAULTS.hostBindAddress)).trim();
+  assertHostBindAddress(hostBindAddress);
 
   const config = {
     chromeBin: String(value('chromeBin', DEFAULTS.chromeBin)).trim(),
@@ -34,6 +39,8 @@ export function normalizeConfig(input = {}) {
     sunshineConfig: String(value('sunshineConfig', DEFAULTS.sunshineConfig)).trim(),
     profileDir: String(value('profileDir', DEFAULTS.profileDir)).trim(),
     sunshineAddress: address,
+    hostBindAddress,
+    containerIpv6Only,
     width: positiveInt(value('width', DEFAULTS.width), 'width', { min: 320, max: 7680 }),
     height: positiveInt(value('height', DEFAULTS.height), 'height', { min: 240, max: 4320 }),
     fps: positiveInt(value('fps', DEFAULTS.fps), 'fps', { min: 1, max: 60 }),

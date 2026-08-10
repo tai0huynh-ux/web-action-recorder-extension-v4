@@ -40,6 +40,20 @@ test('remote clipboard channels are explicit allowlisted request channels', () =
   assert.equal(REQUEST_CHANNELS.includes(IPC_CHANNELS.remote.clipboardPaste), true);
 });
 
+test('interactive open payload carries only a device id and descriptor object', () => {
+  assert.deepEqual(
+    validateIpcPayload(IPC_CHANNELS.remote.openInteractive, {
+      deviceId: 'device-1',
+      descriptor: { deepLink: 'moonlight://pair/device-1' },
+    }),
+    { deviceId: 'device-1', descriptor: { deepLink: 'moonlight://pair/device-1' } },
+  );
+  assertErrorCode(
+    () => validateIpcPayload(IPC_CHANNELS.remote.openInteractive, { deviceId: 'device-1', url: 'https://example.test' }),
+    'ERR_IPC_UNKNOWN_PROPERTY',
+  );
+});
+
 test('contract and channel collections are immutable', () => {
   assert.equal(Object.isFrozen(IPC_CHANNELS), true);
   assert.equal(Object.isFrozen(IPC_CHANNELS.jobs), true);
