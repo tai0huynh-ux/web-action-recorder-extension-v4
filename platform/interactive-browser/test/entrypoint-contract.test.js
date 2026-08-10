@@ -22,3 +22,13 @@ test('retains the no-sandbox compatibility switch and isolates Sunshine state', 
   assert.doesNotMatch(entrypoint, /export HOME=/);
   assert.doesNotMatch(entrypoint, /SUNSHINE_STATE_DIR/);
 });
+
+test('stops tracked processes in reverse startup order before their dependencies', async () => {
+  const entrypoint = await readFile(entrypointUrl, 'utf8');
+  const cleanup = entrypoint.match(/cleanup\(\)\s*\{([\s\S]*?)^\}/m)?.[1] ?? '';
+
+  assert.match(
+    cleanup,
+    /for\s+\(\(\s*([A-Za-z_]\w*)\s*=\s*\$\{#PIDS\[@\]\}\s*-\s*1\s*;\s*\1\s*>=\s*0\s*;\s*\1--\s*\)\)\s*;\s*do\s*[\s\S]*?pid\s*=\s*"\$\{PIDS\[\$?\1\]\}"\s*[\s\S]*?kill\s+"\$pid"\s+2>\/dev\/null\s*\|\|\s*true\s*[\s\S]*?wait\s+"\$pid"\s+2>\/dev\/null\s*\|\|\s*true\s*[\s\S]*?done/
+  );
+});

@@ -20,11 +20,10 @@ CLEANED_UP=0
 cleanup() {
   [[ "$CLEANED_UP" == 1 ]] && return
   CLEANED_UP=1
-  local pid
-  for pid in "${PIDS[@]:-}"; do
+  local index pid
+  for ((index=${#PIDS[@]} - 1; index >= 0; index--)); do
+    pid="${PIDS[$index]}"
     kill "$pid" 2>/dev/null || true
-  done
-  for pid in "${PIDS[@]:-}"; do
     wait "$pid" 2>/dev/null || true
   done
 }
