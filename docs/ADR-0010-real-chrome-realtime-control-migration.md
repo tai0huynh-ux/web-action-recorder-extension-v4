@@ -39,11 +39,13 @@ The interactive image is a pilot capability, not an anti-bot bypass. Human-opera
 
 The Controller continues to use IPv4 LAN for its own endpoint. The Chrome container has
 only the identity's IPv6-only macvlan. Docker macvlan does not support port publishing,
-so Sunshine runs as a sidecar attached only to a Docker bridge marked `internal` and
-shares the X11 Unix socket with Chrome/Xvfb. Sunshine 0.23.1 listens on IPv4 on that
-private bridge; Docker publishes its ports only on an explicit LAN IPv4 host address.
-The Chrome network namespace has no IPv4 interface or fallback, Sunshine has no public
-IPv6 interface, and UPnP remains disabled.
+so Sunshine runs as a sidecar attached only to a non-internal Docker bridge and shares
+the X11 Unix socket with Chrome/Xvfb. The bridge disables IP masquerading: Docker can
+still install host DNAT rules for the explicit LAN IPv4 publications, while the sidecar
+does not receive general IPv4 Internet egress through host SNAT. This assumes the LAN
+has no route to the bridge subnet and is verified at runtime rather than treated as a
+firewall guarantee. The Chrome network namespace has no IPv4 interface or fallback,
+Sunshine has no public IPv6 interface, and UPnP remains disabled.
 
 ## Rejected alternatives
 
@@ -103,6 +105,8 @@ Chromium Singleton lock without proving that no lease holder or browser process 
 
 * https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-startScreencast
 * https://docs.docker.com/engine/network/ipv6/
+* https://docs.docker.com/engine/network/drivers/bridge/
+* https://docs.docker.com/engine/network/port-publishing/
 * https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html
 * https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2configuration.html
 * https://github.com/LizardByte/Sunshine/blob/master/DOCKER_README.md

@@ -57,7 +57,8 @@ volumes:
 networks:
   pilot-ingress:
     driver: bridge
-    internal: true
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
   pilot-external:
     name: ${WAR_PILOT_NETWORK_NAME:-war-interactive-ipv6}
     external: true
