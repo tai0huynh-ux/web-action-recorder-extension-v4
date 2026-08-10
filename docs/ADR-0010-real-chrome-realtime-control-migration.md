@@ -37,11 +37,15 @@ The interactive image is a pilot capability, not an anti-bot bypass. Human-opera
   fingerprint spoofing, proxy rotation, or challenge automation is part of this ADR.
 
 The Controller continues to use IPv4 LAN for its own endpoint. Browser egress remains
-on the identity's IPv6-only network. Sunshine is published only on an explicit LAN
-IPv4 host address with a source allowlist; it must not bind public IPv6, enable UPnP,
-or use a wildcard address. An IPv4-only controller cannot reach an IPv6-only endpoint
-directly, so any future direct signalling path requires an authenticated dual-stack
-relay or NAT64; there is no hidden IPv4 fallback.
+on the identity's IPv6-only network. Sunshine 0.23.1 has only `ipv4` and `both` address
+families and no specific bind-address key, so the pilot uses its IPv6 dual-stack socket
+inside the container while Docker publishes ports only on an explicit LAN IPv4 host
+address. UPnP remains disabled. Runtime acceptance must prove that the container's
+public IPv6 cannot reach Sunshine directly; otherwise the pilot is blocked until a
+network fence, sidecar, or Sunshine version with a verified bind-address contract is
+introduced. An IPv4-only controller cannot reach an IPv6-only endpoint directly, so
+any future direct signalling path requires an authenticated dual-stack relay or NAT64;
+there is no hidden IPv4 fallback.
 
 ## Rejected alternatives
 
@@ -103,4 +107,3 @@ Chromium Singleton lock without proving that no lease holder or browser process 
 * https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2configuration.html
 * https://github.com/LizardByte/Sunshine/blob/master/DOCKER_README.md
 * https://github.com/moonlight-stream/moonlight-docs/wiki/Setup-Guide
-

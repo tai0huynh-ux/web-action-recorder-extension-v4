@@ -15,7 +15,6 @@ services:
       CHROME_BIN: /usr/bin/google-chrome
       SUNSHINE_BIN: /usr/bin/sunshine
       SUNSHINE_CONFIG: /etc/sunshine/sunshine.conf
-      SUNSHINE_ADDRESS: ${WAR_PILOT_SUNSHINE_ADDRESS:-::}
       SUNSHINE_CONTAINER_IPV6_ONLY: ${WAR_PILOT_SUNSHINE_IPV6_ONLY:-1}
       PROFILE_DIR: /data/chrome-profile
       WIDTH: ${WAR_PILOT_WIDTH:-1280}

@@ -35,8 +35,13 @@ export function assertHostBindAddress(value, name = 'hostBindAddress') {
   return assertLanIpv4Address(value, name);
 }
 
-export function assertSunshineListenAddress(value, { containerIpv6Only = false, name = 'sunshineAddress' } = {}) {
-  const address = String(value ?? '').trim();
-  if (address === '::' && containerIpv6Only) return address;
-  return assertLanIpv4Address(address, name);
+export function assertSunshineAddressFamily(value, { containerIpv6Only = false, name = 'sunshineAddressFamily' } = {}) {
+  const family = String(value ?? '').trim().toLowerCase();
+  if (family !== 'ipv4' && family !== 'both') {
+    throw new Error(`${name} must be "ipv4" or "both" for Sunshine 0.23.x`);
+  }
+  if (containerIpv6Only && family !== 'both') {
+    throw new Error(`${name} must be "both" when the container has no IPv4 network`);
+  }
+  return family;
 }

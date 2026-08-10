@@ -1,11 +1,11 @@
-import { assertHostBindAddress, assertSunshineListenAddress } from './network-policy.mjs';
+import { assertHostBindAddress, assertSunshineAddressFamily } from './network-policy.mjs';
 
 const DEFAULTS = Object.freeze({
   chromeBin: '/usr/bin/google-chrome',
   sunshineBin: '/usr/bin/sunshine',
   sunshineConfig: '/etc/sunshine/sunshine.conf',
   profileDir: '/data/chrome-profile',
-  sunshineAddress: '::',
+  sunshineAddressFamily: 'both',
   hostBindAddress: '192.168.1.201',
   containerIpv6Only: true,
   width: 1280,
@@ -28,8 +28,10 @@ export function normalizeConfig(input = {}) {
   if (!/^:[0-9]+$/.test(display)) throw new Error('display must be an X display such as :99');
 
   const containerIpv6Only = value('containerIpv6Only', DEFAULTS.containerIpv6Only) === true;
-  const address = String(value('sunshineAddress', DEFAULTS.sunshineAddress)).trim();
-  assertSunshineListenAddress(address, { containerIpv6Only });
+  const addressFamily = assertSunshineAddressFamily(
+    value('sunshineAddressFamily', DEFAULTS.sunshineAddressFamily),
+    { containerIpv6Only },
+  );
   const hostBindAddress = String(value('hostBindAddress', DEFAULTS.hostBindAddress)).trim();
   assertHostBindAddress(hostBindAddress);
 
@@ -38,7 +40,7 @@ export function normalizeConfig(input = {}) {
     sunshineBin: String(value('sunshineBin', DEFAULTS.sunshineBin)).trim(),
     sunshineConfig: String(value('sunshineConfig', DEFAULTS.sunshineConfig)).trim(),
     profileDir: String(value('profileDir', DEFAULTS.profileDir)).trim(),
-    sunshineAddress: address,
+    sunshineAddressFamily: addressFamily,
     hostBindAddress,
     containerIpv6Only,
     width: positiveInt(value('width', DEFAULTS.width), 'width', { min: 320, max: 7680 }),
@@ -80,12 +82,12 @@ export function buildSunshineConfig(config) {
   const normalized = normalizeConfig(config);
   return [
     '# Disposable human-only pilot: LAN IPv4 only; do not expose to the public Internet.',
-    `address = ${normalized.sunshineAddress}`,
+    `address_family = ${normalized.sunshineAddressFamily}`,
     'port = 47989',
     'upnp = disabled',
     'hevc_mode = 0',
     'av1_mode = 0',
-    `resolution = [${normalized.width}x${normalized.height}]`,
+    `resolutions = [${normalized.width}x${normalized.height}]`,
     `fps = [${normalized.fps}]`,
     '',
   ].join('\n');

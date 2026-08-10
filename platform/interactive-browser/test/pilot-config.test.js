@@ -10,18 +10,18 @@ import {
 test('normalizes safe 720p30 LAN defaults', () => {
   const config = normalizeConfig({});
   assert.equal(config.display, ':99');
-  assert.equal(config.sunshineAddress, '::');
+  assert.equal(config.sunshineAddressFamily, 'both');
   assert.equal(config.hostBindAddress, '192.168.1.201');
   assert.equal(config.containerIpv6Only, true);
   assert.deepEqual([config.width, config.height, config.fps], [1280, 720, 30]);
 });
 
-test('rejects malformed display and non-IPv4 Sunshine address', () => {
+test('rejects malformed display and Sunshine families incompatible with an IPv6-only container', () => {
   assert.throws(() => normalizeConfig({ display: 'wayland-0' }), /display/);
-  assert.throws(() => normalizeConfig({ sunshineAddress: '::', containerIpv6Only: false }), /IPv4|private LAN/);
-  assert.throws(() => normalizeConfig({ sunshineAddress: '8.8.8.8' }), /private LAN/);
+  assert.throws(() => normalizeConfig({ sunshineAddressFamily: 'ipv4', containerIpv6Only: true }), /must be "both"/);
+  assert.throws(() => normalizeConfig({ sunshineAddressFamily: 'ipv6' }), /Sunshine 0\.23/);
   assert.throws(() => normalizeConfig({ hostBindAddress: '0.0.0.0' }), /private LAN/);
-  assert.equal(normalizeConfig({ sunshineAddress: '::', containerIpv6Only: true }).sunshineAddress, '::');
+  assert.equal(normalizeConfig({ sunshineAddressFamily: 'both', containerIpv6Only: true }).sunshineAddressFamily, 'both');
 });
 
 test('constructs direct Chrome command without automation flags', () => {
@@ -35,8 +35,10 @@ test('constructs Sunshine config command and H.264-friendly config', () => {
   const config = { sunshineConfig: '/tmp/sunshine.conf' };
   assert.deepEqual(buildSunshineCommand(config), ['/usr/bin/sunshine', '/tmp/sunshine.conf']);
   const text = buildSunshineConfig(config);
-  assert.match(text, /address = ::/);
+  assert.match(text, /address_family = both/);
   assert.match(text, /hevc_mode = 0/);
-  assert.match(text, /resolution = \[1280x720\]/);
+  assert.match(text, /resolutions = \[1280x720\]/);
   assert.match(text, /fps = \[30\]/);
+  assert.doesNotMatch(text, /^address\s*=/m);
+  assert.doesNotMatch(text, /^resolution\s*=/m);
 });
