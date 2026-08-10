@@ -12,6 +12,7 @@ test('uses role-specific processes and bounded X11 readiness before Sunshine sta
   assert.match(entrypoint, /run_chrome\(\)[\s\S]*Xvfb/);
   assert.match(entrypoint, /run_sunshine\(\)[\s\S]*wait_for_display[\s\S]*"\$SUNSHINE_BIN"/);
   assert.match(entrypoint, /trap cleanup EXIT/);
+  assert.doesNotMatch(entrypoint, /chmod 1777 "\$X11_SOCKET_DIR"/);
 });
 
 test('retains the no-sandbox compatibility switch and isolates Sunshine state', async () => {

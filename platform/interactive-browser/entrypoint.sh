@@ -57,7 +57,6 @@ run_chrome() {
   command -v xdpyinfo >/dev/null 2>&1 || { echo "required command missing: xdpyinfo" >&2; exit 69; }
   : "${PROFILE_DIR:?PROFILE_DIR is required for the chrome role}"
   mkdir -p "$X11_SOCKET_DIR" "$PROFILE_DIR"
-  chmod 1777 "$X11_SOCKET_DIR"
   chmod 0700 "$PROFILE_DIR"
 
   Xvfb "$DISPLAY" -screen 0 "${WIDTH:-1280}x${HEIGHT:-720}x24" -nolisten tcp &
